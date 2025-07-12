@@ -42,7 +42,7 @@ datasets = []
 for i, idx in enumerate(st.session_state['cell_indices']):
     with cols[i]:
         uploaded_file = st.file_uploader(f'Upload CSV file for Cell {i+1}', type=['csv'], key=f'file_{idx}')
-        disc_loading = st.number_input(f'Disc loading (mg) for Cell {i+1}', min_value=0.0, step=0.01, key=f'loading_{idx}')
+        disc_loading = st.number_input(f'Disc loading (mg) for Cell {i+1}', min_value=0.0, step=1.0, value=20.0, key=f'loading_{idx}')
         active_material = st.number_input(f'% Active material for Cell {i+1}', min_value=0.0, max_value=100.0, step=0.01, value=90.0, key=f'active_{idx}')
         test_number = st.text_input(f'Test Number for Cell {i+1}', key=f'testnum_{idx}')
         datasets.append({'file': uploaded_file, 'loading': disc_loading, 'active': active_material, 'testnum': test_number})
@@ -94,10 +94,23 @@ if ready:
                 eff_pct = first_cycle_eff * 100
             else:
                 eff_pct = None
+            # Cycle Life (80%) calculation
+            cycle_life_80 = None
+            if not df_cell['Q Dis (mAh/g)'].empty:
+                initial_qdis = df_cell['Q Dis (mAh/g)'].iloc[0]
+                threshold = 0.8 * initial_qdis
+                below_80 = df_cell[df_cell['Q Dis (mAh/g)'] <= threshold]
+                if not below_80.empty:
+                    cycle_life_80 = int(below_80.iloc[0][df_cell.columns[0]])
+                else:
+                    cycle_life_80 = int(df_cell[df_cell.columns[0]].iloc[-1])
+            # Write to Excel
             ws['P1'] = '1st Cycle Discharge Capacity (mAh/g)'
             ws['Q1'] = f"{max_qdis:.1f}" if max_qdis is not None else ''
             ws['P2'] = 'First Cycle Efficiency (%)'
             ws['Q2'] = f"{eff_pct:.1f}" if eff_pct is not None else ''
+            ws['P3'] = 'Cycle Life (80%)'
+            ws['Q3'] = cycle_life_80 if cycle_life_80 is not None else ''
             # Native Excel chart
             data_start_row = 6
             data_end_row = data_start_row + len(df_cell) - 1
@@ -144,6 +157,9 @@ if ready:
     for label in line_labels:
         show_lines[label] = st.checkbox(f"Show {label}", value=True)
 
+    # Checkbox to remove last cycle from graph
+    remove_last_cycle = st.checkbox('Remove last cycle from graph', value=False)
+
     # Plotting all datasets with individual line toggles
     x_col = df.columns[0]
     fig, ax = plt.subplots()
@@ -151,17 +167,18 @@ if ready:
         if d is not None:
             label_dis = f"{d['testnum']} Q Dis" if d['testnum'] else 'Q Dis'
             label_chg = f"{d['testnum']} Q Chg" if d['testnum'] else 'Q Chg'
+            plot_df = d['df'][:-1] if remove_last_cycle else d['df']
             if show_lines.get(label_dis, False):
-                ax.plot(d['df'][x_col], d['df']['Q Dis (mAh/g)'], label=label_dis, marker='o')
+                ax.plot(plot_df[x_col], plot_df['Q Dis (mAh/g)'], label=label_dis, marker='o')
             if show_lines.get(label_chg, False):
-                ax.plot(d['df'][x_col], d['df']['Q Chg (mAh/g)'], label=label_chg, marker='o')
+                ax.plot(plot_df[x_col], plot_df['Q Chg (mAh/g)'], label=label_chg, marker='o')
     ax.set_xlabel(x_col)
     ax.set_ylabel('Capacity (mAh/g)')
     ax.set_title('Gravimetric Capacity vs. ' + x_col)
     ax.legend()
     st.pyplot(fig)
 
-    # Display 1st cycle discharge capacity and first cycle efficiency for all cells side by side
+    # Display 1st cycle discharge capacity, first cycle efficiency, and cycle life (80%) for all cells side by side
     summary_cols = st.columns(len(dfs))
     for idx, d in enumerate(dfs):
         with summary_cols[idx]:
@@ -179,5 +196,118 @@ if ready:
                     st.info(f"First Cycle Efficiency: {eff_pct:.1f}%")
                 else:
                     st.warning('Efficiency (-) column not found in data.')
+                # Cycle Life (80%)
+                cycle_life_80 = None
+                if not df_cell['Q Dis (mAh/g)'].empty:
+                    initial_qdis = df_cell['Q Dis (mAh/g)'].iloc[0]
+                    threshold = 0.8 * initial_qdis
+                    below_80 = df_cell[df_cell['Q Dis (mAh/g)'] <= threshold]
+                    if not below_80.empty:
+                        cycle_life_80 = int(below_80.iloc[0][df_cell.columns[0]])
+                    else:
+                        cycle_life_80 = int(df_cell[df_cell.columns[0]].iloc[-1])
+                st.info(f"Cycle Life (80%): {cycle_life_80 if cycle_life_80 is not None else 'N/A'}")
+
+    # --- PowerPoint Export for First Cell ---
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    from pptx.enum.text import PP_ALIGN
+    from pptx.dml.color import RGBColor
+    import tempfile
+
+    if dfs and dfs[0] is not None:
+        df_cell = dfs[0]['df']
+        testnum = datasets[0]['testnum'] if datasets[0]['testnum'] else 'Cell 1'
+        # Summary values
+        first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
+        max_qdis = max(first_three_qdis) if first_three_qdis else None
+        if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
+            first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
+            eff_pct = first_cycle_eff * 100
+        else:
+            eff_pct = None
+        # Cycle Life (80%) calculation for PowerPoint
+        cycle_life_80 = None
+        if not df_cell['Q Dis (mAh/g)'].empty:
+            initial_qdis = df_cell['Q Dis (mAh/g)'].iloc[0]
+            threshold = 0.8 * initial_qdis
+            below_80 = df_cell[df_cell['Q Dis (mAh/g)'] <= threshold]
+            if not below_80.empty:
+                cycle_life_80 = int(below_80.iloc[0][df_cell.columns[0]])
+            else:
+                cycle_life_80 = int(df_cell[df_cell.columns[0]].iloc[-1])
+        # Safe formatting for summary values
+        if isinstance(max_qdis, (int, float)):
+            qdis_str = f"{max_qdis:.1f}"
+        else:
+            qdis_str = "N/A"
+        if isinstance(eff_pct, (int, float)):
+            eff_str = f"{eff_pct:.1f}%"
+        else:
+            eff_str = "N/A"
+        if isinstance(cycle_life_80, (int, float)):
+            cycle_life_str = str(cycle_life_80)
+        else:
+            cycle_life_str = "N/A"
+        # Create PowerPoint
+        prs = Presentation()
+        # Use a Title and Content layout for the slide
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        # Set the title
+        slide.shapes.title.text = f"{testnum} Summary"
+        # Echem header as a separate textbox
+        echem_header_box = slide.shapes.add_textbox(Inches(0.5), Inches(1.2), Inches(3.5), Inches(0.5))
+        echem_header_tf = echem_header_box.text_frame
+        echem_header_tf.clear()
+        echem_header_p = echem_header_tf.add_paragraph()
+        echem_header_p.text = "Echem"
+        echem_header_p.level = 0
+        echem_header_p.font.size = Pt(24)
+        echem_header_p.font.bold = True
+        echem_header_p.font.color.rgb = RGBColor(0, 0, 0)
+        echem_header_p.font.italic = False
+        # Use the content placeholder for summary bullets
+        content = slide.placeholders[1]
+        content.text = ""  # Clear any default text
+        p1 = content.text_frame.add_paragraph()
+        p1.text = f"1st Cycle Discharge Capacity: {qdis_str} mAh/g"
+        p1.level = 0  # Bullet
+        p1.font.size = Pt(18)
+        p2 = content.text_frame.add_paragraph()
+        p2.text = f"First Cycle Efficiency: {eff_str}"
+        p2.level = 0  # Bullet
+        p2.font.size = Pt(18)
+        p3 = content.text_frame.add_paragraph()
+        p3.text = f"Cycle Life (80%): {cycle_life_str}"
+        p3.level = 0  # Bullet
+        p3.font.size = Pt(18)
+        # Matplotlib graph for PowerPoint should match current filters
+        plot_df = df_cell[:-1] if remove_last_cycle else df_cell
+        fig, ax = plt.subplots()
+        label_dis = f"{testnum} Q Dis" if testnum else 'Q Dis'
+        label_chg = f"{testnum} Q Chg" if testnum else 'Q Chg'
+        if show_lines.get(label_dis, False):
+            ax.plot(plot_df[x_col], plot_df['Q Dis (mAh/g)'], label=label_dis, marker='o')
+        if show_lines.get(label_chg, False):
+            ax.plot(plot_df[x_col], plot_df['Q Chg (mAh/g)'], label=label_chg, marker='o')
+        ax.set_xlabel(x_col)
+        ax.set_ylabel('Capacity (mAh/g)')
+        ax.set_title('Gravimetric Capacity vs. ' + x_col)
+        ax.legend()
+        img_bytes = io.BytesIO()
+        fig.savefig(img_bytes, format='png', bbox_inches='tight')
+        plt.close(fig)
+        img_bytes.seek(0)
+        # Save image to temp file for pptx
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
+            tmp_img.write(img_bytes.read())
+            img_path = tmp_img.name
+        slide.shapes.add_picture(img_path, Inches(5.5), Inches(1.2), width=Inches(4.5))
+        # Download button for pptx
+        pptx_bytes = io.BytesIO()
+        prs.save(pptx_bytes)
+        pptx_bytes.seek(0)
+        st.download_button('Download PowerPoint Summary', data=pptx_bytes, file_name=f'{testnum} Summary.pptx', mime='application/vnd.openxmlformats-officedocument.presentationml.presentation')
+
 else:
     st.info('Please upload a file and enter valid disc loading and % active material.') 
