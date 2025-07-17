@@ -4,6 +4,29 @@ import io
 from openpyxl import load_workbook
 import matplotlib.pyplot as plt
 import numpy as np
+# --- Helper function for cycle life calculation ---
+def calculate_cycle_life_80(qdis_series, cycle_index_series):
+    # Use max of cycles 3 and 4 as initial, or last available if <4 cycles
+    if len(qdis_series) >= 4:
+        initial_qdis = max(qdis_series.iloc[2], qdis_series.iloc[3])
+    elif len(qdis_series) > 0:
+        initial_qdis = qdis_series.iloc[-1]
+    else:
+        return None
+    threshold = 0.8 * initial_qdis
+    below_threshold = qdis_series <= threshold
+    if below_threshold.any():
+        first_below_idx = below_threshold.idxmin()
+        return int(cycle_index_series.iloc[first_below_idx])
+    else:
+        return int(cycle_index_series.iloc[-1])
+
+def get_qdis_series(df_cell):
+    qdis_raw = df_cell['Q Dis (mAh/g)']
+    if pd.api.types.is_scalar(qdis_raw):
+        return pd.Series([qdis_raw]).dropna()
+    else:
+        return pd.Series(qdis_raw).dropna()
 from data_processing import load_and_preprocess_data
 from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs
 from plotting import plot_capacity_graph
@@ -40,8 +63,11 @@ for ds in datasets:
 ready = len(valid_datasets) > 0
 if ready:
     dfs = load_and_preprocess_data(valid_datasets)
-    show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title = render_toggle_section(dfs)
-    fig = plot_capacity_graph(dfs, show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name)
+    show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, show_average_performance_displayed = render_toggle_section(dfs)
+    fig = plot_capacity_graph(
+        dfs, show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name,
+        show_average_performance and show_average_performance_displayed
+    )
     st.pyplot(fig)
     display_summary_stats(dfs)
     # Average comparison cells toggle (only show when multiple cells)
@@ -76,25 +102,9 @@ if ready:
                 eff_pct = None
             
             # Cycle Life (80%) calculation
-            cycle_life_80 = None
-            try:
-                if not df_cell['Q Dis (mAh/g)'].empty:
-                    qdis_raw = df_cell['Q Dis (mAh/g)']
-                    if np.isscalar(qdis_raw):
-                        qdis_series = pd.Series([qdis_raw]).dropna()
-                    else:
-                        qdis_series = pd.Series(qdis_raw).dropna()
-                    if not qdis_series.empty:
-                        initial_qdis = qdis_series.iloc[0]
-                        threshold = 0.8 * initial_qdis
-                        below_threshold = qdis_series <= threshold
-                        if below_threshold.any():
-                            first_below_idx = below_threshold.idxmin()
-                            cycle_life_80 = int(df_cell.loc[first_below_idx, df_cell.columns[0]])
-                        else:
-                            cycle_life_80 = int(df_cell[df_cell.columns[0]].iloc[-1])
-            except Exception:
-                cycle_life_80 = None
+            qdis_series = get_qdis_series(df_cell)
+            cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+            cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
             
             # Safe formatting for summary values
             qdis_str = f"{max_qdis:.1f}" if isinstance(max_qdis, (int, float)) else "N/A"
@@ -239,25 +249,9 @@ if ready:
                     eff_str = "N/A"
                 
                 # Cycle Life (80%)
-                cycle_life_80 = None
-                try:
-                    if not df_cell['Q Dis (mAh/g)'].empty:
-                        qdis_raw = df_cell['Q Dis (mAh/g)']
-                        if np.isscalar(qdis_raw):
-                            qdis_series = pd.Series([qdis_raw]).dropna()
-                        else:
-                            qdis_series = pd.Series(qdis_raw).dropna()
-                        if not qdis_series.empty:
-                            initial_qdis = qdis_series.iloc[0]
-                            threshold = 0.8 * initial_qdis
-                            below_threshold = qdis_series <= threshold
-                            if below_threshold.any():
-                                first_below_idx = below_threshold.idxmin()
-                                cycle_life_80 = int(df_cell.loc[first_below_idx, df_cell.columns[0]])
-                            else:
-                                cycle_life_80 = int(df_cell[df_cell.columns[0]].iloc[-1])
-                except Exception:
-                    cycle_life_80 = None
+                qdis_series = get_qdis_series(df_cell)
+                cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+                cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
                 
                 cycle_life_str = str(cycle_life_80) if isinstance(cycle_life_80, (int, float)) else "N/A"
                 table_data.append([cell_name, qdis_str, eff_str, cycle_life_str])
@@ -281,22 +275,10 @@ if ready:
                         avg_eff_values.append(eff_pct)
                     
                     try:
-                        if not df_cell['Q Dis (mAh/g)'].empty:
-                            qdis_raw = df_cell['Q Dis (mAh/g)']
-                            if np.isscalar(qdis_raw):
-                                qdis_series = pd.Series([qdis_raw]).dropna()
-                            else:
-                                qdis_series = pd.Series(qdis_raw).dropna()
-                            if not qdis_series.empty:
-                                initial_qdis = qdis_series.iloc[0]
-                                threshold = 0.8 * initial_qdis
-                                below_threshold = qdis_series <= threshold
-                                if below_threshold.any():
-                                    first_below_idx = below_threshold.idxmin()
-                                    cycle_life_80 = int(df_cell.loc[first_below_idx, df_cell.columns[0]])
-                                else:
-                                    cycle_life_80 = int(df_cell[df_cell.columns[0]].iloc[-1])
-                                avg_cycle_life_values.append(cycle_life_80)
+                        qdis_series = get_qdis_series(df_cell)
+                        cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+                        cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
+                        avg_cycle_life_values.append(cycle_life_80)
                     except Exception:
                         pass
                 
@@ -341,22 +323,13 @@ if ready:
                             paragraph.font.size = Pt(11)
             
             # Create comparison graph
-            fig, ax = plt.subplots(figsize=(8, 5))
-            for i, d in enumerate(dfs):
-                try:
-                    cell_name = d['testnum'] if d['testnum'] else f'Cell {i+1}'
-                    label_dis = f"{cell_name} Q Dis"
-                    label_chg = f"{cell_name} Q Chg"
-                    plot_df = d['df'][:-1] if remove_last_cycle else d['df']
-                    dataset_x_col = plot_df.columns[0]
-                    
-                    if show_lines.get(label_dis, False):
-                        ax.plot(plot_df[dataset_x_col], plot_df['Q Dis (mAh/g)'], label=label_dis, marker='o')
-                    if show_lines.get(label_chg, False):
-                        ax.plot(plot_df[dataset_x_col], plot_df['Q Chg (mAh/g)'], label=label_chg, marker='o')
-                except Exception as e:
-                    st.error(f"Error plotting cell {i+1} for PowerPoint: {str(e)}")
+            # Use the same plot as the main display, including average line if toggled
+            fig = plot_capacity_graph(
+                dfs, show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name,
+                show_average_performance and show_average_performance_displayed
+            )
             
+            ax = fig.gca() # Get the current axes
             ax.set_xlabel('Cycle')
             ax.set_ylabel('Capacity (mAh/g)')
             ax.set_title('Cell Comparison - Gravimetric Capacity vs. Cycle')
@@ -420,25 +393,9 @@ if ready:
         else:
             eff_pct = None
         # Cycle Life (80%) calculation
-        cycle_life_80 = None
-        try:
-            if not df_cell['Q Dis (mAh/g)'].empty:
-                qdis_raw = df_cell['Q Dis (mAh/g)']
-                if np.isscalar(qdis_raw):
-                    qdis_series = pd.Series([qdis_raw]).dropna()
-                else:
-                    qdis_series = pd.Series(qdis_raw).dropna()
-                if not qdis_series.empty:
-                    initial_qdis = qdis_series.iloc[0]
-                    threshold = 0.8 * initial_qdis
-                    below_threshold = qdis_series <= threshold
-                    if below_threshold.any():
-                        first_below_idx = below_threshold.idxmin()
-                        cycle_life_80 = int(df_cell.loc[first_below_idx, df_cell.columns[0]])
-                    else:
-                        cycle_life_80 = int(df_cell[df_cell.columns[0]].iloc[-1])
-        except Exception as e:
-            cycle_life_80 = None
+        qdis_series = get_qdis_series(df_cell)
+        cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+        cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
         # Write to Excel
         ws['P1'] = '1st Cycle Discharge Capacity (mAh/g)'
         ws['Q1'] = f"{max_qdis:.1f}" if isinstance(max_qdis, (int, float)) and max_qdis is not None else ''
@@ -497,25 +454,9 @@ if ready:
                 eff_pct = None
             
             # Cycle Life (80%) calculation
-            cycle_life_80 = None
-            try:
-                if not df_cell['Q Dis (mAh/g)'].empty:
-                    qdis_raw = df_cell['Q Dis (mAh/g)']
-                    if np.isscalar(qdis_raw):
-                        qdis_series = pd.Series([qdis_raw]).dropna()
-                    else:
-                        qdis_series = pd.Series(qdis_raw).dropna()
-                    if not qdis_series.empty:
-                        initial_qdis = qdis_series.iloc[0]
-                        threshold = 0.8 * initial_qdis
-                        below_threshold = qdis_series <= threshold
-                        if below_threshold.any():
-                            first_below_idx = below_threshold.idxmin()
-                            cycle_life_80 = int(df_cell.loc[first_below_idx, df_cell.columns[0]])
-                        else:
-                            cycle_life_80 = int(df_cell[df_cell.columns[0]].iloc[-1])
-            except Exception:
-                cycle_life_80 = None
+            qdis_series = get_qdis_series(df_cell)
+            cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+            cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
             
             # Write to summary sheet
             row = i + 2  # Start from row 2 (row 1 is headers)
@@ -547,22 +488,10 @@ if ready:
                 
                 # Cycle Life (80%)
                 try:
-                    if not df_cell['Q Dis (mAh/g)'].empty:
-                        qdis_raw = df_cell['Q Dis (mAh/g)']
-                        if np.isscalar(qdis_raw):
-                            qdis_series = pd.Series([qdis_raw]).dropna()
-                        else:
-                            qdis_series = pd.Series(qdis_raw).dropna()
-                        if not qdis_series.empty:
-                            initial_qdis = qdis_series.iloc[0]
-                            threshold = 0.8 * initial_qdis
-                            below_threshold = qdis_series <= threshold
-                            if below_threshold.any():
-                                first_below_idx = below_threshold.idxmin()
-                                cycle_life_80 = int(df_cell.loc[first_below_idx, df_cell.columns[0]])
-                            else:
-                                cycle_life_80 = int(df_cell[df_cell.columns[0]].iloc[-1])
-                            avg_cycle_life_values.append(cycle_life_80)
+                    qdis_series = get_qdis_series(df_cell)
+                    cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+                    cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
+                    avg_cycle_life_values.append(cycle_life_80)
                 except Exception:
                     pass
             
@@ -576,6 +505,44 @@ if ready:
         # Move summary tab to the leftmost position
         wb._sheets.insert(0, wb._sheets.pop(wb._sheets.index(ws_summary)))
     
+    # Add average cell performance sheet if toggled
+    if show_average_performance and show_average_performance_displayed and len(dfs) > 1:
+        # Find common cycles
+        dfs_trimmed = [d['df'][:-1] if remove_last_cycle else d['df'] for d in dfs]
+        x_col = dfs_trimmed[0].columns[0]
+        common_cycles = set(dfs_trimmed[0][x_col])
+        for df in dfs_trimmed[1:]:
+            common_cycles = common_cycles & set(df[x_col])
+        common_cycles = sorted(list(common_cycles))
+        if common_cycles:
+            avg_qdis = []
+            avg_qchg = []
+            avg_eff = []
+            for cycle in common_cycles:
+                qdis_vals = []
+                qchg_vals = []
+                eff_vals = []
+                for df in dfs_trimmed:
+                    row = df[df[x_col] == cycle]
+                    if not row.empty:
+                        if 'Q Dis (mAh/g)' in row:
+                            qdis_vals.append(row['Q Dis (mAh/g)'].values[0])
+                        if 'Q Chg (mAh/g)' in row:
+                            qchg_vals.append(row['Q Chg (mAh/g)'].values[0])
+                        if 'Efficiency (-)' in row and not pd.isnull(row['Efficiency (-)'].values[0]):
+                            eff_vals.append(row['Efficiency (-)'].values[0] * 100)
+                avg_qdis.append(sum(qdis_vals)/len(qdis_vals) if qdis_vals else None)
+                avg_qchg.append(sum(qchg_vals)/len(qchg_vals) if qchg_vals else None)
+                avg_eff.append(sum(eff_vals)/len(eff_vals) if eff_vals else None)
+            avg_data = [
+                [cycle, qd, qc, eff] for cycle, qd, qc, eff in zip(common_cycles, avg_qdis, avg_qchg, avg_eff)
+            ]
+            avg_sheet_name = f"{experiment_name} Average" if experiment_name else "Average"
+            avg_sheet_name = avg_sheet_name[:31]  # Excel sheet name limit
+            ws_avg = wb.create_sheet(avg_sheet_name)
+            ws_avg.append([str(x_col), 'Average Q Dis (mAh/g)', 'Average Q Chg (mAh/g)', 'Average Efficiency (%)'])
+            for row in avg_data:
+                ws_avg.append(row)
     output2 = io.BytesIO()
     wb.save(output2)
     output2.seek(0)

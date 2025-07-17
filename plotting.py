@@ -10,7 +10,8 @@ def plot_capacity_graph(
     show_efficiency_lines: Dict[str, bool],
     remove_last_cycle: bool,
     show_graph_title: bool,
-    experiment_name: str
+    experiment_name: str,
+    show_average_performance: bool = False
 ) -> Figure:
     """Plot the main capacity/efficiency graph and return the matplotlib figure."""
     x_col = 'Cycle'  # default
@@ -44,6 +45,38 @@ def plot_capacity_graph(
                     ax2.plot(plot_df[dataset_x_col], efficiency_pct, label=f'{cell_name} Efficiency (%)', linestyle='--', marker='s', alpha=0.7)
             except Exception:
                 pass
+        # Plot average if requested
+        if show_average_performance and len(dfs) > 1:
+            # Find common cycles
+            dfs_trimmed = [d['df'][:-1] if remove_last_cycle else d['df'] for d in dfs]
+            common_cycles = set(dfs_trimmed[0][x_col])
+            for df in dfs_trimmed[1:]:
+                common_cycles = common_cycles & set(df[x_col])
+            common_cycles = sorted(list(common_cycles))
+            if common_cycles:
+                avg_qdis = []
+                avg_qchg = []
+                avg_eff = []
+                for cycle in common_cycles:
+                    qdis_vals = []
+                    qchg_vals = []
+                    eff_vals = []
+                    for df in dfs_trimmed:
+                        row = df[df[x_col] == cycle]
+                        if not row.empty:
+                            if 'Q Dis (mAh/g)' in row:
+                                qdis_vals.append(row['Q Dis (mAh/g)'].values[0])
+                            if 'Q Chg (mAh/g)' in row:
+                                qchg_vals.append(row['Q Chg (mAh/g)'].values[0])
+                            if 'Efficiency (-)' in row and not pd.isnull(row['Efficiency (-)'].values[0]):
+                                eff_vals.append(row['Efficiency (-)'].values[0] * 100)
+                    avg_qdis.append(sum(qdis_vals)/len(qdis_vals) if qdis_vals else None)
+                    avg_qchg.append(sum(qchg_vals)/len(qchg_vals) if qchg_vals else None)
+                    avg_eff.append(sum(eff_vals)/len(eff_vals) if eff_vals else None)
+                avg_label_prefix = f"{experiment_name} " if experiment_name else ""
+                ax1.plot(common_cycles, avg_qdis, label=f'{avg_label_prefix}Average Q Dis', color='black', linewidth=2, marker='D')
+                ax1.plot(common_cycles, avg_qchg, label=f'{avg_label_prefix}Average Q Chg', color='gray', linewidth=2, marker='D')
+                ax2.plot(common_cycles, avg_eff, label=f'{avg_label_prefix}Average Efficiency (%)', color='orange', linewidth=2, linestyle='--', marker='D', alpha=0.7)
         ax1.set_xlabel(x_col)
         ax1.set_ylabel('Capacity (mAh/g)', color='blue')
         ax2.set_ylabel('Efficiency (%)', color='red')
@@ -73,6 +106,31 @@ def plot_capacity_graph(
                     ax.plot(plot_df[dataset_x_col], plot_df['Q Chg (mAh/g)'], label=label_chg, marker='o')
             except Exception:
                 pass
+        # Plot average if requested
+        if show_average_performance and len(dfs) > 1:
+            dfs_trimmed = [d['df'][:-1] if remove_last_cycle else d['df'] for d in dfs]
+            common_cycles = set(dfs_trimmed[0][x_col])
+            for df in dfs_trimmed[1:]:
+                common_cycles = common_cycles & set(df[x_col])
+            common_cycles = sorted(list(common_cycles))
+            if common_cycles:
+                avg_qdis = []
+                avg_qchg = []
+                for cycle in common_cycles:
+                    qdis_vals = []
+                    qchg_vals = []
+                    for df in dfs_trimmed:
+                        row = df[df[x_col] == cycle]
+                        if not row.empty:
+                            if 'Q Dis (mAh/g)' in row:
+                                qdis_vals.append(row['Q Dis (mAh/g)'].values[0])
+                            if 'Q Chg (mAh/g)' in row:
+                                qchg_vals.append(row['Q Chg (mAh/g)'].values[0])
+                    avg_qdis.append(sum(qdis_vals)/len(qdis_vals) if qdis_vals else None)
+                    avg_qchg.append(sum(qchg_vals)/len(qchg_vals) if qchg_vals else None)
+                avg_label_prefix = f"{experiment_name} " if experiment_name else ""
+                ax.plot(common_cycles, avg_qdis, label=f'{avg_label_prefix}Average Q Dis', color='black', linewidth=2, marker='D')
+                ax.plot(common_cycles, avg_qchg, label=f'{avg_label_prefix}Average Q Chg', color='gray', linewidth=2, marker='D')
         ax.set_xlabel(x_col)
         ax.set_ylabel('Capacity (mAh/g)')
         if show_graph_title:

@@ -3,7 +3,7 @@ import streamlit as st
 from typing import List, Dict, Any, Tuple
 import pandas as pd
 
-def render_toggle_section(dfs: List[Dict[str, Any]]) -> Tuple[Dict[str, bool], Dict[str, bool], bool, bool]:
+def render_toggle_section(dfs: List[Dict[str, Any]]) -> Tuple[Dict[str, bool], Dict[str, bool], bool, bool, bool, bool]:
     """Render all toggles and return their states: show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title."""
     st.markdown("### Graph Display Options")
     dis_col, chg_col, eff_col = st.columns(3)
@@ -59,12 +59,18 @@ def render_toggle_section(dfs: List[Dict[str, Any]]) -> Tuple[Dict[str, bool], D
         for label in efficiency_labels:
             show_efficiency_lines[label] = st.checkbox(f"Show {label}", value=toggle_all_efficiency, key=f'show_{label}')
 
+    show_average_performance_displayed = False
     st.markdown("---")
     with st.expander("📊 Graphing Options", expanded=False):
         remove_last_cycle = st.checkbox('Remove last cycle from graph', value=False)
         show_graph_title = st.checkbox('Show graph title', value=False)
-
-    return show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title
+        show_average_performance = False
+        if len(dfs) > 1:
+            show_average_performance = st.checkbox('Average cell performance', value=False)
+    # Display options for toggling average line
+    if show_average_performance:
+        show_average_performance_displayed = st.checkbox('Show Average Cell Performance', value=True, key='show_average_performance_displayed')
+    return show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, show_average_performance_displayed
 
 def render_cell_inputs() -> list:
     """Render file upload, disc loading, % active, test number inputs for each cell. Handles add/remove and returns datasets list."""
@@ -95,15 +101,44 @@ def render_cell_inputs() -> list:
                 st.session_state['next_cell_idx'] += 1
                 st.rerun()
         datasets = []
+        # Get first cell's values from session_state if available, else use defaults
+        first_loading = st.session_state.get('loading_0', 20.0)
+        first_active = st.session_state.get('active_0', 90.0)
         for i, idx in enumerate(st.session_state['cell_indices']):
             with cols[i]:
                 uploaded_file = st.file_uploader(f'Upload CSV file for Cell {i+1}', type=['csv'], key=f'file_{idx}')
-                disc_loading = st.number_input(f'Disc loading (mg) for Cell {i+1}', min_value=0.0, step=1.0, value=20.0, key=f'loading_{idx}')
-                active_material = st.number_input(f'% Active material for Cell {i+1}', min_value=0.0, max_value=100.0, step=0.01, value=90.0, key=f'active_{idx}')
+                if i == 0:
+                    disc_loading = st.number_input(f'Disc loading (mg) for Cell {i+1}', min_value=0.0, step=1.0, value=20.0, key=f'loading_{idx}')
+                    active_material = st.number_input(f'% Active material for Cell {i+1}', min_value=0.0, max_value=100.0, step=1.0, value=90.0, key=f'active_{idx}')
+                else:
+                    disc_loading = st.number_input(f'Disc loading (mg) for Cell {i+1}', min_value=0.0, step=1.0, value=first_loading, key=f'loading_{idx}')
+                    active_material = st.number_input(f'% Active material for Cell {i+1}', min_value=0.0, max_value=100.0, step=1.0, value=first_active, key=f'active_{idx}')
                 default_test_num = f'Cell {i+1}'
                 test_number = st.text_input(f'Test Number for Cell {i+1}', value=default_test_num, key=f'testnum_{idx}')
                 datasets.append({'file': uploaded_file, 'loading': disc_loading, 'active': active_material, 'testnum': test_number})
     return datasets
+
+def get_qdis_series(df_cell):
+    qdis_raw = df_cell['Q Dis (mAh/g)']
+    if pd.api.types.is_scalar(qdis_raw):
+        return pd.Series([qdis_raw]).dropna()
+    else:
+        return pd.Series(qdis_raw).dropna()
+
+def calculate_cycle_life_80(qdis_series, cycle_index_series):
+    if len(qdis_series) >= 4:
+        initial_qdis = max(qdis_series.iloc[2], qdis_series.iloc[3])
+    elif len(qdis_series) > 0:
+        initial_qdis = qdis_series.iloc[-1]
+    else:
+        return None
+    threshold = 0.8 * initial_qdis
+    below_threshold = qdis_series <= threshold
+    if below_threshold.any():
+        first_below_idx = below_threshold.idxmin()
+        return int(cycle_index_series.iloc[first_below_idx])
+    else:
+        return int(cycle_index_series.iloc[-1])
 
 def display_summary_stats(dfs: List[Dict[str, Any]]):
     """Display summary statistics in Streamlit."""
@@ -128,22 +163,10 @@ def display_summary_stats(dfs: List[Dict[str, Any]]):
                     st.warning('Invalid efficiency data format.')
             else:
                 st.warning('Efficiency (-) column not found in data.')
-            cycle_life_80 = None
-            try:
-                if not df_cell['Q Dis (mAh/g)'].empty:
-                    qdis_series = pd.to_numeric(df_cell['Q Dis (mAh/g)'], errors='coerce').dropna()
-                    if not qdis_series.empty:
-                        initial_qdis = qdis_series.iloc[0]
-                        threshold = 0.8 * initial_qdis
-                        below_threshold = qdis_series <= threshold
-                        if below_threshold.any():
-                            first_below_idx = below_threshold.idxmin()
-                            cycle_life_80 = int(df_cell.loc[first_below_idx, df_cell.columns[0]])
-                        else:
-                            cycle_life_80 = int(df_cell[df_cell.columns[0]].iloc[-1])
-            except Exception as e:
-                st.error(f"Error calculating cycle life for {cell_name}: {str(e)}")
-                cycle_life_80 = None
+            # Updated cycle life calculation
+            qdis_series = get_qdis_series(df_cell)
+            cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+            cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
             st.info(f"Cycle Life (80%): {cycle_life_80 if cycle_life_80 is not None else 'N/A'}")
 
 
