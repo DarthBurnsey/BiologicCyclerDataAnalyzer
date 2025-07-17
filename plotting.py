@@ -1,7 +1,7 @@
 # plotting.py
 import matplotlib.pyplot as plt
 import pandas as pd
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from matplotlib.figure import Figure
 
 def plot_capacity_graph(
@@ -11,14 +11,22 @@ def plot_capacity_graph(
     remove_last_cycle: bool,
     show_graph_title: bool,
     experiment_name: str,
-    show_average_performance: bool = False
+    show_average_performance: bool = False,
+    avg_line_toggles: Optional[Dict[str, bool]] = None,
+    remove_markers: bool = False
 ) -> Figure:
-    """Plot the main capacity/efficiency graph and return the matplotlib figure."""
+    """Plot the main capacity/efficiency graph and return the matplotlib figure. If remove_markers is True, lines will have no markers."""
+    if avg_line_toggles is None:
+        avg_line_toggles = {"Average Q Dis": True, "Average Q Chg": True, "Average Efficiency": True}
     x_col = 'Cycle'  # default
     if dfs:
         x_col = dfs[0]['df'].columns[0]
     any_efficiency = any(show_efficiency_lines.values())
-    if any_efficiency:
+    avg_eff_on = show_average_performance and avg_line_toggles and avg_line_toggles.get("Average Efficiency", False)
+    marker_style = '' if remove_markers else 'o'
+    avg_marker_style = '' if remove_markers else 'D'
+    eff_marker_style = '' if remove_markers else 's'
+    if any_efficiency or avg_eff_on:
         fig, ax1 = plt.subplots()
         ax2 = ax1.twinx()
         for i, d in enumerate(dfs):
@@ -29,9 +37,9 @@ def plot_capacity_graph(
                 plot_df = d['df'][:-1] if remove_last_cycle else d['df']
                 dataset_x_col = plot_df.columns[0]
                 if show_lines.get(label_dis, False):
-                    ax1.plot(plot_df[dataset_x_col], plot_df['Q Dis (mAh/g)'], label=label_dis, marker='o')
+                    ax1.plot(plot_df[dataset_x_col], plot_df['Q Dis (mAh/g)'], label=label_dis, marker=marker_style)
                 if show_lines.get(label_chg, False):
-                    ax1.plot(plot_df[dataset_x_col], plot_df['Q Chg (mAh/g)'], label=label_chg, marker='o')
+                    ax1.plot(plot_df[dataset_x_col], plot_df['Q Chg (mAh/g)'], label=label_chg, marker=marker_style)
             except Exception:
                 pass
         for i, d in enumerate(dfs):
@@ -42,7 +50,7 @@ def plot_capacity_graph(
                 dataset_x_col = plot_df.columns[0]
                 if show_efficiency_lines.get(label_eff, False) and 'Efficiency (-)' in plot_df.columns and not plot_df['Efficiency (-)'].empty:
                     efficiency_pct = plot_df['Efficiency (-)'] * 100
-                    ax2.plot(plot_df[dataset_x_col], efficiency_pct, label=f'{cell_name} Efficiency (%)', linestyle='--', marker='s', alpha=0.7)
+                    ax2.plot(plot_df[dataset_x_col], efficiency_pct, label=f'{cell_name} Efficiency (%)', linestyle='--', marker=eff_marker_style, alpha=0.7)
             except Exception:
                 pass
         # Plot average if requested
@@ -74,9 +82,12 @@ def plot_capacity_graph(
                     avg_qchg.append(sum(qchg_vals)/len(qchg_vals) if qchg_vals else None)
                     avg_eff.append(sum(eff_vals)/len(eff_vals) if eff_vals else None)
                 avg_label_prefix = f"{experiment_name} " if experiment_name else ""
-                ax1.plot(common_cycles, avg_qdis, label=f'{avg_label_prefix}Average Q Dis', color='black', linewidth=2, marker='D')
-                ax1.plot(common_cycles, avg_qchg, label=f'{avg_label_prefix}Average Q Chg', color='gray', linewidth=2, marker='D')
-                ax2.plot(common_cycles, avg_eff, label=f'{avg_label_prefix}Average Efficiency (%)', color='orange', linewidth=2, linestyle='--', marker='D', alpha=0.7)
+                if avg_line_toggles.get("Average Q Dis", True):
+                    ax1.plot(common_cycles, avg_qdis, label=f'{avg_label_prefix}Average Q Dis', color='black', linewidth=2, marker=avg_marker_style)
+                if avg_line_toggles.get("Average Q Chg", True):
+                    ax1.plot(common_cycles, avg_qchg, label=f'{avg_label_prefix}Average Q Chg', color='gray', linewidth=2, marker=avg_marker_style)
+                if avg_line_toggles.get("Average Efficiency", True):
+                    ax2.plot(common_cycles, avg_eff, label=f'{avg_label_prefix}Average Efficiency (%)', color='orange', linewidth=2, linestyle='--', marker=avg_marker_style, alpha=0.7)
         ax1.set_xlabel(x_col)
         ax1.set_ylabel('Capacity (mAh/g)', color='blue')
         ax2.set_ylabel('Efficiency (%)', color='red')
@@ -101,9 +112,9 @@ def plot_capacity_graph(
                 plot_df = d['df'][:-1] if remove_last_cycle else d['df']
                 dataset_x_col = plot_df.columns[0]
                 if show_lines.get(label_dis, False):
-                    ax.plot(plot_df[dataset_x_col], plot_df['Q Dis (mAh/g)'], label=label_dis, marker='o')
+                    ax.plot(plot_df[dataset_x_col], plot_df['Q Dis (mAh/g)'], label=label_dis, marker=marker_style)
                 if show_lines.get(label_chg, False):
-                    ax.plot(plot_df[dataset_x_col], plot_df['Q Chg (mAh/g)'], label=label_chg, marker='o')
+                    ax.plot(plot_df[dataset_x_col], plot_df['Q Chg (mAh/g)'], label=label_chg, marker=marker_style)
             except Exception:
                 pass
         # Plot average if requested
@@ -129,8 +140,10 @@ def plot_capacity_graph(
                     avg_qdis.append(sum(qdis_vals)/len(qdis_vals) if qdis_vals else None)
                     avg_qchg.append(sum(qchg_vals)/len(qchg_vals) if qchg_vals else None)
                 avg_label_prefix = f"{experiment_name} " if experiment_name else ""
-                ax.plot(common_cycles, avg_qdis, label=f'{avg_label_prefix}Average Q Dis', color='black', linewidth=2, marker='D')
-                ax.plot(common_cycles, avg_qchg, label=f'{avg_label_prefix}Average Q Chg', color='gray', linewidth=2, marker='D')
+                if avg_line_toggles.get("Average Q Dis", True):
+                    ax.plot(common_cycles, avg_qdis, label=f'{avg_label_prefix}Average Q Dis', color='black', linewidth=2, marker=avg_marker_style)
+                if avg_line_toggles.get("Average Q Chg", True):
+                    ax.plot(common_cycles, avg_qchg, label=f'{avg_label_prefix}Average Q Chg', color='gray', linewidth=2, marker=avg_marker_style)
         ax.set_xlabel(x_col)
         ax.set_ylabel('Capacity (mAh/g)')
         if show_graph_title:

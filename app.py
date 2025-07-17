@@ -28,7 +28,7 @@ def get_qdis_series(df_cell):
     else:
         return pd.Series(qdis_raw).dropna()
 from data_processing import load_and_preprocess_data
-from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs
+from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs, get_initial_areal_capacity
 from plotting import plot_capacity_graph
 
 st.title('Battery Data Gravimetric Capacity Calculator')
@@ -62,19 +62,23 @@ for ds in datasets:
 
 ready = len(valid_datasets) > 0
 if ready:
+    # Disc diameter input (mm) for areal capacity calculation, with plus/minus buttons
+    disc_diameter_mm = st.number_input('Disc Diameter (mm) for Areal Capacity Calculation', min_value=1, max_value=50, value=15, step=1, key='disc_diameter_mm')
+    disc_area_cm2 = np.pi * (disc_diameter_mm / 2 / 10) ** 2  # convert mm to cm, then area
+    
     dfs = load_and_preprocess_data(valid_datasets)
-    show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, show_average_performance_displayed = render_toggle_section(dfs)
+    show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers = render_toggle_section(dfs)
     fig = plot_capacity_graph(
         dfs, show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name,
-        show_average_performance and show_average_performance_displayed
+        show_average_performance, avg_line_toggles, remove_markers
     )
     st.pyplot(fig)
-    display_summary_stats(dfs)
+    display_summary_stats(dfs, disc_area_cm2)
     # Average comparison cells toggle (only show when multiple cells)
     show_averages = False
     if len(dfs) > 1:
         show_averages = st.checkbox('Average the comparison cells', value=True)
-    display_averages(dfs, show_averages)
+    display_averages(dfs, show_averages, disc_area_cm2)
 
     # --- PowerPoint Export ---
     from pptx import Presentation
@@ -113,7 +117,14 @@ if ready:
             
             # Create slide with bullet points
             slide = prs.slides.add_slide(prs.slide_layouts[1])
-            slide.shapes.title.text = f"{testnum} Summary"
+            title_shape = slide.shapes.title
+            if title_shape is not None:
+                if experiment_name:
+                    title_shape.text = f"{experiment_name} - {testnum} Summary"
+                else:
+                    title_shape.text = f"{testnum} Summary"
+            if hasattr(title_shape, 'text_frame') and getattr(title_shape, 'text_frame', None) is not None:
+                title_shape.text_frame.paragraphs[0].font.size = Pt(30)
             
             # Echem header
             echem_header_box = slide.shapes.add_textbox(Inches(0.5), Inches(1.2), Inches(3.5), Inches(0.5))
@@ -129,65 +140,28 @@ if ready:
             
             # Summary bullets
             content = slide.placeholders[1]
-            content.text = ""
-            p1 = content.text_frame.add_paragraph()
-            p1.text = f"1st Cycle Discharge Capacity: {qdis_str} mAh/g"
-            p1.level = 0
-            p1.font.size = Pt(18)
-            p2 = content.text_frame.add_paragraph()
-            p2.text = f"First Cycle Efficiency: {eff_str}"
-            p2.level = 0
-            p2.font.size = Pt(18)
-            p3 = content.text_frame.add_paragraph()
-            p3.text = f"Cycle Life (80%): {cycle_life_str}"
-            p3.level = 0
-            p3.font.size = Pt(18)
+            if hasattr(content, 'text'):
+                content.text = ""
+            if hasattr(content, 'text_frame') and getattr(content, 'text_frame', None) is not None:
+                p1 = content.text_frame.add_paragraph()
+                p1.text = f"1st Cycle Discharge Capacity: {qdis_str} mAh/g"
+                p1.level = 0
+                p1.font.size = Pt(18)
+                p2 = content.text_frame.add_paragraph()
+                p2.text = f"First Cycle Efficiency: {eff_str}"
+                p2.level = 0
+                p2.font.size = Pt(18)
+                p3 = content.text_frame.add_paragraph()
+                p3.text = f"Cycle Life (80%): {cycle_life_str}"
+                p3.level = 0
+                p3.font.size = Pt(18)
             
             # Create graph for single cell
-            plot_df = df_cell[:-1] if remove_last_cycle else df_cell
-            x_col = df_cell.columns[0]
-            label_eff = f"{testnum} Efficiency" if testnum else 'Cell 1 Efficiency'
-            show_eff_in_ppt = show_efficiency_lines.get(label_eff, False)
-            
-            if show_eff_in_ppt:
-                fig, ax1 = plt.subplots()
-                ax2 = ax1.twinx()
-                
-                label_dis = f"{testnum} Q Dis" if testnum else 'Q Dis'
-                label_chg = f"{testnum} Q Chg" if testnum else 'Q Chg'
-                if show_lines.get(label_dis, False):
-                    ax1.plot(plot_df[x_col], plot_df['Q Dis (mAh/g)'], label=label_dis, marker='o')
-                if show_lines.get(label_chg, False):
-                    ax1.plot(plot_df[x_col], plot_df['Q Chg (mAh/g)'], label=label_chg, marker='o')
-                
-                if 'Efficiency (-)' in plot_df.columns and not plot_df['Efficiency (-)'].empty:
-                    efficiency_pct = plot_df['Efficiency (-)'] * 100
-                    ax2.plot(plot_df[x_col], efficiency_pct, label=f'{testnum} Efficiency (%)' if testnum else 'Cell 1 Efficiency (%)', 
-                            linestyle='--', marker='s', alpha=0.7)
-                
-                ax1.set_xlabel(str(x_col))
-                ax1.set_ylabel('Capacity (mAh/g)', color='blue')
-                ax2.set_ylabel('Efficiency (%)', color='red')
-                ax1.set_title('Gravimetric Capacity and Efficiency vs. ' + str(x_col))
-                ax1.tick_params(axis='y', labelcolor='blue')
-                ax2.tick_params(axis='y', labelcolor='red')
-                lines1, labels1 = ax1.get_legend_handles_labels()
-                lines2, labels2 = ax2.get_legend_handles_labels()
-                ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
-            else:
-                fig, ax = plt.subplots()
-                label_dis = f"{testnum} Q Dis" if testnum else 'Q Dis'
-                label_chg = f"{testnum} Q Chg" if testnum else 'Q Chg'
-                if show_lines.get(label_dis, False):
-                    ax.plot(plot_df[x_col], plot_df['Q Dis (mAh/g)'], label=label_dis, marker='o')
-                if show_lines.get(label_chg, False):
-                    ax.plot(plot_df[x_col], plot_df['Q Chg (mAh/g)'], label=label_chg, marker='o')
-                ax.set_xlabel(str(x_col))
-                ax.set_ylabel('Capacity (mAh/g)')
-                ax.set_title('Gravimetric Capacity vs. ' + str(x_col))
-                ax.legend()
-            
-            # Add graph to slide
+            # Use plot_capacity_graph with show_graph_title as set by the user
+            fig = plot_capacity_graph(
+                [dfs[0]], show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name,
+                show_average_performance, avg_line_toggles, remove_markers
+            )
             img_bytes = io.BytesIO()
             fig.savefig(img_bytes, format='png', bbox_inches='tight')
             plt.close(fig)
@@ -206,14 +180,19 @@ if ready:
                 pptx_file_name = f'{experiment_name} {testnum} Summary.pptx'
             else:
                 pptx_file_name = f'{testnum} Summary.pptx'
-            st.download_button('Download PowerPoint Summary', data=pptx_bytes, file_name=pptx_file_name, mime='application/vnd.openxmlformats-officedocument.presentationml.presentation')
+            st.download_button(f'Download PowerPoint: {pptx_file_name}', data=pptx_bytes, file_name=pptx_file_name, mime='application/vnd.openxmlformats-officedocument.presentationml.presentation')
             
         else:
             # Multiple cells - use table format
             slide = prs.slides.add_slide(prs.slide_layouts[1])  # Title and Content layout
-            slide.shapes.title.text = "Cell Comparison Summary"
-            # Set title font size to 30
-            slide.shapes.title.text_frame.paragraphs[0].font.size = Pt(30)
+            title_shape = slide.shapes.title
+            if title_shape is not None:
+                if experiment_name:
+                    title_shape.text = f"{experiment_name} - Cell Comparison Summary"
+                else:
+                    title_shape.text = "Cell Comparison Summary"
+            if hasattr(title_shape, 'text_frame') and getattr(title_shape, 'text_frame', None) is not None:
+                title_shape.text_frame.paragraphs[0].font.size = Pt(30)
             
             # Echem header
             echem_header_box = slide.shapes.add_textbox(Inches(0.5), Inches(1.2), Inches(3.5), Inches(0.5))
@@ -229,51 +208,80 @@ if ready:
             
             # Calculate summary data for all cells
             table_data = []
-            headers = ["Cell", "1st Cycle Discharge Capacity (mAh/g)", "First Cycle Efficiency (%)", "Cycle Life (80%)"]
+            headers = ["Cell", "1st Cycle Discharge Capacity (mAh/g)", "First Cycle Efficiency (%)", "Cycle Life (80%)", "Initial Areal Capacity (mAh/cm²)", "Reversible Capacity (mAh/g)", "Coulombic Efficiency (post-formation, %)"]
             table_data.append(headers)
             
             for i, d in enumerate(dfs):
                 df_cell = d['df']
                 cell_name = d['testnum'] if d['testnum'] else f'Cell {i+1}'
-                
                 # Calculate values
                 first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
                 max_qdis = max(first_three_qdis) if first_three_qdis else None
                 qdis_str = f"{max_qdis:.1f}" if isinstance(max_qdis, (int, float)) else "N/A"
-                
                 if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                     first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
                     eff_pct = first_cycle_eff * 100
                     eff_str = f"{eff_pct:.1f}%"
                 else:
                     eff_str = "N/A"
-                
                 # Cycle Life (80%)
                 qdis_series = get_qdis_series(df_cell)
                 cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
                 cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
-                
                 cycle_life_str = str(cycle_life_80) if isinstance(cycle_life_80, (int, float)) else "N/A"
-                table_data.append([cell_name, qdis_str, eff_str, cycle_life_str])
+                # Initial Areal Capacity (mAh/cm²)
+                areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
+                if areal_capacity is None:
+                    areal_str = "N/A"
+                else:
+                    areal_str = f"{areal_capacity:.3f}"
+                # Reversible Capacity (mAh/g)
+                formation_cycles = d.get('formation_cycles', 4)
+                if len(df_cell) > formation_cycles:
+                    reversible_capacity = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
+                    reversible_str = f"{reversible_capacity:.1f}"
+                else:
+                    reversible_str = "N/A"
+                # Coulombic Efficiency (post-formation, %)
+                eff_col = 'Efficiency (-)'
+                qdis_col = 'Q Dis (mAh/g)'
+                n_cycles = len(df_cell)
+                ceff_values = []
+                if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
+                    prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
+                    prev_eff = df_cell[eff_col].iloc[formation_cycles]
+                    for j in range(formation_cycles+1, n_cycles):
+                        curr_qdis = df_cell[qdis_col].iloc[j]
+                        curr_eff = df_cell[eff_col].iloc[j]
+                        if prev_qdis > 0 and (curr_qdis < 0.95 * prev_qdis or curr_eff < 0.95 * prev_eff):
+                            break
+                        ceff_values.append(curr_eff)
+                        prev_qdis = curr_qdis
+                        prev_eff = curr_eff
+                if ceff_values:
+                    ceff_str = f"{sum(ceff_values)/len(ceff_values)*100:.2f}"
+                else:
+                    ceff_str = "N/A"
+                table_data.append([cell_name, qdis_str, eff_str, cycle_life_str, areal_str, reversible_str, ceff_str])
             
             # Add average row if requested
             if show_averages:
                 avg_qdis_values = []
                 avg_eff_values = []
                 avg_cycle_life_values = []
-                
+                avg_areal_capacity_values = []
+                avg_reversible_capacities = []
+                avg_ceff_values = []
                 for d in dfs:
                     df_cell = d['df']
                     first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
                     max_qdis = max(first_three_qdis) if first_three_qdis else None
                     if max_qdis is not None:
                         avg_qdis_values.append(max_qdis)
-                    
                     if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                         first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
                         eff_pct = first_cycle_eff * 100
                         avg_eff_values.append(eff_pct)
-                    
                     try:
                         qdis_series = get_qdis_series(df_cell)
                         cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
@@ -281,13 +289,38 @@ if ready:
                         avg_cycle_life_values.append(cycle_life_80)
                     except Exception:
                         pass
-                
-                # Calculate averages
+                    areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
+                    if areal_capacity is not None:
+                        avg_areal_capacity_values.append(areal_capacity)
+                    formation_cycles = d.get('formation_cycles', 4)
+                    if len(df_cell) > formation_cycles:
+                        reversible_capacity = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
+                        avg_reversible_capacities.append(reversible_capacity)
+                    # Coulombic Efficiency (post-formation, %)
+                    eff_col = 'Efficiency (-)'
+                    qdis_col = 'Q Dis (mAh/g)'
+                    n_cycles = len(df_cell)
+                    ceff_values = []
+                    if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
+                        prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
+                        prev_eff = df_cell[eff_col].iloc[formation_cycles]
+                        for j in range(formation_cycles+1, n_cycles):
+                            curr_qdis = df_cell[qdis_col].iloc[j]
+                            curr_eff = df_cell[eff_col].iloc[j]
+                            if prev_qdis > 0 and (curr_qdis < 0.95 * prev_qdis or curr_eff < 0.95 * prev_eff):
+                                break
+                            ceff_values.append(curr_eff)
+                            prev_qdis = curr_qdis
+                            prev_eff = curr_eff
+                    if ceff_values:
+                        avg_ceff_values.append(sum(ceff_values)/len(ceff_values)*100)
                 avg_qdis = sum(avg_qdis_values) / len(avg_qdis_values) if avg_qdis_values else 0
                 avg_eff = sum(avg_eff_values) / len(avg_eff_values) if avg_eff_values else 0
                 avg_cycle_life = sum(avg_cycle_life_values) / len(avg_cycle_life_values) if avg_cycle_life_values else 0
-                
-                table_data.append(["AVERAGE", f"{avg_qdis:.1f}", f"{avg_eff:.1f}%", f"{avg_cycle_life:.0f}"])
+                avg_areal = sum(avg_areal_capacity_values) / len(avg_areal_capacity_values) if avg_areal_capacity_values else 0
+                avg_reversible = sum(avg_reversible_capacities) / len(avg_reversible_capacities) if avg_reversible_capacities else None
+                avg_ceff = sum(avg_ceff_values) / len(avg_ceff_values) if avg_ceff_values else None
+                table_data.append(["AVERAGE", f"{avg_qdis:.1f}", f"{avg_eff:.1f}%", f"{avg_cycle_life:.0f}", f"{avg_areal:.3f}", f"{avg_reversible:.1f}" if avg_reversible is not None else "N/A", f"{avg_ceff:.2f}" if avg_ceff is not None else "N/A"])
             
             # Create table - centered on slide
             rows, cols = len(table_data), len(table_data[0])
@@ -323,19 +356,11 @@ if ready:
                             paragraph.font.size = Pt(11)
             
             # Create comparison graph
-            # Use the same plot as the main display, including average line if toggled
+            # Use the same plot as the main display, including average line if toggled, with show_graph_title as set by the user
             fig = plot_capacity_graph(
                 dfs, show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name,
-                show_average_performance and show_average_performance_displayed
+                show_average_performance, avg_line_toggles, remove_markers
             )
-            
-            ax = fig.gca() # Get the current axes
-            ax.set_xlabel('Cycle')
-            ax.set_ylabel('Capacity (mAh/g)')
-            ax.set_title('Cell Comparison - Gravimetric Capacity vs. Cycle')
-            ax.legend()
-            
-            # Add graph to slide with proper aspect ratio
             img_bytes = io.BytesIO()
             fig.savefig(img_bytes, format='png', bbox_inches='tight', dpi=300)
             plt.close(fig)
@@ -359,7 +384,7 @@ if ready:
                 pptx_file_name = f'{experiment_name} Cell Comparison Summary.pptx'
             else:
                 pptx_file_name = 'Cell Comparison Summary.pptx'
-            st.download_button('Download PowerPoint Summary', data=pptx_bytes, file_name=pptx_file_name, mime='application/vnd.openxmlformats-officedocument.presentationml.presentation')
+            st.download_button(f'Download PowerPoint: {pptx_file_name}', data=pptx_bytes, file_name=pptx_file_name, mime='application/vnd.openxmlformats-officedocument.presentationml.presentation')
 
     # --- Excel Export ---
     # Prepare XLSX for download with multiple sheets
@@ -418,6 +443,12 @@ if ready:
         chart.y_axis.majorTickMark = 'in'
         chart.width = 20
         chart.height = 12
+        # Ensure axes and gridlines are visible
+        chart.x_axis.majorGridlines = None
+        chart.y_axis.majorGridlines = None
+        # Ensure axes are visible on Mac and PC
+        chart.x_axis.crosses = 'autoZero'
+        chart.y_axis.crosses = 'autoZero'
         data = Reference(ws, min_col=min(q_dis_col, q_chg_col), max_col=max(q_dis_col, q_chg_col), min_row=data_start_row-1, max_row=data_end_row)
         chart.add_data(data, titles_from_data=True)
         cats = Reference(ws, min_col=x_col_idx, min_row=data_start_row, max_row=data_end_row)
@@ -437,6 +468,12 @@ if ready:
         ws_summary['B1'] = '1st Cycle Discharge Capacity (mAh/g)'
         ws_summary['C1'] = 'First Cycle Efficiency (%)'
         ws_summary['D1'] = 'Cycle Life (80%)'
+        ws_summary['E1'] = 'Initial Areal Capacity (mAh/cm²)'
+        ws_summary['F1'] = 'Reversible Capacity (mAh/g)'
+        ws_summary['G1'] = 'Coulombic Efficiency (post-formation, %)'
+        
+        # Calculate disc area (cm^2) from selected diameter
+        disc_area_cm2 = np.pi * (disc_diameter_mm / 2 / 10) ** 2
         
         # Add data for each cell
         for i, d in enumerate(dfs):
@@ -446,32 +483,67 @@ if ready:
             # Calculate summary values
             first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
             max_qdis = max(first_three_qdis) if first_three_qdis else None
-            
             if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                 first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
                 eff_pct = first_cycle_eff * 100
             else:
                 eff_pct = None
-            
             # Cycle Life (80%) calculation
             qdis_series = get_qdis_series(df_cell)
             cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
             cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
-            
+            # 1st Cycle Areal Capacity (Excel summary)
+            areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
+            if areal_capacity is None:
+                areal_capacity = ''
+            # Reversible Capacity (mAh/g)
+            formation_cycles = d.get('formation_cycles', 4)
+            if len(df_cell) > formation_cycles:
+                reversible_capacity = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
+                reversible_str = f"{reversible_capacity:.1f}"
+            else:
+                reversible_str = "N/A"
+            # Coulombic Efficiency (post-formation, %)
+            eff_col = 'Efficiency (-)'
+            qdis_col = 'Q Dis (mAh/g)'
+            n_cycles = len(df_cell)
+            ceff_values = []
+            if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
+                prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
+                prev_eff = df_cell[eff_col].iloc[formation_cycles]
+                for j in range(formation_cycles+1, n_cycles):
+                    curr_qdis = df_cell[qdis_col].iloc[j]
+                    curr_eff = df_cell[eff_col].iloc[j]
+                    if prev_qdis > 0 and (curr_qdis < 0.95 * prev_qdis or curr_eff < 0.95 * prev_eff):
+                        break
+                    ceff_values.append(curr_eff)
+                    prev_qdis = curr_qdis
+                    prev_eff = curr_eff
+            if ceff_values:
+                ceff_str = f"{sum(ceff_values)/len(ceff_values)*100:.2f}"
+            else:
+                ceff_str = "N/A"
             # Write to summary sheet
             row = i + 2  # Start from row 2 (row 1 is headers)
             ws_summary[f'A{row}'] = cell_name
             ws_summary[f'B{row}'] = max_qdis if isinstance(max_qdis, (int, float)) and max_qdis is not None else ''
             ws_summary[f'C{row}'] = eff_pct if isinstance(eff_pct, (int, float)) and eff_pct is not None else ''
             ws_summary[f'D{row}'] = cycle_life_80 if cycle_life_80 is not None else ''
+            ws_summary[f'E{row}'] = areal_capacity if areal_capacity != '' else ''
+            ws_summary[f'F{row}'] = reversible_str if reversible_str != "N/A" else ''
+            ws_summary[f'G{row}'] = ceff_str if ceff_str != "N/A" else ''
+            # Add note if out of range
+            if areal_capacity != '' and (areal_capacity < 0 or areal_capacity > 10):
+                ws_summary[f'H{row}'] = 'Warning: Areal capacity out of 0-10 mAh/cm² range'
         
         # Add average row if show_averages is True
         if show_averages:
-            # Calculate averages
             avg_qdis_values = []
             avg_eff_values = []
             avg_cycle_life_values = []
-            
+            avg_areal_capacity_values = []
+            avg_reversible_capacities = []
+            avg_ceff_values = []
             for d in dfs:
                 df_cell = d['df']
                 # 1st Cycle Discharge Capacity
@@ -479,13 +551,11 @@ if ready:
                 max_qdis = max(first_three_qdis) if first_three_qdis else None
                 if max_qdis is not None:
                     avg_qdis_values.append(max_qdis)
-                
                 # First Cycle Efficiency
                 if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                     first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
                     eff_pct = first_cycle_eff * 100
                     avg_eff_values.append(eff_pct)
-                
                 # Cycle Life (80%)
                 try:
                     qdis_series = get_qdis_series(df_cell)
@@ -494,19 +564,56 @@ if ready:
                     avg_cycle_life_values.append(cycle_life_80)
                 except Exception:
                     pass
-            
+                # 1st Cycle Areal Capacity (Excel summary)
+                areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
+                if areal_capacity is not None:
+                    avg_areal_capacity_values.append(areal_capacity)
+                # Reversible Capacity (mAh/g)
+                formation_cycles = d.get('formation_cycles', 4)
+                if len(df_cell) > formation_cycles:
+                    reversible_capacity = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
+                    avg_reversible_capacities.append(reversible_capacity)
+                # Coulombic Efficiency (post-formation, %)
+                eff_col = 'Efficiency (-)'
+                qdis_col = 'Q Dis (mAh/g)'
+                n_cycles = len(df_cell)
+                ceff_values = []
+                if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
+                    prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
+                    prev_eff = df_cell[eff_col].iloc[formation_cycles]
+                    for j in range(formation_cycles+1, n_cycles):
+                        curr_qdis = df_cell[qdis_col].iloc[j]
+                        curr_eff = df_cell[eff_col].iloc[j]
+                        if prev_qdis > 0 and (curr_qdis < 0.95 * prev_qdis or curr_eff < 0.95 * prev_eff):
+                            break
+                        ceff_values.append(curr_eff)
+                        prev_qdis = curr_qdis
+                        prev_eff = curr_eff
+                if ceff_values:
+                    avg_ceff_values.append(sum(ceff_values)/len(ceff_values)*100)
             # Add average row
             avg_row = len(dfs) + 2
             ws_summary[f'A{avg_row}'] = 'Average'
             ws_summary[f'B{avg_row}'] = sum(avg_qdis_values) / len(avg_qdis_values) if avg_qdis_values else ''
             ws_summary[f'C{avg_row}'] = sum(avg_eff_values) / len(avg_eff_values) if avg_eff_values else ''
             ws_summary[f'D{avg_row}'] = sum(avg_cycle_life_values) / len(avg_cycle_life_values) if avg_cycle_life_values else ''
+            ws_summary[f'E{avg_row}'] = sum(avg_areal_capacity_values) / len(avg_areal_capacity_values) if avg_areal_capacity_values else ''
+            ws_summary[f'F{avg_row}'] = sum(avg_reversible_capacities) / len(avg_reversible_capacities) if avg_reversible_capacities else ''
+            ws_summary[f'G{avg_row}'] = sum(avg_ceff_values) / len(avg_ceff_values) if avg_ceff_values else ''
+            # Add note if out of range for average
+            avg_areal = ws_summary[f'E{avg_row}'].value
+            if avg_areal != '' and (avg_areal < 0 or avg_areal > 10):
+                ws_summary[f'H{avg_row}'] = 'Warning: Areal capacity out of 0-10 mAh/cm² range'
         
         # Move summary tab to the leftmost position
-        wb._sheets.insert(0, wb._sheets.pop(wb._sheets.index(ws_summary)))
+        try:
+            wb.move_sheet(ws_summary, offset=-wb.index(ws_summary))
+        except Exception:
+            # Fallback for openpyxl versions without move_sheet
+            wb._sheets.insert(0, wb._sheets.pop(wb._sheets.index(ws_summary)))
     
     # Add average cell performance sheet if toggled
-    if show_average_performance and show_average_performance_displayed and len(dfs) > 1:
+    if show_average_performance and len(dfs) > 1:
         # Find common cycles
         dfs_trimmed = [d['df'][:-1] if remove_last_cycle else d['df'] for d in dfs]
         x_col = dfs_trimmed[0].columns[0]
@@ -542,7 +649,7 @@ if ready:
             ws_avg = wb.create_sheet(avg_sheet_name)
             ws_avg.append([str(x_col), 'Average Q Dis (mAh/g)', 'Average Q Chg (mAh/g)', 'Average Efficiency (%)'])
             for row in avg_data:
-                ws_avg.append(row)
+                ws_avg.append(list(row))
     output2 = io.BytesIO()
     wb.save(output2)
     output2.seek(0)
