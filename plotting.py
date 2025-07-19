@@ -13,20 +13,34 @@ def plot_capacity_graph(
     experiment_name: str,
     show_average_performance: bool = False,
     avg_line_toggles: Optional[Dict[str, bool]] = None,
-    remove_markers: bool = False
+    remove_markers: bool = False,
+    hide_legend: bool = False,
+    group_a_curve: Optional[tuple] = None,
+    group_b_curve: Optional[tuple] = None,
+    group_c_curve: Optional[tuple] = None,
+    group_a_qchg: Optional[tuple] = None,
+    group_b_qchg: Optional[tuple] = None,
+    group_c_qchg: Optional[tuple] = None,
+    group_a_eff: Optional[tuple] = None,
+    group_b_eff: Optional[tuple] = None,
+    group_c_eff: Optional[tuple] = None,
+    group_names: Optional[list] = None
 ) -> Figure:
-    """Plot the main capacity/efficiency graph and return the matplotlib figure. If remove_markers is True, lines will have no markers."""
+    """Plot the main capacity/efficiency graph and return the matplotlib figure. If remove_markers is True, lines will have no markers. If hide_legend is True, the legend will not be shown. Optionally plot group average curves for Group A, B, and C."""
     if avg_line_toggles is None:
         avg_line_toggles = {"Average Q Dis": True, "Average Q Chg": True, "Average Efficiency": True}
+    if group_names is None:
+        group_names = ["Group A", "Group B", "Group C"]
     x_col = 'Cycle'  # default
     if dfs:
         x_col = dfs[0]['df'].columns[0]
     any_efficiency = any(show_efficiency_lines.values())
     avg_eff_on = show_average_performance and avg_line_toggles and avg_line_toggles.get("Average Efficiency", False)
+    any_group_eff = group_a_eff is not None or group_b_eff is not None or group_c_eff is not None
     marker_style = '' if remove_markers else 'o'
     avg_marker_style = '' if remove_markers else 'D'
     eff_marker_style = '' if remove_markers else 's'
-    if any_efficiency or avg_eff_on:
+    if any_efficiency or avg_eff_on or any_group_eff:
         fig, ax1 = plt.subplots()
         ax2 = ax1.twinx()
         for i, d in enumerate(dfs):
@@ -88,6 +102,43 @@ def plot_capacity_graph(
                     ax1.plot(common_cycles, avg_qchg, label=f'{avg_label_prefix}Average Q Chg', color='gray', linewidth=2, marker=avg_marker_style)
                 if avg_line_toggles.get("Average Efficiency", True):
                     ax2.plot(common_cycles, avg_eff, label=f'{avg_label_prefix}Average Efficiency (%)', color='orange', linewidth=2, linestyle='--', marker=avg_marker_style, alpha=0.7)
+        # --- Plot group averages if provided ---
+        if group_a_curve is not None:
+            cycles, avg_qdis = group_a_curve
+            if cycles and avg_qdis:
+                ax1.plot(cycles, avg_qdis, label=f'{group_names[0]} Avg Q Dis', color='blue', linewidth=2, linestyle='-', marker='x')
+        if group_b_curve is not None:
+            cycles, avg_qdis = group_b_curve
+            if cycles and avg_qdis:
+                ax1.plot(cycles, avg_qdis, label=f'{group_names[1]} Avg Q Dis', color='red', linewidth=2, linestyle='-', marker='x')
+        if group_c_curve is not None:
+            cycles, avg_qdis = group_c_curve
+            if cycles and avg_qdis:
+                ax1.plot(cycles, avg_qdis, label=f'{group_names[2]} Avg Q Dis', color='green', linewidth=2, linestyle='-', marker='x')
+        if group_a_qchg is not None:
+            cycles, avg_qchg = group_a_qchg
+            if cycles and avg_qchg:
+                ax1.plot(cycles, avg_qchg, label=f'{group_names[0]} Avg Q Chg', color='blue', linewidth=2, linestyle='--', marker='x')
+        if group_b_qchg is not None:
+            cycles, avg_qchg = group_b_qchg
+            if cycles and avg_qchg:
+                ax1.plot(cycles, avg_qchg, label=f'{group_names[1]} Avg Q Chg', color='red', linewidth=2, linestyle='--', marker='x')
+        if group_c_qchg is not None:
+            cycles, avg_qchg = group_c_qchg
+            if cycles and avg_qchg:
+                ax1.plot(cycles, avg_qchg, label=f'{group_names[2]} Avg Q Chg', color='green', linewidth=2, linestyle='--', marker='x')
+        if group_a_eff is not None:
+            cycles, avg_eff = group_a_eff
+            if cycles and avg_eff:
+                ax2.plot(cycles, avg_eff, label=f'{group_names[0]} Avg Efficiency (%)', color='blue', linewidth=2, linestyle='--', marker='x', alpha=0.7)
+        if group_b_eff is not None:
+            cycles, avg_eff = group_b_eff
+            if cycles and avg_eff:
+                ax2.plot(cycles, avg_eff, label=f'{group_names[1]} Avg Efficiency (%)', color='red', linewidth=2, linestyle='--', marker='x', alpha=0.7)
+        if group_c_eff is not None:
+            cycles, avg_eff = group_c_eff
+            if cycles and avg_eff:
+                ax2.plot(cycles, avg_eff, label=f'{group_names[2]} Avg Efficiency (%)', color='green', linewidth=2, linestyle='--', marker='x', alpha=0.7)
         ax1.set_xlabel(x_col)
         ax1.set_ylabel('Capacity (mAh/g)', color='blue')
         ax2.set_ylabel('Efficiency (%)', color='red')
@@ -100,7 +151,8 @@ def plot_capacity_graph(
         ax2.tick_params(axis='y', labelcolor='red')
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+        if not hide_legend:
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
         return fig
     else:
         fig, ax = plt.subplots()
@@ -144,6 +196,32 @@ def plot_capacity_graph(
                     ax.plot(common_cycles, avg_qdis, label=f'{avg_label_prefix}Average Q Dis', color='black', linewidth=2, marker=avg_marker_style)
                 if avg_line_toggles.get("Average Q Chg", True):
                     ax.plot(common_cycles, avg_qchg, label=f'{avg_label_prefix}Average Q Chg', color='gray', linewidth=2, marker=avg_marker_style)
+        # --- Plot group averages if provided ---
+        if group_a_curve is not None:
+            cycles, avg_qdis = group_a_curve
+            if cycles and avg_qdis:
+                ax.plot(cycles, avg_qdis, label=f'{group_names[0]} Avg Q Dis', color='blue', linewidth=2, linestyle='-', marker='x')
+        if group_b_curve is not None:
+            cycles, avg_qdis = group_b_curve
+            if cycles and avg_qdis:
+                ax.plot(cycles, avg_qdis, label=f'{group_names[1]} Avg Q Dis', color='red', linewidth=2, linestyle='-', marker='x')
+        if group_c_curve is not None:
+            cycles, avg_qdis = group_c_curve
+            if cycles and avg_qdis:
+                ax.plot(cycles, avg_qdis, label=f'{group_names[2]} Avg Q Dis', color='green', linewidth=2, linestyle='-', marker='x')
+        if group_a_qchg is not None:
+            cycles, avg_qchg = group_a_qchg
+            if cycles and avg_qchg:
+                ax.plot(cycles, avg_qchg, label=f'{group_names[0]} Avg Q Chg', color='blue', linewidth=2, linestyle='--', marker='x')
+        if group_b_qchg is not None:
+            cycles, avg_qchg = group_b_qchg
+            if cycles and avg_qchg:
+                ax.plot(cycles, avg_qchg, label=f'{group_names[1]} Avg Q Chg', color='red', linewidth=2, linestyle='--', marker='x')
+        if group_c_qchg is not None:
+            cycles, avg_qchg = group_c_qchg
+            if cycles and avg_qchg:
+                ax.plot(cycles, avg_qchg, label=f'{group_names[2]} Avg Q Chg', color='green', linewidth=2, linestyle='--', marker='x')
+        # Efficiency lines are not plotted in the non-efficiency axis case
         ax.set_xlabel(x_col)
         ax.set_ylabel('Capacity (mAh/g)')
         if show_graph_title:
@@ -151,5 +229,6 @@ def plot_capacity_graph(
                 ax.set_title(f'{experiment_name} - Gravimetric Capacity vs. ' + x_col)
             else:
                 ax.set_title('Gravimetric Capacity vs. ' + x_col)
-        ax.legend()
+        if not hide_legend:
+            ax.legend()
         return fig 
