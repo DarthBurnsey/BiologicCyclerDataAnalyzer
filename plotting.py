@@ -51,9 +51,23 @@ def plot_capacity_graph(
                 plot_df = d['df'][:-1] if remove_last_cycle else d['df']
                 dataset_x_col = plot_df.columns[0]
                 if show_lines.get(label_dis, False):
-                    ax1.plot(plot_df[dataset_x_col], plot_df['Q Dis (mAh/g)'], label=label_dis, marker=marker_style)
+                    try:
+                        # Convert to numeric, handling any string values
+                        qdis_data = pd.to_numeric(plot_df['Q Dis (mAh/g)'], errors='coerce')
+                        valid_mask = ~qdis_data.isna()
+                        if valid_mask.any():
+                            ax1.plot(plot_df[dataset_x_col][valid_mask], qdis_data[valid_mask], label=label_dis, marker=marker_style)
+                    except Exception:
+                        pass
                 if show_lines.get(label_chg, False):
-                    ax1.plot(plot_df[dataset_x_col], plot_df['Q Chg (mAh/g)'], label=label_chg, marker=marker_style)
+                    try:
+                        # Convert to numeric, handling any string values
+                        qchg_data = pd.to_numeric(plot_df['Q Chg (mAh/g)'], errors='coerce')
+                        valid_mask = ~qchg_data.isna()
+                        if valid_mask.any():
+                            ax1.plot(plot_df[dataset_x_col][valid_mask], qchg_data[valid_mask], label=label_chg, marker=marker_style)
+                    except Exception:
+                        pass
             except Exception:
                 pass
         for i, d in enumerate(dfs):
@@ -63,8 +77,17 @@ def plot_capacity_graph(
                 plot_df = d['df'][:-1] if remove_last_cycle else d['df']
                 dataset_x_col = plot_df.columns[0]
                 if show_efficiency_lines.get(label_eff, False) and 'Efficiency (-)' in plot_df.columns and not plot_df['Efficiency (-)'].empty:
-                    efficiency_pct = plot_df['Efficiency (-)'] * 100
-                    ax2.plot(plot_df[dataset_x_col], efficiency_pct, label=f'{cell_name} Efficiency (%)', linestyle='--', marker=eff_marker_style, alpha=0.7)
+                    try:
+                        # Convert to numeric, handling any string values
+                        efficiency_pct = pd.to_numeric(plot_df['Efficiency (-)'], errors='coerce') * 100
+                        # Remove any NaN values
+                        valid_mask = ~efficiency_pct.isna()
+                        if valid_mask.any():
+                            ax2.plot(plot_df[dataset_x_col][valid_mask], efficiency_pct[valid_mask], 
+                                   label=f'{cell_name} Efficiency (%)', linestyle='--', marker=eff_marker_style, alpha=0.7)
+                    except Exception:
+                        # Skip plotting if there are issues with efficiency data
+                        pass
             except Exception:
                 pass
         # Plot average if requested
@@ -87,11 +110,26 @@ def plot_capacity_graph(
                         row = df[df[x_col] == cycle]
                         if not row.empty:
                             if 'Q Dis (mAh/g)' in row:
-                                qdis_vals.append(row['Q Dis (mAh/g)'].values[0])
+                                try:
+                                    qdis_val = float(row['Q Dis (mAh/g)'].values[0])
+                                    qdis_vals.append(qdis_val)
+                                except (ValueError, TypeError):
+                                    # Skip non-numeric discharge capacity values
+                                    pass
                             if 'Q Chg (mAh/g)' in row:
-                                qchg_vals.append(row['Q Chg (mAh/g)'].values[0])
+                                try:
+                                    qchg_val = float(row['Q Chg (mAh/g)'].values[0])
+                                    qchg_vals.append(qchg_val)
+                                except (ValueError, TypeError):
+                                    # Skip non-numeric charge capacity values
+                                    pass
                             if 'Efficiency (-)' in row and not pd.isnull(row['Efficiency (-)'].values[0]):
-                                eff_vals.append(row['Efficiency (-)'].values[0] * 100)
+                                try:
+                                    eff_val = float(row['Efficiency (-)'].values[0]) * 100
+                                    eff_vals.append(eff_val)
+                                except (ValueError, TypeError):
+                                    # Skip non-numeric efficiency values
+                                    pass
                     avg_qdis.append(sum(qdis_vals)/len(qdis_vals) if qdis_vals else None)
                     avg_qchg.append(sum(qchg_vals)/len(qchg_vals) if qchg_vals else None)
                     avg_eff.append(sum(eff_vals)/len(eff_vals) if eff_vals else None)
@@ -144,9 +182,9 @@ def plot_capacity_graph(
         ax2.set_ylabel('Efficiency (%)', color='red')
         if show_graph_title:
             if experiment_name:
-                ax1.set_title(f'{experiment_name} - Gravimetric Capacity and Efficiency vs. ' + x_col)
+                ax1.set_title(f'{experiment_name} - Gravimetric Capacity and Efficiency vs. {x_col}')
             else:
-                ax1.set_title('Gravimetric Capacity and Efficiency vs. ' + x_col)
+                ax1.set_title(f'Gravimetric Capacity and Efficiency vs. {x_col}')
         ax1.tick_params(axis='y', labelcolor='blue')
         ax2.tick_params(axis='y', labelcolor='red')
         lines1, labels1 = ax1.get_legend_handles_labels()
@@ -164,9 +202,23 @@ def plot_capacity_graph(
                 plot_df = d['df'][:-1] if remove_last_cycle else d['df']
                 dataset_x_col = plot_df.columns[0]
                 if show_lines.get(label_dis, False):
-                    ax.plot(plot_df[dataset_x_col], plot_df['Q Dis (mAh/g)'], label=label_dis, marker=marker_style)
+                    try:
+                        # Convert to numeric, handling any string values
+                        qdis_data = pd.to_numeric(plot_df['Q Dis (mAh/g)'], errors='coerce')
+                        valid_mask = ~qdis_data.isna()
+                        if valid_mask.any():
+                            ax.plot(plot_df[dataset_x_col][valid_mask], qdis_data[valid_mask], label=label_dis, marker=marker_style)
+                    except Exception:
+                        pass
                 if show_lines.get(label_chg, False):
-                    ax.plot(plot_df[dataset_x_col], plot_df['Q Chg (mAh/g)'], label=label_chg, marker=marker_style)
+                    try:
+                        # Convert to numeric, handling any string values
+                        qchg_data = pd.to_numeric(plot_df['Q Chg (mAh/g)'], errors='coerce')
+                        valid_mask = ~qchg_data.isna()
+                        if valid_mask.any():
+                            ax.plot(plot_df[dataset_x_col][valid_mask], qchg_data[valid_mask], label=label_chg, marker=marker_style)
+                    except Exception:
+                        pass
             except Exception:
                 pass
         # Plot average if requested
@@ -186,9 +238,19 @@ def plot_capacity_graph(
                         row = df[df[x_col] == cycle]
                         if not row.empty:
                             if 'Q Dis (mAh/g)' in row:
-                                qdis_vals.append(row['Q Dis (mAh/g)'].values[0])
+                                try:
+                                    qdis_val = float(row['Q Dis (mAh/g)'].values[0])
+                                    qdis_vals.append(qdis_val)
+                                except (ValueError, TypeError):
+                                    # Skip non-numeric discharge capacity values
+                                    pass
                             if 'Q Chg (mAh/g)' in row:
-                                qchg_vals.append(row['Q Chg (mAh/g)'].values[0])
+                                try:
+                                    qchg_val = float(row['Q Chg (mAh/g)'].values[0])
+                                    qchg_vals.append(qchg_val)
+                                except (ValueError, TypeError):
+                                    # Skip non-numeric charge capacity values
+                                    pass
                     avg_qdis.append(sum(qdis_vals)/len(qdis_vals) if qdis_vals else None)
                     avg_qchg.append(sum(qchg_vals)/len(qchg_vals) if qchg_vals else None)
                 avg_label_prefix = f"{experiment_name} " if experiment_name else ""
@@ -226,9 +288,9 @@ def plot_capacity_graph(
         ax.set_ylabel('Capacity (mAh/g)')
         if show_graph_title:
             if experiment_name:
-                ax.set_title(f'{experiment_name} - Gravimetric Capacity vs. ' + x_col)
+                ax.set_title(f'{experiment_name} - Gravimetric Capacity vs. {x_col}')
             else:
-                ax.set_title('Gravimetric Capacity vs. ' + x_col)
+                ax.set_title(f'Gravimetric Capacity vs. {x_col}')
         if not hide_legend:
             ax.legend()
         return fig 

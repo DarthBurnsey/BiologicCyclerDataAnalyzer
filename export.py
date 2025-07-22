@@ -31,7 +31,10 @@ def export_excel(dfs: List[Dict[str, Any]], show_averages: bool, experiment_name
         max_qdis = max(first_three_qdis) if first_three_qdis else None
         if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
             first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-            eff_pct = first_cycle_eff * 100
+            try:
+                eff_pct = float(first_cycle_eff) * 100
+            except (ValueError, TypeError):
+                eff_pct = None
         else:
             eff_pct = None
         cycle_life_80 = None
@@ -93,7 +96,10 @@ def export_excel(dfs: List[Dict[str, Any]], show_averages: bool, experiment_name
             max_qdis = max(first_three_qdis) if first_three_qdis else None
             if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                 first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                eff_pct = first_cycle_eff * 100
+                try:
+                    eff_pct = float(first_cycle_eff) * 100
+                except (ValueError, TypeError):
+                    eff_pct = None
             else:
                 eff_pct = None
             cycle_life_80 = None
@@ -132,8 +138,13 @@ def export_excel(dfs: List[Dict[str, Any]], show_averages: bool, experiment_name
                     avg_qdis_values.append(max_qdis)
                 if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                     first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                    eff_pct = first_cycle_eff * 100
-                    avg_eff_values.append(eff_pct)
+                    try:
+                        eff_pct = float(first_cycle_eff) * 100
+                        avg_eff_values.append(eff_pct)
+                    except (ValueError, TypeError):
+                        avg_eff_values.append(None)
+                else:
+                    avg_eff_values.append(None)
                 try:
                     if not df_cell['Q Dis (mAh/g)'].empty:
                         qdis_raw = df_cell['Q Dis (mAh/g)']
@@ -156,20 +167,25 @@ def export_excel(dfs: List[Dict[str, Any]], show_averages: bool, experiment_name
             avg_row = len(dfs) + 2
             ws_summary[f'A{avg_row}'] = 'Average'
             ws_summary[f'B{avg_row}'] = sum(avg_qdis_values) / len(avg_qdis_values) if avg_qdis_values else ''
-            ws_summary[f'C{avg_row}'] = sum(avg_eff_values) / len(avg_eff_values) if avg_eff_values else ''
+            # Filter out None values for average calculation
+            valid_avg_eff_values = [v for v in avg_eff_values if v is not None]
+            ws_summary[f'C{avg_row}'] = sum(valid_avg_eff_values) / len(valid_avg_eff_values) if valid_avg_eff_values else ''
             ws_summary[f'D{avg_row}'] = sum(avg_cycle_life_values) / len(avg_cycle_life_values) if avg_cycle_life_values else ''
         wb._sheets.insert(0, wb._sheets.pop(wb._sheets.index(ws_summary)))
     output2 = io.BytesIO()
     wb.save(output2)
     output2.seek(0)
+    # Excel filename logic
     if experiment_name:
         if len(dfs) > 1:
             file_name = f'{experiment_name} Comparison Cycling data.xlsx'
         else:
-            # Use experiment_name only
             file_name = f'{experiment_name} Cycling data.xlsx'
     else:
-        file_name = 'Comparison Cycling data.xlsx' if len(dfs) > 1 else f'{dfs[0]["testnum"]} Cycling data.xlsx' if dfs[0]["testnum"] else 'Cycling data.xlsx'
+        if len(dfs) > 1:
+            file_name = 'Comparison Cycling data.xlsx'
+        else:
+            file_name = f'{dfs[0]["testnum"]} Cycling data.xlsx' if dfs[0]["testnum"] else 'Cycling data.xlsx'
     return output2, file_name
 
 def export_powerpoint(dfs: List[Dict[str, Any]], show_averages: bool, experiment_name: str, show_lines: Dict[str, bool], show_efficiency_lines: Dict[str, bool], remove_last_cycle: bool) -> Tuple[io.BytesIO, str]:
@@ -181,7 +197,10 @@ def export_powerpoint(dfs: List[Dict[str, Any]], show_averages: bool, experiment
         max_qdis = max(first_three_qdis) if first_three_qdis else None
         if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
             first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-            eff_pct = first_cycle_eff * 100
+            try:
+                eff_pct = float(first_cycle_eff) * 100
+            except (ValueError, TypeError):
+                eff_pct = None
         else:
             eff_pct = None
         cycle_life_80 = None
@@ -282,11 +301,13 @@ def export_powerpoint(dfs: List[Dict[str, Any]], show_averages: bool, experiment
         pptx_bytes = io.BytesIO()
         prs.save(pptx_bytes)
         pptx_bytes.seek(0)
+        # PowerPoint filename logic
         if experiment_name:
             cell_name = dfs[0]["testnum"] if dfs[0]["testnum"] else "Cell 1"
             pptx_file_name = f'{experiment_name} {cell_name} Summary.pptx'
         else:
-            pptx_file_name = f'{testnum} Summary.pptx'
+            cell_name = dfs[0]["testnum"] if dfs[0]["testnum"] else "Cell 1"
+            pptx_file_name = f'{cell_name} Summary.pptx'
         return pptx_bytes, pptx_file_name
     else:
         slide = prs.slides.add_slide(prs.slide_layouts[1])
@@ -313,7 +334,10 @@ def export_powerpoint(dfs: List[Dict[str, Any]], show_averages: bool, experiment
             qdis_str = f"{max_qdis:.1f}" if isinstance(max_qdis, (int, float)) else "N/A"
             if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                 first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                eff_pct = first_cycle_eff * 100
+                try:
+                    eff_pct = float(first_cycle_eff) * 100
+                except (ValueError, TypeError):
+                    eff_pct = None
                 eff_str = f"{eff_pct:.1f}%"
             else:
                 eff_str = "N/A"
@@ -350,8 +374,13 @@ def export_powerpoint(dfs: List[Dict[str, Any]], show_averages: bool, experiment
                     avg_qdis_values.append(max_qdis)
                 if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                     first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                    eff_pct = first_cycle_eff * 100
-                    avg_eff_values.append(eff_pct)
+                    try:
+                        eff_pct = float(first_cycle_eff) * 100
+                        avg_eff_values.append(eff_pct)
+                    except (ValueError, TypeError):
+                        avg_eff_values.append(None)
+                else:
+                    avg_eff_values.append(None)
                 try:
                     if not df_cell['Q Dis (mAh/g)'].empty:
                         qdis_raw = df_cell['Q Dis (mAh/g)']
@@ -372,9 +401,11 @@ def export_powerpoint(dfs: List[Dict[str, Any]], show_averages: bool, experiment
                 except Exception:
                     pass
             avg_qdis = sum(avg_qdis_values) / len(avg_qdis_values) if avg_qdis_values else 0
-            avg_eff = sum(avg_eff_values) / len(avg_eff_values) if avg_eff_values else 0
+            # Filter out None values for average calculation
+            valid_avg_eff_values = [v for v in avg_eff_values if v is not None]
+            avg_eff = sum(valid_avg_eff_values) / len(valid_avg_eff_values) if valid_avg_eff_values else None
             avg_cycle_life = sum(avg_cycle_life_values) / len(avg_cycle_life_values) if avg_cycle_life_values else 0
-            table_data.append(["AVERAGE", f"{avg_qdis:.1f}", f"{avg_eff:.1f}%", f"{avg_cycle_life:.0f}"])
+            table_data.append(["AVERAGE", f"{avg_qdis:.1f}", f"{avg_eff:.1f}%" if avg_eff is not None else "N/A", f"{avg_cycle_life:.0f}"])
         rows, cols = len(table_data), len(table_data[0])
         table_width = 7
         table_height = 2.5
@@ -435,6 +466,7 @@ def export_powerpoint(dfs: List[Dict[str, Any]], show_averages: bool, experiment
         pptx_bytes = io.BytesIO()
         prs.save(pptx_bytes)
         pptx_bytes.seek(0)
+        # PowerPoint filename logic
         if experiment_name:
             pptx_file_name = f'{experiment_name} Cell Comparison Summary.pptx'
         else:
