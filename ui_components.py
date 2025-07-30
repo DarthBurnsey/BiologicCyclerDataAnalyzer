@@ -2,6 +2,71 @@
 import streamlit as st
 from typing import List, Dict, Any, Tuple
 import pandas as pd
+import uuid
+
+def calculate_cell_metrics(df_cell, formation_cycles, disc_area_cm2):
+    """Centralized metric calculation to avoid duplication"""
+    metrics = {}
+    
+    # 1st Cycle Discharge Capacity
+    first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
+    metrics['max_qdis'] = max(first_three_qdis) if first_three_qdis else None
+    
+    # First Cycle Efficiency
+    if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
+        first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
+        try:
+            metrics['first_cycle_eff'] = float(first_cycle_eff) * 100
+        except (ValueError, TypeError):
+            metrics['first_cycle_eff'] = None
+    else:
+        metrics['first_cycle_eff'] = None
+    
+    # Cycle Life (expensive calculation - do once)
+    qdis_series = get_qdis_series(df_cell)
+    cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+    metrics['cycle_life_80'] = calculate_cycle_life_80(qdis_series, cycle_index_series)
+    
+    # Initial Areal Capacity
+    areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
+    metrics['areal_capacity'] = areal_capacity
+    
+    # Reversible Capacity
+    if len(df_cell) > formation_cycles:
+        metrics['reversible_capacity'] = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
+    else:
+        metrics['reversible_capacity'] = None
+    
+    # Coulombic Efficiency (post-formation)
+    eff_col = 'Efficiency (-)'
+    qdis_col = 'Q Dis (mAh/g)'
+    n_cycles = len(df_cell)
+    ceff_values = []
+    if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
+        prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
+        prev_eff = df_cell[eff_col].iloc[formation_cycles]
+        for i in range(formation_cycles+1, n_cycles):
+            curr_qdis = df_cell[qdis_col].iloc[i]
+            curr_eff = df_cell[eff_col].iloc[i]
+            try:
+                pq = float(prev_qdis)
+                cq = float(curr_qdis)
+                pe = float(prev_eff)
+                ce = float(curr_eff)
+                if pq > 0 and (cq < 0.95 * pq or ce < 0.95 * pe):
+                    break
+                ceff_values.append(ce)
+                prev_qdis = cq
+                prev_eff = ce
+            except (ValueError, TypeError):
+                continue
+    
+    if ceff_values:
+        metrics['coulombic_eff'] = sum(ceff_values) / len(ceff_values) * 100
+    else:
+        metrics['coulombic_eff'] = None
+    
+    return metrics
 
 def render_toggle_section(dfs: List[Dict[str, Any]], enable_grouping: bool = False) -> Tuple[Dict[str, bool], Dict[str, bool], bool, bool, bool, Dict[str, bool], bool, bool, Dict[str, bool]]:
     """Render all toggles and return their states: show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles."""
@@ -102,35 +167,255 @@ def render_toggle_section(dfs: List[Dict[str, Any]], enable_grouping: bool = Fal
                 group_plot_toggles["Group Efficiency"] = st.checkbox('Plot Group Efficiency', value=False, key='plot_group_eff')
         return show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles
 
-def render_cell_inputs() -> list:
+def render_cell_inputs(context_key=None, project_id=None, get_components_func=None):
     """Render multi-file upload and per-file inputs for each cell. Returns datasets list."""
+    if context_key is None:
+        context_key = str(uuid.uuid4())
     with st.expander('🧪 Cell Inputs', expanded=True):
-        uploaded_files = st.file_uploader('Upload CSV file(s) for Cells', type=['csv'], accept_multiple_files=True, key='multi_file_upload')
+        upload_key = f"multi_file_upload_{context_key}"
+        uploaded_files = st.file_uploader('Upload CSV or XLSX file(s) for Cells', type=['csv', 'xlsx'], accept_multiple_files=True, key=upload_key)
+        st.caption("💡 Supported formats: Biologic CSV files (semicolon-delimited) and Neware XLSX files (with 'cycle' sheet)")
         datasets = []
         if uploaded_files:
-            for i, uploaded_file in enumerate(uploaded_files):
-                with st.expander(f'Cell {i+1}: {uploaded_file.name}', expanded=False):
+            # Handle multiple cells with assign-to-all functionality
+            if len(uploaded_files) > 1:
+                # First cell with assign-to-all checkbox
+                with st.expander(f'Cell 1: {uploaded_files[0].name}', expanded=False):
                     col1, col2 = st.columns(2)
                     # --- Defaults logic ---
-                    if i == 0:
-                        # First cell: use hardcoded defaults if not in session_state
-                        loading_default = st.session_state.get('loading_0', 20.0)
-                        active_default = st.session_state.get('active_0', 90.0)
-                        formation_default = st.session_state.get('formation_cycles_0', 4)
-                    else:
-                        # Subsequent cells: use first cell's values if available, else hardcoded defaults
-                        loading_default = st.session_state.get(f'loading_{i}', st.session_state.get('loading_0', 20.0))
-                        active_default = st.session_state.get(f'active_{i}', st.session_state.get('active_0', 90.0))
-                        formation_default = st.session_state.get(f'formation_cycles_{i}', st.session_state.get('formation_cycles_0', 4))
+                    loading_default = st.session_state.get('loading_0', 20.0)
+                    active_default = st.session_state.get('active_0', 90.0)
+                    formation_default = st.session_state.get('formation_cycles_0', 4)
+                    electrolyte_default = st.session_state.get('electrolyte_0', '1M LiPF6 1:1:1')
                     with col1:
-                        disc_loading = st.number_input(f'Disc loading (mg) for Cell {i+1}', min_value=0.0, step=1.0, value=loading_default, key=f'loading_{i}')
-                        formation_cycles = st.number_input(f'Formation Cycles for Cell {i+1}', min_value=0, step=1, value=formation_default, key=f'formation_cycles_{i}')
+                        disc_loading_0 = st.number_input(f'Disc loading (mg) for Cell 1', min_value=0.0, step=1.0, value=loading_default, key=f'loading_0')
+                        formation_cycles_0 = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
                     with col2:
-                        active_material = st.number_input(f'% Active material for Cell {i+1}', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_{i}')
-                        default_test_num = f'Cell {i+1}'
-                        test_number = st.text_input(f'Test Number for Cell {i+1}', value=default_test_num, key=f'testnum_{i}')
-                    datasets.append({'file': uploaded_file, 'loading': disc_loading, 'active': active_material, 'testnum': test_number, 'formation_cycles': formation_cycles})
+                        active_material_0 = st.number_input(f'% Active material for Cell 1', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_0')
+                        test_number_0 = st.text_input(f'Test Number for Cell 1', value='Cell 1', key=f'testnum_0')
+                    
+                    # Electrolyte selection
+                    electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
+                    electrolyte_0 = st.selectbox(f'Electrolyte for Cell 1', electrolyte_options, 
+                                               index=electrolyte_options.index(electrolyte_default) if electrolyte_default in electrolyte_options else 0,
+                                               key=f'electrolyte_0')
+                    
+                    # Formulation table
+                    st.markdown("**Formulation:**")
+                    formulation_0 = render_formulation_table(f'formulation_0_{context_key}', project_id, get_components_func)
+                    
+                    assign_all = st.checkbox('Assign values to all cells', key=f'assign_all_cells_{context_key}')
+                
+                # Add first cell to datasets
+                datasets.append({
+                    'file': uploaded_files[0], 
+                    'loading': disc_loading_0, 
+                    'active': active_material_0, 
+                    'testnum': test_number_0, 
+                    'formation_cycles': formation_cycles_0,
+                    'electrolyte': electrolyte_0,
+                    'formulation': formulation_0
+                })
+                
+                # Handle remaining cells
+                for i in range(1, len(uploaded_files)):
+                    uploaded_file = uploaded_files[i]
+                    with st.expander(f'Cell {i+1}: {uploaded_file.name}', expanded=False):
+                        col1, col2 = st.columns(2)
+                        if assign_all:
+                            # Use values from first cell
+                            disc_loading = disc_loading_0
+                            formation_cycles = formation_cycles_0
+                            active_material = active_material_0
+                            electrolyte = electrolyte_0
+                            formulation = formulation_0
+                        else:
+                            # Individual inputs for this cell
+                            loading_default = st.session_state.get(f'loading_{i}', disc_loading_0)
+                            active_default = st.session_state.get(f'active_{i}', active_material_0)
+                            formation_default = st.session_state.get(f'formation_cycles_{i}', formation_cycles_0)
+                            electrolyte_default = st.session_state.get(f'electrolyte_{i}', electrolyte_0)
+                            with col1:
+                                disc_loading = st.number_input(f'Disc loading (mg) for Cell {i+1}', min_value=0.0, step=1.0, value=loading_default, key=f'loading_{i}')
+                                formation_cycles = st.number_input(f'Formation Cycles for Cell {i+1}', min_value=0, step=1, value=formation_default, key=f'formation_cycles_{i}')
+                            with col2:
+                                active_material = st.number_input(f'% Active material for Cell {i+1}', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_{i}')
+                            
+                            # Electrolyte selection
+                            electrolyte = st.selectbox(f'Electrolyte for Cell {i+1}', electrolyte_options, 
+                                                     index=electrolyte_options.index(electrolyte_default) if electrolyte_default in electrolyte_options else 0,
+                                                     key=f'electrolyte_{i}')
+                            
+                            # Formulation table
+                            st.markdown("**Formulation:**")
+                            formulation = render_formulation_table(f'formulation_{i}_{context_key}', project_id, get_components_func)
+                        
+                        # Test number is always individual (not assigned to all)
+                        with col2:
+                            default_test_num = f'Cell {i+1}'
+                            test_number = st.text_input(f'Test Number for Cell {i+1}', value=default_test_num, key=f'testnum_{i}')
+                        
+                        datasets.append({
+                            'file': uploaded_file, 
+                            'loading': disc_loading, 
+                            'active': active_material, 
+                            'testnum': test_number, 
+                            'formation_cycles': formation_cycles,
+                            'electrolyte': electrolyte,
+                            'formulation': formulation
+                        })
+            else:
+                # Single cell - no assign-to-all needed
+                uploaded_file = uploaded_files[0]
+                with st.expander(f'Cell 1: {uploaded_file.name}', expanded=False):
+                    col1, col2 = st.columns(2)
+                    # --- Defaults logic ---
+                    loading_default = st.session_state.get('loading_0', 20.0)
+                    active_default = st.session_state.get('active_0', 90.0)
+                    formation_default = st.session_state.get('formation_cycles_0', 4)
+                    electrolyte_default = st.session_state.get('electrolyte_0', '1M LiPF6 1:1:1')
+                    with col1:
+                        disc_loading = st.number_input(f'Disc loading (mg) for Cell 1', min_value=0.0, step=1.0, value=loading_default, key=f'loading_0')
+                        formation_cycles = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
+                    with col2:
+                        active_material = st.number_input(f'% Active material for Cell 1', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_0')
+                        test_number = st.text_input(f'Test Number for Cell 1', value='Cell 1', key=f'testnum_0')
+                    
+                    # Electrolyte selection
+                    electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
+                    electrolyte = st.selectbox(f'Electrolyte for Cell 1', electrolyte_options, 
+                                             index=electrolyte_options.index(electrolyte_default) if electrolyte_default in electrolyte_options else 0,
+                                             key=f'electrolyte_0')
+                    
+                    # Formulation table
+                    st.markdown("**Formulation:**")
+                    formulation = render_formulation_table(f'formulation_0_{context_key}', project_id, get_components_func)
+                    
+                    datasets.append({
+                        'file': uploaded_file, 
+                        'loading': disc_loading, 
+                        'active': active_material, 
+                        'testnum': test_number, 
+                        'formation_cycles': formation_cycles,
+                        'electrolyte': electrolyte,
+                        'formulation': formulation
+                    })
     return datasets
+
+def render_formulation_table(key_suffix, project_id=None, get_components_func=None):
+    """Render a formulation table with Component and Dry Mass Fraction columns."""
+    # Initialize formulation data in session state if not exists
+    formulation_key = f'formulation_data_{key_suffix}'
+    save_flag_key = f'formulation_saved_{key_suffix}'
+    if formulation_key not in st.session_state:
+        st.session_state[formulation_key] = [
+            {'Component': '', 'Dry Mass Fraction (%)': 0.0}
+        ]
+    if save_flag_key not in st.session_state:
+        st.session_state[save_flag_key] = False
+    
+    formulation_data = st.session_state[formulation_key]
+    
+    # Get previously used components from project if project_id and function are provided
+    previous_components = []
+    if project_id and get_components_func:
+        try:
+            previous_components = get_components_func(project_id)
+        except Exception:
+            previous_components = []
+    
+    # Create editable table
+    col1, col2, col3 = st.columns([3, 2, 1])
+    with col1:
+        st.markdown("**Component**")
+    with col2:
+        st.markdown("**Dry Mass Fraction (%)**")
+    with col3:
+        st.markdown("**Actions**")
+    
+    # Display all rows (including empty ones)
+    updated_formulation = []
+    total_fraction = 0.0
+    changed = False
+    
+    for i, row in enumerate(formulation_data):
+        col1, col2, col3 = st.columns([3, 2, 1])
+        with col1:
+            # Component selection with dropdown for previous components
+            component_options = ["Type new component..."] + previous_components
+            current_component = row['Component']
+            
+            # Determine default selection
+            if current_component in previous_components:
+                default_index = previous_components.index(current_component) + 1  # +1 for "Type new component"
+            else:
+                default_index = 0  # "Type new component"
+            
+            selected_option = st.selectbox(
+                f"Component", 
+                component_options, 
+                index=default_index,
+                key=f'component_dropdown_{i}_{key_suffix}', 
+                label_visibility="collapsed"
+            )
+            
+            if selected_option == "Type new component...":
+                # Show text input for new component
+                component = st.text_input(
+                    f"New Component", 
+                    value=current_component if current_component not in previous_components else '',
+                    key=f'component_text_{i}_{key_suffix}', 
+                    label_visibility="collapsed",
+                    placeholder="Enter component name"
+                )
+            else:
+                # Use selected component from dropdown
+                component = selected_option
+                
+        with col2:
+            fraction = st.number_input(f"Fraction", value=row['Dry Mass Fraction (%)'], min_value=0.0, max_value=100.0, step=0.1, key=f'fraction_{i}_{key_suffix}', label_visibility="collapsed")
+            total_fraction += fraction
+        with col3:
+            if st.button("🗑️", key=f'delete_{i}_{key_suffix}', help="Delete row"):
+                # Remove this row and update session state
+                st.session_state[formulation_key] = [row for j, row in enumerate(formulation_data) if j != i]
+                st.session_state[save_flag_key] = False
+                st.rerun()
+        # Detect changes
+        if component != row['Component'] or fraction != row['Dry Mass Fraction (%)']:
+            changed = True
+        # Always keep all rows, even if empty
+        updated_formulation.append({'Component': component, 'Dry Mass Fraction (%)': fraction})
+    
+    # Add new row button
+    if st.button(f"➕ Add Component", key=f'add_component_{key_suffix}'):
+        st.session_state[formulation_key].append({'Component': '', 'Dry Mass Fraction (%)': 0.0})
+        st.session_state[save_flag_key] = False
+        st.rerun()
+    
+    # If any changes, reset the save flag
+    if changed:
+        st.session_state[save_flag_key] = False
+    
+    # Save/Done Editing button
+    if st.button("💾 Save Formulation", key=f'save_formulation_{key_suffix}'):
+        st.session_state[save_flag_key] = True
+    
+    # Validation (only show if saved)
+    if st.session_state[save_flag_key]:
+        if total_fraction > 100.0:
+            st.error(f"⚠️ Total dry mass fraction ({total_fraction:.1f}%) exceeds 100%!")
+        elif total_fraction < 99.9 and any(row['Component'] for row in updated_formulation):
+            st.warning(f"⚠️ Total dry mass fraction ({total_fraction:.1f}%) is less than 100%")
+        elif total_fraction >= 99.9 and total_fraction <= 100.1:
+            st.success(f"✅ Total dry mass fraction: {total_fraction:.1f}%")
+    
+    # Update session state (keep all rows, even empty)
+    st.session_state[formulation_key] = updated_formulation if updated_formulation else [{'Component': '', 'Dry Mass Fraction (%)': 0.0}]
+    
+    # Only filter out empty rows when returning
+    filtered = [row for row in updated_formulation if row['Component'] or row['Dry Mass Fraction (%)'] > 0]
+    return filtered
 
 def get_qdis_series(df_cell):
     qdis_raw = df_cell['Q Dis (mAh/g)']
@@ -205,158 +490,48 @@ def get_initial_areal_capacity(df_cell, disc_area_cm2):
 def display_summary_stats(dfs: List[Dict[str, Any]], disc_area_cm2: float, show_average_col: bool = True, group_assignments: List[str] = None, group_names: List[str] = None):
     """Display summary statistics as a table in Streamlit."""
     import pandas as pd
-    # Prepare summary data
+    # Calculate metrics once for all cells
+    cell_metrics = []
+    for i, d in enumerate(dfs):
+        metrics = calculate_cell_metrics(d['df'], d.get('formation_cycles', 4), disc_area_cm2)
+        cell_metrics.append(metrics)
+    # Prepare summary data - reordered as requested: Reversible capacity, coulombic efficiency, 1st cycle discharge, 1st cycle efficiency, cycle life
     param_names = [
+        "Reversible Capacity (mAh/g)",
+        "Coulombic Efficiency (post-formation)",
         "1st Cycle Discharge Capacity (mAh/g)",
         "First Cycle Efficiency (%)",
         "Cycle Life (80%)",
-        "Initial Areal Capacity (mAh/cm²)",
-        "Reversible Capacity (mAh/g)",
-        "Coulombic Efficiency (post-formation)"
+        "Initial Areal Capacity (mAh/cm²)"
     ]
     summary_dict = {param: [] for param in param_names}
     cell_names = []
-    for i, d in enumerate(dfs):
-        df_cell = d['df']
+    for i, (d, metrics) in enumerate(zip(dfs, cell_metrics)):
         cell_name = d['testnum'] if d['testnum'] else f'Cell {i+1}'
         cell_names.append(cell_name)
-        # 1st Cycle Discharge Capacity (mAh/g)
-        first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
-        max_qdis = max(first_three_qdis) if first_three_qdis else None
-        summary_dict[param_names[0]].append(max_qdis if isinstance(max_qdis, (int, float)) else None)
-        # First Cycle Efficiency (%)
-        if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
-            first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-            eff_pct = first_cycle_eff * 100
-            summary_dict[param_names[1]].append(eff_pct if isinstance(eff_pct, (int, float)) else None)
-        else:
-            summary_dict[param_names[1]].append(None)
-        # Cycle Life (80%)
-        qdis_series = get_qdis_series(df_cell)
-        cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
-        cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
-        summary_dict[param_names[2]].append(cycle_life_80 if isinstance(cycle_life_80, (int, float)) else None)
-        # Initial Areal Capacity (mAh/cm²)
-        areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
-        summary_dict[param_names[3]].append(areal_capacity if areal_capacity is not None else None)
-        # Reversible Capacity (mAh/g)
-        formation_cycles = d.get('formation_cycles', 4)
-        if len(df_cell) > formation_cycles:
-            reversible_capacity = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
-            summary_dict[param_names[4]].append(reversible_capacity if isinstance(reversible_capacity, (int, float)) else None)
-        else:
-            summary_dict[param_names[4]].append(None)
-        # Coulombic Efficiency (post-formation, %)
-        eff_col = 'Efficiency (-)'
-        qdis_col = 'Q Dis (mAh/g)'
-        n_cycles = len(df_cell)
-        ceff_values = []
-        if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
-            prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
-            prev_eff = df_cell[eff_col].iloc[formation_cycles]
-            for i in range(formation_cycles+1, n_cycles):
-                curr_qdis = df_cell[qdis_col].iloc[i]
-                curr_eff = df_cell[eff_col].iloc[i]
-                try:
-                    pq = float(prev_qdis)
-                    cq = float(curr_qdis)
-                    pe = float(prev_eff)
-                    ce = float(curr_eff)
-                    if pq > 0 and (cq < 0.95 * pq or ce < 0.95 * pe):
-                        break
-                    ceff_values.append(ce)
-                    prev_qdis = cq
-                    prev_eff = ce
-                except (ValueError, TypeError):
-                    continue
-        if ceff_values:
-            avg_ceff = sum(ceff_values) / len(ceff_values) * 100
-            summary_dict[param_names[5]].append(avg_ceff)
-        else:
-            summary_dict[param_names[5]].append(None)
-    
+        summary_dict[param_names[0]].append(metrics['reversible_capacity'])
+        summary_dict[param_names[1]].append(metrics['coulombic_eff'])
+        summary_dict[param_names[2]].append(metrics['max_qdis'])
+        summary_dict[param_names[3]].append(metrics['first_cycle_eff'])
+        summary_dict[param_names[4]].append(metrics['cycle_life_80'])
+        summary_dict[param_names[5]].append(metrics['areal_capacity'])
     # Add group summary rows if grouping is enabled
     group_names_final = []
     if group_assignments is not None and group_names is not None:
         for group_idx, group_name in enumerate(group_names):
-            group_dfs = [df for df, g in zip(dfs, group_assignments) if g == group_name]
-            if len(group_dfs) > 1:
-                avg_qdis_values = []
-                avg_eff_values = []
-                avg_cycle_life_values = []
-                avg_areal_capacity_values = []
-                avg_reversible_capacities = []
-                avg_ceff_values = []
-                for d in group_dfs:
-                    df_cell = d['df']
-                    first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
-                    max_qdis = max(first_three_qdis) if first_three_qdis else None
-                    if max_qdis is not None:
-                        avg_qdis_values.append(max_qdis)
-                    if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
-                        first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                        eff_pct = first_cycle_eff * 100
-                        avg_eff_values.append(eff_pct)
-                    qdis_series = get_qdis_series(df_cell)
-                    cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
-                    cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
-                    if cycle_life_80 is not None:
-                        avg_cycle_life_values.append(cycle_life_80)
-                    areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
-                    if areal_capacity is not None:
-                        avg_areal_capacity_values.append(areal_capacity)
-                    formation_cycles = d.get('formation_cycles', 4)
-                    if len(df_cell) > formation_cycles:
-                        reversible_capacity = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
-                        avg_reversible_capacities.append(reversible_capacity)
-                    # Coulombic Efficiency (post-formation, %)
-                    eff_col = 'Efficiency (-)'
-                    qdis_col = 'Q Dis (mAh/g)'
-                    n_cycles = len(df_cell)
-                    ceff_values = []
-                    if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
-                        prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
-                        prev_eff = df_cell[eff_col].iloc[formation_cycles]
-                        for i in range(formation_cycles+1, n_cycles):
-                            curr_qdis = df_cell[qdis_col].iloc[i]
-                            curr_eff = df_cell[eff_col].iloc[i]
-                            try:
-                                pq = float(prev_qdis)
-                                cq = float(curr_qdis)
-                                pe = float(prev_eff)
-                                ce = float(curr_eff)
-                                if pq > 0 and (cq < 0.95 * pq or ce < 0.95 * pe):
-                                    break
-                                ceff_values.append(ce)
-                                prev_qdis = cq
-                                prev_eff = ce
-                            except (ValueError, TypeError):
-                                continue
-                    if ceff_values:
-                        avg_ceff = sum(ceff_values) / len(ceff_values) * 100
-                        avg_ceff_values.append(avg_ceff)
-                avg_qdis = sum(avg_qdis_values) / len(avg_qdis_values) if avg_qdis_values else 0
-                avg_eff = sum(avg_eff_values) / len(avg_eff_values) if avg_eff_values else 0
-                avg_cycle_life = sum(avg_cycle_life_values) / len(avg_cycle_life_values) if avg_cycle_life_values else 0
-                avg_areal = sum(avg_areal_capacity_values) / len(avg_areal_capacity_values) if avg_areal_capacity_values else 0
-                avg_reversible = sum(avg_reversible_capacities) / len(avg_reversible_capacities) if avg_reversible_capacities else None
-                avg_ceff = sum(avg_ceff_values) / len(avg_ceff_values) if avg_ceff_values else None
-                # Add group averages to summary dict
-                for param in param_names:
-                    if param == param_names[0]:  # 1st Cycle Discharge Capacity
-                        summary_dict[param].append(avg_qdis)
-                    elif param == param_names[1]:  # First Cycle Efficiency
-                        summary_dict[param].append(avg_eff)
-                    elif param == param_names[2]:  # Cycle Life
-                        summary_dict[param].append(avg_cycle_life)
-                    elif param == param_names[3]:  # Areal Capacity
-                        summary_dict[param].append(avg_areal)
-                    elif param == param_names[4]:  # Reversible Capacity
-                        summary_dict[param].append(avg_reversible)
-                    elif param == param_names[5]:  # Coulombic Efficiency
-                        summary_dict[param].append(avg_ceff)
+            group_indices = [i for i, g in enumerate(group_assignments) if g == group_name]
+            if len(group_indices) > 1:
+                group_metrics = [cell_metrics[i] for i in group_indices]
+                # Calculate group averages
+                avg_values = {}
+                for param_key in ['max_qdis', 'first_cycle_eff', 'cycle_life_80', 'areal_capacity', 'reversible_capacity', 'coulombic_eff']:
+                    values = [m[param_key] for m in group_metrics if m[param_key] is not None]
+                    avg_values[param_key] = sum(values) / len(values) if values else None
+                # Add to summary
+                for i, param in enumerate(param_names):
+                    param_keys = ['reversible_capacity', 'coulombic_eff', 'max_qdis', 'first_cycle_eff', 'cycle_life_80', 'areal_capacity']
+                    summary_dict[param].append(avg_values[param_keys[i]])
                 group_names_final.append(group_name + " (Group Avg)")
-    
     # Compute overall averages
     if show_average_col and len(dfs) > 1:
         for param in param_names:
@@ -366,25 +541,36 @@ def display_summary_stats(dfs: List[Dict[str, Any]], disc_area_cm2: float, show_
         col_labels = cell_names + group_names_final + ["Average"]
     else:
         col_labels = cell_names + group_names_final
-    
-    # Format for display
+    # Ensure unique column labels (cell names, group names, Average)
+    def make_unique(labels):
+        seen = {}
+        result = []
+        for label in labels:
+            if label not in seen:
+                seen[label] = 1
+                result.append(label)
+            else:
+                seen[label] += 1
+                result.append(f"{label} ({seen[label]})")
+        return result
+    col_labels = make_unique(col_labels)
+    # Format for display (updated for new column order)
     display_data = {}
     for idx, param in enumerate(param_names):
         row = []
         for v in summary_dict[param]:
             if v is None:
                 row.append("N/A")
-            elif idx == 1 or idx == 5:  # Efficiency columns
+            elif idx == 1 or idx == 3:  # Efficiency columns (Coulombic Efficiency and First Cycle Efficiency)
                 row.append(f"{v:.2f}%")
-            elif idx == 3:  # Areal capacity
+            elif idx == 5:  # Areal capacity
                 row.append(f"{v:.3f}")
             else:
                 row.append(f"{v:.1f}")
         display_data[param] = row
     df = pd.DataFrame(display_data, index=col_labels).T
-    # Transpose so cells are rows and parameters are columns
     df = df.T
-    # Modern styling with more contrast
+    # Keep existing styling logic
     def style_table(styler):
         styler.set_table_styles([
             {'selector': 'th', 'props': [('background-color', '#2563eb'), ('color', '#fff'), ('font-weight', 'bold'), ('font-size', '1.1em'), ('border-radius', '8px 8px 0 0'), ('padding', '10px')]},
@@ -392,13 +578,10 @@ def display_summary_stats(dfs: List[Dict[str, Any]], disc_area_cm2: float, show_
             {'selector': 'tr:hover td', 'props': [('background-color', '#e0e7ef')]} ,
             {'selector': 'table', 'props': [('border-collapse', 'separate'), ('border-spacing', '0'), ('border-radius', '12px'), ('overflow', 'hidden'), ('box-shadow', '0 2px 8px rgba(0,0,0,0.07)')]} 
         ])
-        # Alternate row shading
         styler.apply(lambda x: ['background-color: #f3f6fa' if i%2==0 else '' for i in range(len(x))], axis=1)
-        # Highlight group average rows
         for group_name in group_names_final:
             if group_name in df.index:
                 styler.apply(lambda x: ['background-color: #fef3c7' if x.name == group_name else '' for _ in x], axis=1)
-        # Highlight overall average row if present
         if 'Average' in df.index:
             styler.apply(lambda x: ['background-color: #fbbf24' if x.name == 'Average' else '' for _ in x], axis=1)
         styler.set_properties(**{'border': '1px solid #d1d5db'})
@@ -413,74 +596,40 @@ def display_averages(dfs: List[Dict[str, Any]], show_averages: bool, disc_area_c
     if show_averages and len(dfs) > 1:
         st.markdown("---")
         with st.expander("Average Values Across All Cells", expanded=True):
-            avg_qdis_values = []
-            avg_eff_values = []
-            avg_cycle_life_values = []
-            avg_areal_capacity_values = []
-            avg_reversible_capacities = []
+            # Calculate metrics once for all cells
+            all_metrics = []
             for d in dfs:
-                df_cell = d['df']
-                first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
-                max_qdis = max(first_three_qdis) if first_three_qdis else None
-                if max_qdis is not None:
-                    avg_qdis_values.append(max_qdis)
-                if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
-                    first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                    eff_pct = first_cycle_eff * 100
-                    avg_eff_values.append(eff_pct)
-                # Use the same logic as display_summary_stats for cycle life
-                qdis_series = get_qdis_series(df_cell)
-                cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
-                cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
-                if cycle_life_80 is not None:
-                    avg_cycle_life_values.append(cycle_life_80)
-                # Initial Areal Capacity (mAh/cm²) using robust logic
-                areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
-                if areal_capacity is not None:
-                    avg_areal_capacity_values.append(areal_capacity)
-                # Reversible Capacity (mAh/g) after formation
-                formation_cycles = d.get('formation_cycles', 4)
-                if len(df_cell) > formation_cycles:
-                    reversible_capacity = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
-                    avg_reversible_capacities.append(reversible_capacity)
+                metrics = calculate_cell_metrics(d['df'], d.get('formation_cycles', 4), disc_area_cm2)
+                all_metrics.append(metrics)
+            
             # Calculate averages
-            avg_qdis = sum(avg_qdis_values) / len(avg_qdis_values) if avg_qdis_values else 0
-            avg_eff = sum(avg_eff_values) / len(avg_eff_values) if avg_eff_values else 0
-            avg_cycle_life = sum(avg_cycle_life_values) / len(avg_cycle_life_values) if avg_cycle_life_values else 0
-            avg_areal = sum(avg_areal_capacity_values) / len(avg_areal_capacity_values) if avg_areal_capacity_values else 0
-            st.info(f"1st Cycle Discharge Capacity (mAh/g): {avg_qdis:.1f}")
-            st.info(f"First Cycle Efficiency: {avg_eff:.1f}%")
-            st.info(f"Cycle Life (80%): {avg_cycle_life:.0f}")
-            st.info(f"Initial Areal Capacity (mAh/cm²): {avg_areal:.3f}")
-            if avg_reversible_capacities:
-                avg_reversible = sum(avg_reversible_capacities) / len(avg_reversible_capacities)
+            def safe_average(values):
+                valid_values = [v for v in values if v is not None]
+                return sum(valid_values) / len(valid_values) if valid_values else None
+            
+            avg_qdis = safe_average([m['max_qdis'] for m in all_metrics])
+            avg_eff = safe_average([m['first_cycle_eff'] for m in all_metrics])
+            avg_cycle_life = safe_average([m['cycle_life_80'] for m in all_metrics])
+            avg_areal = safe_average([m['areal_capacity'] for m in all_metrics])
+            avg_reversible = safe_average([m['reversible_capacity'] for m in all_metrics])
+            avg_ceff = safe_average([m['coulombic_eff'] for m in all_metrics])
+            
+            # Display results
+            if avg_qdis is not None:
+                st.info(f"1st Cycle Discharge Capacity (mAh/g): {avg_qdis:.1f}")
+            if avg_eff is not None:
+                st.info(f"First Cycle Efficiency: {avg_eff:.1f}%")
+            else:
+                st.warning('No data for average First Cycle Efficiency.')
+            if avg_cycle_life is not None:
+                st.info(f"Cycle Life (80%): {avg_cycle_life:.0f}")
+            if avg_areal is not None:
+                st.info(f"Initial Areal Capacity (mAh/cm²): {avg_areal:.3f}")
+            if avg_reversible is not None:
                 st.info(f"Reversible Capacity (mAh/g): {avg_reversible:.1f}")
             else:
                 st.warning('No data for average Reversible Capacity after formation.')
-            # Average Coulombic Efficiency (post-formation, %)
-            avg_ceff_values = []
-            for d in dfs:
-                df_cell = d['df']
-                eff_col = 'Efficiency (-)'
-                qdis_col = 'Q Dis (mAh/g)'
-                formation_cycles = d.get('formation_cycles', 4)
-                n_cycles = len(df_cell)
-                ceff_values = []
-                if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
-                    prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
-                    prev_eff = df_cell[eff_col].iloc[formation_cycles]
-                    for i in range(formation_cycles+1, n_cycles):
-                        curr_qdis = df_cell[qdis_col].iloc[i]
-                        curr_eff = df_cell[eff_col].iloc[i]
-                        if prev_qdis > 0 and (curr_qdis < 0.95 * prev_qdis or curr_eff < 0.95 * prev_eff):
-                            break
-                        ceff_values.append(curr_eff)
-                        prev_qdis = curr_qdis
-                        prev_eff = curr_eff
-                if ceff_values:
-                    avg_ceff = sum(ceff_values) / len(ceff_values) * 100
-                    avg_ceff_values.append(avg_ceff)
-            if avg_ceff_values:
-                st.info(f"Coulombic Efficiency (post-formation): {sum(avg_ceff_values)/len(avg_ceff_values):.2f}%")
+            if avg_ceff is not None:
+                st.info(f"Coulombic Efficiency (post-formation): {avg_ceff:.2f}%")
             else:
                 st.warning('No data for average Coulombic Efficiency (post-formation).') 

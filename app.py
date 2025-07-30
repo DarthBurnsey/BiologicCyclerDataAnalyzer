@@ -6,115 +6,1108 @@ import matplotlib.pyplot as plt
 import numpy as np
 from datetime import datetime, date
 import re
+import sqlite3
+import json
+import os
+from pathlib import Path
+from io import StringIO
 
-def extract_date_from_filename(filename):
-    match = re.search(r'(\d{6})', filename)
-    if match:
-        yymmdd = match.group(1)
-        try:
-            parsed_date = datetime.strptime(yymmdd, "%y%m%d").date()
-            return parsed_date
-        except ValueError:
-            return None
-    return None
-# --- Helper function for cycle life calculation ---
-def calculate_cycle_life_80(qdis_series, cycle_index_series):
-    # Use max of cycles 3 and 4 as initial, or last available if <4 cycles
-    if len(qdis_series) >= 4:
-        initial_qdis = max(qdis_series.iloc[2], qdis_series.iloc[3])
-    elif len(qdis_series) > 0:
-        initial_qdis = qdis_series.iloc[-1]
-    else:
-        return None
-    threshold = 0.8 * initial_qdis
-    below_threshold = qdis_series <= threshold
-    if below_threshold.any():
-        first_below_idx = below_threshold.idxmin()
-        return int(cycle_index_series.iloc[first_below_idx])
-    else:
-        return int(cycle_index_series.iloc[-1])
-
-def get_qdis_series(df_cell):
-    qdis_raw = df_cell['Q Dis (mAh/g)']
-    if pd.api.types.is_scalar(qdis_raw):
-        return pd.Series([qdis_raw]).dropna()
-    else:
-        return pd.Series(qdis_raw).dropna()
+# Import our modular components
+from database import (
+    get_db_connection, init_database, migrate_database, get_project_components,
+    get_user_projects, create_project, save_cell_experiment, update_cell_experiment,
+    get_experiment_by_name_and_file, get_project_experiments, check_experiment_exists,
+    get_experiment_data, delete_cell_experiment, delete_project, rename_project,
+    rename_experiment, save_experiment, update_experiment, check_experiment_name_exists,
+    get_experiment_by_name, get_all_project_experiments_data, TEST_USER_ID
+)
+from data_analysis import (
+    calculate_cell_summary, calculate_experiment_average,
+    calculate_cycle_life_80, get_qdis_series
+)
+from display_components import (
+    display_experiment_summaries_table, display_individual_cells_table,
+    display_best_performers_analysis
+)
+from file_processing import extract_date_from_filename
 from data_processing import load_and_preprocess_data
-from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs, get_initial_areal_capacity
+from dialogs import confirm_delete_project, confirm_delete_experiment, show_delete_dialogs
+
+# Initialize database
+init_database()
+migrate_database()
+from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs, get_initial_areal_capacity, render_formulation_table
 from plotting import plot_capacity_graph
 
 # =============================
 # Battery Data Gravimetric Capacity Calculator App
 # =============================
 
+# --- Top Bar ---
+with st.container():
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        st.title("🔋 CellScope")
+    
+    with col2:
+        # Show current experiment status
+        loaded_experiment = st.session_state.get('loaded_experiment')
+        if loaded_experiment:
+            st.info(f"📊 {loaded_experiment['experiment_name']}")
+    
+    with col3:
+        # Save button for loaded experiments
+        if loaded_experiment:
+            if st.button("💾 Save", key="save_changes_btn"):
+                # Get current experiment data
+                experiment_data = loaded_experiment['experiment_data']
+                experiment_id = loaded_experiment['experiment_id']
+                project_id = loaded_experiment['project_id']
+                
+                # Get current values from session state or use loaded values
+                current_experiment_date = st.session_state.get('current_experiment_date', experiment_data.get('experiment_date'))
+                current_disc_diameter = st.session_state.get('current_disc_diameter_mm', experiment_data.get('disc_diameter_mm'))
+                current_group_assignments = st.session_state.get('current_group_assignments', experiment_data.get('group_assignments'))
+                current_group_names = st.session_state.get('current_group_names', experiment_data.get('group_names'))
+                
+                # Convert date string to date object if needed
+                if isinstance(current_experiment_date, str):
+                    try:
+                        current_experiment_date = datetime.fromisoformat(current_experiment_date).date()
+                    except:
+                        current_experiment_date = date.today()
+                
+                # Update the experiment with current data
+                update_experiment(
+                    experiment_id=experiment_id,
+                    project_id=project_id,
+# Show delete confirmation dialogs when triggered
+                    group_assignments=current_group_assignments,
+                    group_names=current_group_names,
+                    cells_data=experiment_data['cells']  # Keep original cell data
+                )
+                st.success("✅ Changes saved!")
+                st.rerun()
+
+st.markdown("---")
+# Show delete confirmation dialogs when triggered
+show_delete_dialogs()
+
 # --- Sidebar ---
 with st.sidebar:
-    # Logo section - use local logo file if available, otherwise placeholder
+    # Restore logo at the top
     try:
         st.image("logo.png", width=150)
     except:
         st.image("https://placehold.co/150x80?text=Logo", width=150)
-    st.title("CellScope")
     st.markdown("---")
-    # Move experiment name input above file upload
-    experiment_name = st.text_input('Experiment Name (optional)', placeholder='Enter experiment name for file naming and summary tab')
-    st.markdown("#### Upload Data")
-    datasets = render_cell_inputs()
-    default_date = None
-    if datasets and datasets[0]['file'] is not None:
-        parsed = extract_date_from_filename(datasets[0]['file'].name)
-        if parsed:
-            default_date = parsed
-    # Move disc diameter input here
-    disc_diameter_mm = st.number_input('Disc Diameter (mm) for Areal Capacity Calculation', min_value=1, max_value=50, value=15, step=1, key='disc_diameter_mm')
-    experiment_date = st.date_input(
-        "Experiment Date (optional)", 
-        value=default_date if default_date else date.today(),
-        help="Date associated with this experiment. Parsed from filename if possible."
+    st.markdown("#### 📁 Projects")
+    user_projects = get_user_projects(TEST_USER_ID)
+    if user_projects:
+        for p in user_projects:
+            project_id, project_name, project_desc, created_date, last_modified = p
+            project_expanded = st.session_state.get(f'project_expanded_{project_id}', False)
+            
+            # Project row with dropdown arrow and three dots
+            project_cols = st.columns([0.1, 0.7, 0.2])
+            with project_cols[0]:
+                # Dropdown arrow
+                arrow = "▼" if project_expanded else "▶"
+                if st.button(arrow, key=f'project_toggle_{project_id}', help="Expand/Collapse"):
+                    st.session_state[f'project_expanded_{project_id}'] = not project_expanded
+                    st.rerun()
+            
+            with project_cols[1]:
+                # Project name button
+                if st.button(project_name, key=f'project_select_{project_id}', use_container_width=True):
+                    st.session_state['current_project_id'] = project_id
+                    st.session_state['current_project_name'] = project_name
+                    st.session_state[f'project_expanded_{project_id}'] = True
+                    st.rerun()
+            
+            with project_cols[2]:
+                menu_open = st.session_state.get(f'project_menu_open_{project_id}', False)
+                if st.button('⋯', key=f'project_menu_btn_{project_id}', help="Project options"):
+                    # Close all other menus
+                    for p2 in user_projects:
+                        st.session_state[f'project_menu_open_{p2[0]}'] = False
+                    st.session_state[f'project_menu_open_{project_id}'] = not menu_open
+                    st.rerun()
+                # Simple vertical dropdown menu
+                if menu_open:
+                    with st.container():
+                        if st.button('New Experiment', key=f'project_new_exp_{project_id}_menu', use_container_width=True):
+                            st.session_state['current_project_id'] = project_id
+                            st.session_state['current_project_name'] = project_name
+                            st.session_state['start_new_experiment'] = True
+                            if 'loaded_experiment' in st.session_state:
+                                del st.session_state['loaded_experiment']
+                            st.session_state[f'project_menu_open_{project_id}'] = False
+                            st.session_state['show_cell_inputs_prompt'] = True
+                            st.rerun()
+                        if st.button('Rename', key=f'project_rename_{project_id}_menu', use_container_width=True):
+                            st.session_state[f'renaming_project_{project_id}'] = True
+                            st.session_state[f'project_menu_open_{project_id}'] = False
+                            st.rerun()
+                        if st.button('Delete', key=f'project_delete_{project_id}_menu', use_container_width=True):
+                            st.session_state['confirm_delete_project'] = project_id
+                            st.session_state[f'project_menu_open_{project_id}'] = False
+                            st.rerun()
+            
+            # Inline rename for project
+            if st.session_state.get(f'renaming_project_{project_id}', False):
+                rename_cols = st.columns([0.8, 0.2])
+                with rename_cols[0]:
+                    new_name = st.text_input("New name:", value=project_name, key=f'rename_input_project_{project_id}', label_visibility="collapsed")
+                with rename_cols[1]:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button('✅', key=f'confirm_rename_project_{project_id}', help="Confirm rename"):
+                            if new_name and new_name.strip() != project_name:
+                                try:
+                                    rename_project(project_id, new_name.strip())
+                                    # Update current project name if it's the selected one
+                                    if st.session_state.get('current_project_id') == project_id:
+                                        st.session_state['current_project_name'] = new_name.strip()
+                                    st.session_state[f'renaming_project_{project_id}'] = False
+                                    st.success(f"✅ Renamed to '{new_name.strip()}'!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
+                            else:
+                                st.warning("Please enter a different name.")
+                    with col2:
+                        if st.button('❌', key=f'cancel_rename_project_{project_id}', help="Cancel rename"):
+                            st.session_state[f'renaming_project_{project_id}'] = False
+                            st.rerun()
+            
+            # Show experiments if project is expanded and selected
+            if (project_expanded and st.session_state.get('current_project_id') == project_id):
+                existing_experiments = get_project_experiments(project_id)
+                if existing_experiments:
+                    st.markdown("##### 🧪 Experiments")
+                    for experiment in existing_experiments:
+                        experiment_id, experiment_name, file_name, data_json, created_date = experiment
+                        
+                        # Experiment row with indentation and three dots
+                        exp_cols = st.columns([0.1, 0.7, 0.2])
+                        with exp_cols[0]:
+                            st.markdown("&nbsp;&nbsp;📊", unsafe_allow_html=True)
+                        
+                        with exp_cols[1]:
+                            if st.button(experiment_name, key=f'exp_select_{experiment_id}', use_container_width=True):
+                                st.session_state['loaded_experiment'] = {
+                                    'experiment_id': experiment_id,
+                                    'experiment_name': experiment_name,
+                                    'project_id': project_id,
+                                    'experiment_data': json.loads(data_json)
+                                }
+                                st.rerun()
+                        
+                        with exp_cols[2]:
+                            exp_menu_open = st.session_state.get(f'exp_menu_open_{experiment_id}', False)
+                            if st.button('⋯', key=f'exp_menu_btn_{experiment_id}', help="Experiment options"):
+                                for e2 in existing_experiments:
+                                    st.session_state[f'exp_menu_open_{e2[0]}'] = False
+                                st.session_state[f'exp_menu_open_{experiment_id}'] = not exp_menu_open
+                                st.rerun()
+                            if exp_menu_open:
+                                with st.container():
+                                    if st.button('Rename', key=f'exp_rename_{experiment_id}_menu', use_container_width=True):
+                                        st.session_state[f'renaming_experiment_{experiment_id}'] = True
+                                        st.session_state[f'exp_menu_open_{experiment_id}'] = False
+                                        st.rerun()
+                                    if st.button('Delete', key=f'exp_delete_{experiment_id}_menu', use_container_width=True):
+                                        st.session_state['confirm_delete_experiment'] = (experiment_id, experiment_name)
+                                        st.session_state[f'exp_menu_open_{experiment_id}'] = False
+                                        st.rerun()
+                        
+                        # Inline rename for experiment
+                        if st.session_state.get(f'renaming_experiment_{experiment_id}', False):
+                            exp_rename_cols = st.columns([0.1, 0.7, 0.2])
+                            with exp_rename_cols[1]:
+                                new_exp_name = st.text_input("New name:", value=experiment_name, key=f'rename_input_experiment_{experiment_id}', label_visibility="collapsed")
+                            with exp_rename_cols[2]:
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    if st.button('✅', key=f'confirm_rename_experiment_{experiment_id}', help="Confirm rename"):
+                                        if new_exp_name and new_exp_name.strip() != experiment_name:
+                                            try:
+                                                rename_experiment(experiment_id, new_exp_name.strip())
+                                                # Update loaded experiment name if it's the selected one
+                                                if (st.session_state.get('loaded_experiment') and 
+                                                    st.session_state['loaded_experiment'].get('experiment_id') == experiment_id):
+                                                    st.session_state['loaded_experiment']['experiment_name'] = new_exp_name.strip()
+                                                st.session_state[f'renaming_experiment_{experiment_id}'] = False
+                                                st.success(f"✅ Renamed to '{new_exp_name.strip()}'!")
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"❌ Error: {str(e)}")
+                                        else:
+                                            st.warning("Please enter a different name.")
+                                with col2:
+                                    if st.button('❌', key=f'cancel_rename_experiment_{experiment_id}', help="Cancel rename"):
+                                        st.session_state[f'renaming_experiment_{experiment_id}'] = False
+                                        st.rerun()
+                else:
+                    st.markdown("&nbsp;&nbsp;&nbsp;&nbsp;*No experiments in this project*", unsafe_allow_html=True)
+    else:
+        st.info("No projects found. Create your first project below.")
+
+    # Create new project
+    with st.expander("➕ Create New Project", expanded=False):
+        new_project_name = st.text_input("Project Name", key="new_project_name")
+        new_project_description = st.text_area("Description (optional)", key="new_project_description")
+        if st.button("Create Project", key="create_project_btn"):
+            if new_project_name:
+                project_id = create_project(TEST_USER_ID, new_project_name, new_project_description)
+                st.success(f"Project '{new_project_name}' created successfully!")
+                st.rerun()
+            else:
+                st.error("Please enter a project name.")
+
+    st.markdown("---")
+    st.markdown("#### 📁 Project Contents")
+    # (Optional: Show currently loaded experiment status here)
+
+    st.markdown("#### ℹ️ Quick Start")
+    st.markdown("1. **Create or select a project** above")
+    st.markdown("2. **Go to Cell Inputs tab** to upload data or edit experiments") 
+    st.markdown("3. **View results** in Summary, Plots, and Export tabs")
+
+# --- Dropdown CSS and Global State Management ---
+# Add CSS for Gmail-style popup dropdown
+st.markdown(
+    """
+    <style>
+    /* Container for the three dots and popup */
+    .dropdown-container {
+        position: relative;
+        display: inline-block;
+    }
+    
+    /* Three dots button styling */
+    .three-dots-btn {
+        background: none;
+        border: none;
+        font-size: 18px;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        color: #666;
+        transition: background-color 0.2s;
+    }
+    
+    .three-dots-btn:hover {
+        background-color: #f0f0f0;
+    }
+    
+    /* Gmail-style popup menu */
+    .popup-menu {
+        position: absolute;
+        right: 0;
+        top: 100%;
+        background-color: white;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        z-index: 1000;
+        min-width: 120px;
+        margin-top: 4px;
+        padding: 4px 0;
+        display: none;
+    }
+    
+    /* Show popup when active */
+    .popup-menu.show {
+        display: block;
+    }
+    
+    /* Popup menu items */
+    .popup-item {
+        display: block;
+        width: 100%;
+        padding: 8px 16px;
+        text-align: left;
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+        color: #333;
+        transition: background-color 0.2s;
+        white-space: nowrap;
+    }
+    
+    .popup-item:hover {
+        background-color: #f5f5f5;
+    }
+    
+    .popup-item.delete {
+        color: #d32f2f;
+    }
+    
+    .popup-item.delete:hover {
+        background-color: #ffebee;
+    }
+    
+    /* Arrow pointing up to the three dots */
+    .popup-menu::before {
+        content: '';
+        position: absolute;
+        top: -6px;
+        right: 12px;
+        width: 0;
+        height: 0;
+        border-left: 6px solid transparent;
+        border-right: 6px solid transparent;
+        border-bottom: 6px solid white;
+        z-index: 1001;
+    }
+    
+    .popup-menu::after {
+        content: '';
+        position: absolute;
+        top: -7px;
+        right: 12px;
+        width: 0;
+        height: 0;
+        border-left: 6px solid transparent;
+        border-right: 6px solid transparent;
+        border-bottom: 6px solid #ddd;
+        z-index: 1000;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# Show delete confirmation dialogs when triggered
+if st.session_state.get("confirm_delete_project"):
+    confirm_delete_project()
+else:
+    pass
+
+if st.session_state.get("confirm_delete_experiment"):
+    confirm_delete_experiment()
+else:
+    pass
+if 'datasets' not in st.session_state:
+    st.session_state['datasets'] = []
+datasets = st.session_state.get('datasets', [])
+disc_diameter_mm = st.session_state.get('disc_diameter_mm', 15)
+experiment_date = st.session_state.get('experiment_date', date.today())
+# Ensure experiment_name is always defined
+experiment_name = st.session_state.get('sidebar_experiment_name', '') or ''
+
+# Tab selection state
+if 'active_main_tab' not in st.session_state:
+    st.session_state['active_main_tab'] = 0
+
+# Remove unsupported arguments from st.tabs
+# If 'show_cell_inputs_prompt' is set, show a message at the top
+if 'show_cell_inputs_prompt' not in st.session_state:
+    st.session_state['show_cell_inputs_prompt'] = False
+
+if st.session_state.get('show_cell_inputs_prompt'):
+    st.warning('Please click the "🧪 Cell Inputs" tab above to start your new experiment.')
+    st.session_state['show_cell_inputs_prompt'] = False
+
+# Create tabs - include Master Table tab if a project is selected
+current_project_id = st.session_state.get('current_project_id')
+if current_project_id:
+    tab_inputs, tab1, tab2, tab3, tab_master = st.tabs(["🧪 Cell Inputs", "📊 Summary", "📈 Plots", "📤 Export", "📋 Master Table"])
+else:
+    tab_inputs, tab1, tab2, tab3 = st.tabs(["🧪 Cell Inputs", "📊 Summary", "📈 Plots", "📤 Export"])
+    tab_master = None
+
+# --- Cell Inputs Tab ---
+with tab_inputs:
+    # If user started a new experiment, clear cell input state
+    if st.session_state.get('start_new_experiment'):
+        st.session_state['datasets'] = []
+        st.session_state['current_experiment_name'] = ''
+        st.session_state['current_experiment_date'] = date.today()
+        st.session_state['current_disc_diameter_mm'] = 15
+        st.session_state['current_group_assignments'] = None
+        st.session_state['current_group_names'] = ["Group A", "Group B", "Group C"]
+        st.session_state['start_new_experiment'] = False
+    st.header("🧪 Cell Inputs & Experiment Setup")
+    st.markdown("---")
+    
+    # Check if we have a loaded experiment
+    loaded_experiment = st.session_state.get('loaded_experiment')
+    
+    # If a new experiment is being started, always allow editing
+    is_new_experiment = not loaded_experiment and st.session_state.get('current_project_id')
+    
+    if loaded_experiment:
+        st.info(f"📊 Editing experiment: **{loaded_experiment['experiment_name']}**")
+        experiment_data = loaded_experiment['experiment_data']
+        
+        # Load existing values from the experiment
+        current_experiment_name = loaded_experiment['experiment_name']
+        current_experiment_date = experiment_data.get('experiment_date')
+        if isinstance(current_experiment_date, str):
+            try:
+                current_experiment_date = datetime.fromisoformat(current_experiment_date).date()
+            except:
+                current_experiment_date = date.today()
+        elif current_experiment_date is None:
+            current_experiment_date = date.today()
+        current_disc_diameter = experiment_data.get('disc_diameter_mm', 15)
+        current_group_assignments = experiment_data.get('group_assignments')
+        current_group_names = experiment_data.get('group_names', ["Group A", "Group B", "Group C"])
+        # --- Load experiment-level fields from experiment data ---
+        st.session_state['solids_content'] = experiment_data.get('solids_content', 0.0)
+        st.session_state['pressed_thickness'] = experiment_data.get('pressed_thickness', 0.0)
+        st.session_state['experiment_notes'] = experiment_data.get('experiment_notes', '')
+        # Convert loaded cells data back to datasets format for editing
+        cells_data = experiment_data.get('cells', [])
+        loaded_datasets = []
+        for cell_data in cells_data:
+            # Create a mock file object for display purposes
+            mock_file = type('MockFile', (), {
+                'name': cell_data.get('file_name', 'loaded_data.csv'),
+                'type': 'text/csv'
+            })()
+            
+            loaded_datasets.append({
+                'file': mock_file,
+                'loading': cell_data.get('loading', 20.0),
+                'active': cell_data.get('active_material', 90.0),
+                'testnum': cell_data.get('test_number', cell_data.get('cell_name', '')),
+                'formation_cycles': cell_data.get('formation_cycles', 4),
+                'electrolyte': cell_data.get('electrolyte', '1M LiPF6 1:1:1'),
+                'formulation': cell_data.get('formulation', [])
+            })
+        
+        # Use loaded datasets as starting point
+        datasets = loaded_datasets
+        st.session_state['datasets'] = datasets
+        
+    elif is_new_experiment:
+        st.info(f"📝 Creating a new experiment in project: **{st.session_state['current_project_name']}**")
+        current_experiment_name = ""
+        current_experiment_date = date.today()
+        current_disc_diameter = 15
+        current_group_assignments = None
+        current_group_names = ["Group A", "Group B", "Group C"]
+        # --- Reset experiment-level fields for new experiment ---
+        st.session_state['solids_content'] = 0.0
+        st.session_state['pressed_thickness'] = 0.0
+        st.session_state['experiment_notes'] = ''
+    else:
+        st.info("📝 Create a new experiment or load an existing one from the sidebar")
+        current_experiment_name = ""
+        current_experiment_date = date.today()
+        current_disc_diameter = 15
+        current_group_assignments = None
+        current_group_names = ["Group A", "Group B", "Group C"]
+        # --- Reset experiment-level fields for no experiment ---
+        st.session_state['solids_content'] = 0.0
+        st.session_state['pressed_thickness'] = 0.0
+        st.session_state['experiment_notes'] = ''
+    
+    # Experiment metadata inputs
+    col1, col2 = st.columns(2)
+    with col1:
+        experiment_name_input = st.text_input(
+            'Experiment Name', 
+            value=current_experiment_name if loaded_experiment else experiment_name,
+            placeholder='Enter experiment name for file naming and summary tab',
+            key="main_experiment_name"
+        )
+    
+    with col2:
+        experiment_date_input = st.date_input(
+            "Experiment Date", 
+            value=current_experiment_date,
+            help="Date associated with this experiment"
+        )
+    
+    disc_diameter_input = st.number_input(
+        'Disc Diameter (mm) for Areal Capacity Calculation', 
+        min_value=1, 
+        max_value=50, 
+        value=current_disc_diameter, 
+        step=1
     )
+    
     st.markdown("---")
-    st.markdown("#### Global Options")
-    # Grouping and averages toggles (move from main area)
+    
+    # Cell inputs section
+    if loaded_experiment:
+        # For loaded experiments, show the cell input fields for editing
+        if len(datasets) > 1:
+            with st.expander(f'Cell 1: {datasets[0]["testnum"] or "Cell 1"}', expanded=False):
+                col1, col2 = st.columns(2)
+                with col1:
+                    loading_0 = st.number_input(
+                        f'Disc loading (mg) for Cell 1', 
+                        min_value=0.0, 
+                        step=1.0, 
+                        value=float(datasets[0]["loading"]),
+                        key=f'edit_loading_0'
+                    )
+                    formation_cycles_0 = st.number_input(
+                        f'Formation Cycles for Cell 1', 
+                        min_value=0, 
+                        step=1, 
+                        value=int(datasets[0]["formation_cycles"]),
+                        key=f'edit_formation_0'
+                    )
+                with col2:
+                    active_material_0 = st.number_input(
+                        f'% Active material for Cell 1', 
+                        min_value=0.0, 
+                        max_value=100.0, 
+                        step=1.0, 
+                        value=float(datasets[0]["active"]),
+                        key=f'edit_active_0'
+                    )
+                    test_number_0 = st.text_input(
+                        f'Test Number for Cell 1', 
+                        value=datasets[0]["testnum"] or "Cell 1",
+                        key=f'edit_testnum_0'
+                    )
+                
+                # Electrolyte selection
+                electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
+                electrolyte_0 = st.selectbox(
+                    f'Electrolyte for Cell 1', 
+                    electrolyte_options,
+                    index=electrolyte_options.index(datasets[0]["electrolyte"]) if datasets[0]["electrolyte"] in electrolyte_options else 0,
+                    key=f'edit_electrolyte_0'
+                )
+                
+                # Formulation table
+                st.markdown("**Formulation:**")
+                from ui_components import render_formulation_table
+                # Initialize formulation data if needed
+                formulation_key = f'formulation_data_edit_0_loaded'
+                if formulation_key not in st.session_state:
+                    st.session_state[formulation_key] = datasets[0]["formulation"] if datasets[0]["formulation"] else [{'Component': '', 'Dry Mass Fraction (%)': 0.0}]
+                formulation_0 = render_formulation_table(f'edit_0_loaded', project_id, get_project_components)
+                
+                assign_all = st.checkbox('Assign values to all cells', key='assign_all_cells_loaded')
+            # Update all datasets with new values
+            edited_datasets = []
+            for i, dataset in enumerate(datasets):
+                if i == 0:
+                    # First cell: preserve original file object and update other fields
+                    edited_dataset = {
+                        'file': dataset['file'],  # Always preserve original file object
+                        'loading': loading_0,
+                        'active': active_material_0,
+                        'testnum': test_number_0,
+                        'formation_cycles': formation_cycles_0,
+                        'electrolyte': electrolyte_0,
+                        'formulation': formulation_0
+                    }
+                else:
+                    with st.expander(f'Cell {i+1}: {dataset["testnum"] or f"Cell {i+1}"}', expanded=False):
+                        col1, col2 = st.columns(2)
+                        if assign_all:
+                            loading = loading_0
+                            formation_cycles = formation_cycles_0
+                            active_material = active_material_0
+                            electrolyte = electrolyte_0
+                            formulation = formulation_0
+                            # Test number should remain individual (not assigned to all)
+                            test_number = dataset['testnum'] or f'Cell {i+1}'
+                        else:
+                            with col1:
+                                loading = st.number_input(
+                                    f'Disc loading (mg) for Cell {i+1}', 
+                                    min_value=0.0, 
+                                    step=1.0, 
+                                    value=float(dataset['loading']),
+                                    key=f'edit_loading_{i}'
+                                )
+                                formation_cycles = st.number_input(
+                                    f'Formation Cycles for Cell {i+1}', 
+                                    min_value=0, 
+                                    step=1, 
+                                    value=int(dataset['formation_cycles']),
+                                    key=f'edit_formation_{i}'
+                                )
+                            with col2:
+                                active_material = st.number_input(
+                                    f'% Active material for Cell {i+1}', 
+                                    min_value=0.0, 
+                                    max_value=100.0, 
+                                    step=1.0, 
+                                    value=float(dataset['active']),
+                                    key=f'edit_active_{i}'
+                                )
+                                test_number = st.text_input(
+                                    f'Test Number for Cell {i+1}', 
+                                    value=dataset['testnum'] or f'Cell {i+1}',
+                                    key=f'edit_testnum_{i}'
+                                )
+                            
+                            # Electrolyte selection
+                            electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
+                            electrolyte = st.selectbox(
+                                f'Electrolyte for Cell {i+1}', 
+                                electrolyte_options,
+                                index=electrolyte_options.index(dataset['electrolyte']) if dataset['electrolyte'] in electrolyte_options else 0,
+                                key=f'edit_electrolyte_{i}'
+                            )
+                            
+                            # Formulation table
+                            st.markdown("**Formulation:**")
+                            from ui_components import render_formulation_table
+                            # Initialize formulation data if needed
+                            formulation_key = f'formulation_data_edit_{i}_loaded'
+                            if formulation_key not in st.session_state:
+                                st.session_state[formulation_key] = dataset['formulation'] if dataset['formulation'] else [{'Component': '', 'Dry Mass Fraction (%)': 0.0}]
+                            formulation = render_formulation_table(f'edit_{i}_loaded', project_id, get_project_components)
+                            
+                        with col2:
+                            # Always preserve original file object, only update other fields
+                            edited_dataset = {
+                                'file': dataset['file'],  # Always preserve original file object
+                                'loading': loading,
+                                'active': active_material,
+                                'testnum': test_number,
+                                'formation_cycles': formation_cycles,
+                                'electrolyte': electrolyte,
+                                'formulation': formulation
+                            }
+                edited_datasets.append(edited_dataset)
+            datasets = edited_datasets
+            st.session_state['datasets'] = datasets
+        else:
+            # Only one cell
+            for i, dataset in enumerate(datasets):
+                with st.expander(f'Cell {i+1}: {dataset["testnum"] or f"Cell {i+1}"}', expanded=False):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        loading = st.number_input(
+                            f'Disc loading (mg) for Cell {i+1}', 
+                            min_value=0.0, 
+                            step=1.0, 
+                            value=float(dataset['loading']),
+                            key=f'edit_loading_{i}'
+                        )
+                        formation_cycles = st.number_input(
+                            f'Formation Cycles for Cell {i+1}', 
+                            min_value=0, 
+                            step=1, 
+                            value=int(dataset['formation_cycles']),
+                            key=f'edit_formation_{i}'
+                        )
+                    with col2:
+                        active_material = st.number_input(
+                            f'% Active material for Cell {i+1}', 
+                            min_value=0.0, 
+                            max_value=100.0, 
+                            step=1.0, 
+                            value=float(dataset['active']),
+                            key=f'edit_active_{i}'
+                        )
+                        test_number = st.text_input(
+                            f'Test Number for Cell {i+1}', 
+                            value=dataset['testnum'] or f'Cell {i+1}',
+                            key=f'edit_testnum_{i}'
+                        )
+                    
+                    # Electrolyte selection
+                    electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
+                    electrolyte = st.selectbox(
+                        f'Electrolyte for Cell {i+1}', 
+                        electrolyte_options,
+                        index=electrolyte_options.index(dataset['electrolyte']) if dataset['electrolyte'] in electrolyte_options else 0,
+                        key=f'edit_single_electrolyte_{i}'
+                    )
+                    
+                    # Formulation table
+                    st.markdown("**Formulation:**")
+                    from ui_components import render_formulation_table
+                    # Initialize formulation data if needed
+                    formulation_key = f'formulation_data_edit_single_{i}_loaded'
+                    if formulation_key not in st.session_state:
+                        st.session_state[formulation_key] = dataset['formulation'] if dataset['formulation'] else [{'Component': '', 'Dry Mass Fraction (%)': 0.0}]
+                    formulation = render_formulation_table(f'edit_single_{i}_loaded', project_id, get_project_components)
+                    
+                    # Always preserve original file object, only update other fields
+                    edited_dataset = {
+                        'file': dataset['file'],  # Always preserve original file object
+                        'loading': loading,
+                        'active': active_material,
+                        'testnum': test_number,
+                        'formation_cycles': formation_cycles,
+                        'electrolyte': electrolyte,
+                        'formulation': formulation
+                    }
+                dataset.update(edited_dataset)
+    else:
+        # New experiment flow - use unified render_cell_inputs
+        st.markdown("#### 📁 Upload Cell Data Files")
+        current_project_id = st.session_state.get('current_project_id')
+        datasets = render_cell_inputs(context_key='main_cell_inputs', project_id=current_project_id, get_components_func=get_project_components)
+        st.session_state['datasets'] = datasets
+        # Store original uploaded files separately to prevent loss
+        if datasets:
+            st.session_state['original_uploaded_files'] = [ds['file'] for ds in datasets if ds.get('file')]
+    
+    # Group assignment section (if multiple cells)
     enable_grouping = False
     show_averages = False
-    group_assignments = None
-    group_names = ["Group A", "Group B", "Group C"]
-    if datasets and len(datasets) > 1:
-        enable_grouping = st.checkbox('Assign Cells into Groups?')
+    group_assignments = current_group_assignments
+    group_names = current_group_names
+    
+    # --- New experiment-level fields ---
+    st.markdown('---')
+    st.subheader('Experiment Parameters')
+    solids_content = st.number_input(
+        'Solids Content (%)',
+        min_value=0.0, max_value=100.0, step=0.1,
+        value=st.session_state.get('solids_content', 0.0),
+        help='Percentage solids in the slurry formulation when the electrode was made.'
+    )
+    pressed_thickness = st.number_input(
+        'Pressed Thickness (um)',
+        min_value=0.0, step=0.1,
+        value=st.session_state.get('pressed_thickness', 0.0),
+        help='Pressed electrode thickness in microns (um).'
+    )
+    experiment_notes = st.text_area(
+        'Experiment Notes',
+        value=st.session_state.get('experiment_notes', ''),
+        help='Basic notes associated with this experiment.'
+    )
+    st.session_state['solids_content'] = solids_content
+    st.session_state['pressed_thickness'] = pressed_thickness
+    st.session_state['experiment_notes'] = experiment_notes
+    
+    if datasets and len([d for d in datasets if d.get('file') or loaded_experiment or is_new_experiment]) > 1:
+        st.markdown("---")
+        st.markdown("#### 👥 Group Assignment (Optional)")
+        enable_grouping = st.checkbox('Assign Cells into Groups?', value=bool(current_group_assignments))
+        
         if enable_grouping:
-            with st.expander('Cell Group Assignment', expanded=True):
-                group_names[0] = st.text_input('Name for Group A', value='Group A', key='group_name_a')
-                group_names[1] = st.text_input('Name for Group B', value='Group B', key='group_name_b')
-                group_names[2] = st.text_input('Name for Group C', value='Group C', key='group_name_c')
-                group_assignments = []
-                for i, cell in enumerate(datasets):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                group_names[0] = st.text_input('Group A Name', value=group_names[0], key='main_group_name_a')
+            with col2:
+                group_names[1] = st.text_input('Group B Name', value=group_names[1], key='main_group_name_b')
+            with col3:
+                group_names[2] = st.text_input('Group C Name', value=group_names[2], key='main_group_name_c')
+            
+            st.markdown("**Assign each cell to a group:**")
+            group_assignments = []
+            for i, cell in enumerate(datasets):
+                if cell.get('file') or loaded_experiment or is_new_experiment:
+                    cell_name = cell['testnum'] or f'Cell {i+1}'
+                    default_group = current_group_assignments[i] if (current_group_assignments and i < len(current_group_assignments)) else group_names[0]
                     group = st.radio(
-                        f"Assign {cell['testnum'] or f'Cell {i+1}'} to group:",
+                        f"Assign {cell_name} to group:",
                         [group_names[0], group_names[1], group_names[2], "Exclude"],
-                        key=f"group_assignment_{i}",
+                        index=[group_names[0], group_names[1], group_names[2], "Exclude"].index(default_group) if default_group in [group_names[0], group_names[1], group_names[2], "Exclude"] else 0,
+                        key=f"main_group_assignment_{i}",
                         horizontal=True
                     )
                     group_assignments.append(group)
+            
             show_averages = st.checkbox("Show Group Averages", value=True)
+    
+    # Update session state with current values
+    st.session_state['current_experiment_name'] = experiment_name_input
+    st.session_state['current_experiment_date'] = experiment_date_input
+    st.session_state['current_disc_diameter_mm'] = disc_diameter_input
+    st.session_state['current_group_assignments'] = group_assignments
+    st.session_state['current_group_names'] = group_names
+    
+    # Save/Update experiment button
     st.markdown("---")
-    st.markdown("**About:** This app analyzes battery cycling data and generates summary tables, plots, and exportable reports.")
-
-# --- Main Area: Tabs Layout ---
-tab1, tab2, tab3 = st.tabs(["📊 Summary", "📈 Plots", "📤 Export"])
+    if loaded_experiment:
+        if st.button("💾 Update Experiment", type="primary", use_container_width=True):
+            # Update the loaded experiment with new values
+            experiment_id = loaded_experiment['experiment_id']
+            project_id = loaded_experiment['project_id']
+            
+            # Prepare updated cells data
+            updated_cells_data = []
+            for i, dataset in enumerate(datasets):
+                if i < len(experiment_data.get('cells', [])):
+                    original_cell = experiment_data['cells'][i]
+                    updated_cell = original_cell.copy()
+                    updated_cell.update({
+                        'loading': dataset['loading'],
+                        'active_material': dataset['active'],
+                        'formation_cycles': dataset['formation_cycles'],
+                        'test_number': dataset['testnum'],
+                        'cell_name': dataset['testnum'],
+                        'electrolyte': dataset.get('electrolyte', '1M LiPF6 1:1:1'),
+                        'formulation': dataset.get('formulation', [])
+                    })
+                    updated_cells_data.append(updated_cell)
+            
+            try:
+                update_experiment(
+                    experiment_id=experiment_id,
+                    project_id=project_id,
+                    experiment_name=experiment_name_input,
+                    experiment_date=experiment_date_input,
+                    disc_diameter_mm=disc_diameter_input,
+                    group_assignments=group_assignments,
+                    group_names=group_names,
+                    cells_data=updated_cells_data,
+                    solids_content=solids_content,
+                    pressed_thickness=pressed_thickness,
+                    experiment_notes=experiment_notes
+                )
+                
+                # Update the loaded experiment in session state
+                st.session_state['loaded_experiment']['experiment_name'] = experiment_name_input
+                st.session_state['loaded_experiment']['experiment_data'].update({
+                    'experiment_date': experiment_date_input.isoformat(),
+                    'disc_diameter_mm': disc_diameter_input,
+                    'group_assignments': group_assignments,
+                    'group_names': group_names,
+                    'cells': updated_cells_data,
+                    'solids_content': solids_content,
+                    'pressed_thickness': pressed_thickness,
+                    'experiment_notes': experiment_notes
+                })
+                
+                st.success("✅ Experiment updated successfully!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error updating experiment: {str(e)}")
+    
+    elif is_new_experiment:
+        # Save new experiment (only if we have valid data and a selected project)
+        valid_datasets = [ds for ds in datasets if ds.get('file') and ds.get('loading', 0) > 0 and 0 < ds.get('active', 0) <= 100]
+        
+        if valid_datasets and st.session_state.get('current_project_id'):
+            if st.button("💾 Save New Experiment", type="primary", use_container_width=True):
+                current_project_id = st.session_state['current_project_id']
+                current_project_name = st.session_state['current_project_name']
+                
+                # Use experiment name from input or generate one
+                exp_name = experiment_name_input if experiment_name_input else f"Experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                
+                # Prepare cells data
+                cells_data = []
+                for i, ds in enumerate(valid_datasets):
+                    cell_name = ds['testnum'] if ds['testnum'] else f'Cell {i+1}'
+                    file_name = ds['file'].name if ds['file'] else f'cell_{i+1}.csv'
+                    
+                    try:
+                        # Process the data to get DataFrame
+                        temp_dfs = load_and_preprocess_data([ds])
+                        if temp_dfs and len(temp_dfs) > 0:
+                            df = temp_dfs[0]['df']
+                            
+                            cells_data.append({
+                                'cell_name': cell_name,
+                                'file_name': file_name,
+                                'loading': ds['loading'],
+                                'active_material': ds['active'],
+                                'formation_cycles': ds['formation_cycles'],
+                                'test_number': ds['testnum'],
+                                'electrolyte': ds.get('electrolyte', '1M LiPF6 1:1:1'),
+                                'formulation': ds.get('formulation', []),
+                                'data_json': df.to_json()
+                            })
+                        else:
+                            st.warning(f"⚠️ Failed to process data for {cell_name}. Skipping this cell.")
+                    except Exception as e:
+                        st.error(f"❌ Error processing {cell_name}: {str(e)}")
+                        continue
+                
+                # Save the experiment
+                if cells_data:
+                    try:
+                        if check_experiment_name_exists(current_project_id, exp_name):
+                            experiment_id = get_experiment_by_name(current_project_id, exp_name)
+                            update_experiment(
+                                experiment_id=experiment_id,
+                                project_id=current_project_id,
+                                experiment_name=exp_name,
+                                experiment_date=experiment_date_input,
+                                disc_diameter_mm=disc_diameter_input,
+                                group_assignments=group_assignments,
+                                group_names=group_names,
+                                cells_data=cells_data,
+                                solids_content=solids_content,
+                                pressed_thickness=pressed_thickness,
+                                experiment_notes=experiment_notes
+                            )
+                            st.success(f"🔄 Updated experiment '{exp_name}' in project '{current_project_name}'!")
+                        else:
+                            save_experiment(
+                                project_id=current_project_id,
+                                experiment_name=exp_name,
+                                experiment_date=experiment_date_input,
+                                disc_diameter_mm=disc_diameter_input,
+                                group_assignments=group_assignments,
+                                group_names=group_names,
+                                cells_data=cells_data,
+                                solids_content=solids_content,
+                                pressed_thickness=pressed_thickness,
+                                experiment_notes=experiment_notes
+                            )
+                            st.success(f"✅ Saved experiment '{exp_name}' with {len(cells_data)} cells in project '{current_project_name}'!")
+                        
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Failed to save experiment: {str(e)}")
+                else:
+                    st.error("❌ No valid cell data to save. Please check your files and try again.")
+        
+        elif valid_datasets and not st.session_state.get('current_project_id'):
+            st.warning("⚠️ Please select a project in the sidebar before saving the experiment.")
+        elif not valid_datasets:
+            st.info("ℹ️ Upload cell data files and enter valid parameters to save an experiment.")
 
 # --- Data Preprocessing Section ---
-valid_datasets = []
-for ds in datasets:
-    if ds['file'] and ds['loading'] > 0 and 0 < ds['active'] <= 100:
-        valid_datasets.append(ds)
-ready = len(valid_datasets) > 0
+# This section is now handled in the Cell Inputs tab
+# Data processing now happens in the Cell Inputs tab
+
+# Check if we have loaded experiment data to display
+loaded_experiment = st.session_state.get('loaded_experiment')
+if loaded_experiment:
+    st.markdown("---")
+    st.markdown(f"### 📊 Loaded Experiment: {loaded_experiment['experiment_name']}")
+    
+    # Convert saved JSON data back to DataFrames
+    loaded_dfs = []
+    experiment_data = loaded_experiment['experiment_data']
+    cells_data = experiment_data.get('cells', [])
+    
+    for cell_data in cells_data:
+        cell_name = cell_data.get('cell_name', 'Unknown')
+        try:
+            df = pd.read_json(cell_data['data_json'])
+            loaded_dfs.append({
+                'df': df,
+                'testnum': cell_data.get('test_number'),
+                'loading': cell_data.get('loading'),
+                'active': cell_data.get('active_material'),
+                'formation_cycles': cell_data.get('formation_cycles')
+            })
+        except Exception as e:
+            st.error(f"Error loading data for {cell_name}: {str(e)}")
+    
+    if loaded_dfs:
+        # Use loaded data for analysis
+        dfs = loaded_dfs
+        ready = True
+        st.success(f"✅ Loaded {len(loaded_dfs)} cell(s) from saved experiment")
+        
+        # Display experiment metadata
+        if experiment_data.get('experiment_date'):
+            st.info(f"📅 Experiment Date: {experiment_data['experiment_date']}")
+        if experiment_data.get('disc_diameter_mm'):
+            st.info(f"🔘 Disc Diameter: {experiment_data['disc_diameter_mm']} mm")
+    else:
+        st.error("❌ Failed to load experiment data")
+        ready = False
+
+# Determine if we have data ready for analysis
+if loaded_experiment:
+    ready = len(loaded_dfs) > 0
+else:
+    # For new experiments, check if we have valid uploaded data
+    datasets = st.session_state.get('datasets', [])
+    # Only include datasets with a real uploaded file for processing
+    valid_datasets = []
+    for ds in datasets:
+        file_obj = ds.get('file')
+        if (file_obj and 
+            hasattr(file_obj, 'read') and 
+            hasattr(file_obj, 'name') and 
+            hasattr(file_obj, 'type') and
+            ds.get('loading', 0) > 0 and 
+            0 < ds.get('active', 0) <= 100):
+            # Additional check: ensure it's a real Streamlit UploadedFile, not a mock object
+            try:
+                # Try to access the file's size property (real uploaded files have this)
+                if hasattr(file_obj, 'size') and file_obj.size is not None and file_obj.size > 0:
+                    valid_datasets.append(ds)
+            except (AttributeError, TypeError):
+                # Skip files that don't have proper size attribute or other issues
+                continue
+    
+    # Process uploaded data if we have valid datasets
+    if valid_datasets:
+        # Create a cache key based on file names and parameters
+        cache_key = []
+        for ds in valid_datasets:
+            if ds.get('file'):
+                file_info = f"{ds['file'].name}_{ds['loading']}_{ds['active']}_{ds['formation_cycles']}"
+                cache_key.append(file_info)
+        cache_key_str = "_".join(cache_key)
+        
+        # Check if we have cached processed data
+        if ('processed_data_cache' in st.session_state and 
+            st.session_state.get('cache_key') == cache_key_str):
+            dfs = st.session_state['processed_data_cache']
+        else:
+            # Process data and cache it
+            # Final safety check before processing
+            safe_datasets = []
+            for ds in valid_datasets:
+                try:
+                    # Test that we can actually read from the file
+                    file_obj = ds['file']
+                    current_pos = file_obj.tell() if hasattr(file_obj, 'tell') else 0
+                    file_obj.seek(0)
+                    # Try to read a small sample to verify it's readable
+                    sample = file_obj.read(10)
+                    file_obj.seek(current_pos)  # Reset position
+                    if sample:  # File has content
+                        safe_datasets.append(ds)
+                except Exception as e:
+                    st.warning(f"⚠️ Skipping invalid file: {ds.get('file', {}).get('name', 'Unknown')} - {str(e)}")
+                    continue
+            
+            if safe_datasets:
+                dfs = load_and_preprocess_data(safe_datasets)
+                # After loading and preprocessing, re-attach the latest formation_cycles to each dfs entry
+                for i, d in enumerate(dfs):
+                    if i < len(safe_datasets):
+                        d['formation_cycles'] = safe_datasets[i]['formation_cycles']
+                
+                # Display file type information
+                file_types = [d.get('file_type', 'Unknown') for d in dfs]
+                biologic_count = file_types.count('biologic_csv')
+                neware_count = file_types.count('neware_xlsx')
+                
+                if biologic_count > 0 and neware_count > 0:
+                    st.info(f"📁 Processed {len(dfs)} files: {biologic_count} Biologic CSV file(s) and {neware_count} Neware XLSX file(s)")
+                elif biologic_count > 0:
+                    st.info(f"📁 Processed {biologic_count} Biologic CSV file(s)")
+                elif neware_count > 0:
+                    st.info(f"📁 Processed {neware_count} Neware XLSX file(s)")
+            else:
+                dfs = []
+                st.error("❌ No valid files found for processing.")
+            
+            # Cache the processed data
+            st.session_state['processed_data_cache'] = dfs
+            st.session_state['cache_key'] = cache_key_str
+        
+        ready = len(dfs) > 0
+    else:
+        ready = False
+
 if ready:
+    # Use values from Cell Inputs tab
+    disc_diameter_mm = st.session_state.get('current_disc_diameter_mm', 15)
+    experiment_name = st.session_state.get('current_experiment_name', '')
+    group_assignments = st.session_state.get('current_group_assignments')
+    group_names = st.session_state.get('current_group_names', ["Group A", "Group B", "Group C"])
+    enable_grouping = bool(group_assignments)
+    show_averages = enable_grouping
+    datasets = st.session_state.get('datasets', [])
     disc_area_cm2 = np.pi * (disc_diameter_mm / 2 / 10) ** 2
-    dfs = load_and_preprocess_data(valid_datasets)
-    # After loading and preprocessing, re-attach the latest formation_cycles to each dfs entry
-    for i, d in enumerate(dfs):
-        d['formation_cycles'] = valid_datasets[i]['formation_cycles']
+    
     # --- Group Average Curve Calculation for Plotting ---
     group_curves = []
     if enable_grouping and group_assignments is not None:
@@ -161,7 +1154,8 @@ if ready:
         show_average_col = False
         if len(dfs) > 1:
             show_average_col = st.toggle("Show average column", value=True, key="show_average_col_toggle")
-        st.markdown("#### Summary Table")
+        # Only one summary table should be rendered:
+        from ui_components import display_summary_stats
         display_summary_stats(dfs, disc_area_cm2, show_average_col, group_assignments, group_names)
     with tab2:
         st.header("📈 Main Plot")
@@ -206,7 +1200,10 @@ if ready:
                 max_qdis = max(first_three_qdis) if first_three_qdis else None
                 if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                     first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                    eff_pct = first_cycle_eff * 100
+                    try:
+                        eff_pct = float(first_cycle_eff) * 100
+                    except (ValueError, TypeError):
+                        eff_pct = None
                 else:
                     eff_pct = None
                 
@@ -326,8 +1323,11 @@ if ready:
                     qdis_str = f"{max_qdis:.1f}" if isinstance(max_qdis, (int, float)) else "N/A"
                     if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                         first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                        eff_pct = first_cycle_eff * 100
-                        eff_str = f"{eff_pct:.1f}%"
+                        try:
+                            eff_pct = float(first_cycle_eff) * 100
+                            eff_str = f"{eff_pct:.1f}%"
+                        except (ValueError, TypeError):
+                            eff_str = "N/A"
                     else:
                         eff_str = "N/A"
                     # Cycle Life (80%)
@@ -397,8 +1397,13 @@ if ready:
                                     avg_qdis_values.append(max_qdis)
                                 if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                                     first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                                    eff_pct = first_cycle_eff * 100
-                                    avg_eff_values.append(eff_pct)
+                                    try:
+                                        eff_pct = float(first_cycle_eff) * 100
+                                        avg_eff_values.append(eff_pct)
+                                    except (ValueError, TypeError):
+                                        avg_eff_values.append(None) # Handle non-numeric efficiency
+                                else:
+                                    avg_eff_values.append(None) # Handle missing efficiency
                                 try:
                                     qdis_series = get_qdis_series(df_cell)
                                     cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
@@ -432,7 +1437,9 @@ if ready:
                                 if ceff_values:
                                     avg_ceff_values.append(sum(ceff_values)/len(ceff_values)*100)
                             avg_qdis = sum(avg_qdis_values) / len(avg_qdis_values) if avg_qdis_values else 0
-                            avg_eff = sum(avg_eff_values) / len(avg_eff_values) if avg_eff_values else 0
+                            # Filter out None values for average calculation
+                            valid_avg_eff_values = [v for v in avg_eff_values if v is not None]
+                            avg_eff = sum(valid_avg_eff_values) / len(valid_avg_eff_values) if valid_avg_eff_values else None
                             avg_cycle_life = sum(avg_cycle_life_values) / len(avg_cycle_life_values) if avg_cycle_life_values else 0
                             avg_areal = sum(avg_areal_capacity_values) / len(avg_areal_capacity_values) if avg_areal_capacity_values else 0
                             avg_reversible = sum(avg_reversible_capacities) / len(avg_reversible_capacities) if avg_reversible_capacities else None
@@ -440,7 +1447,7 @@ if ready:
                             group_summary_rows.append([
                                 group_name + " (Group Avg)",
                                 f"{avg_qdis:.1f}",
-                                f"{avg_eff:.1f}%",
+                                f"{avg_eff:.1f}%" if avg_eff is not None else "N/A",
                                 f"{avg_cycle_life:.0f}",
                                 f"{avg_areal:.3f}",
                                 f"{avg_reversible:.1f}" if avg_reversible is not None else "N/A",
@@ -462,8 +1469,13 @@ if ready:
                         avg_qdis_values.append(max_qdis)
                     if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                         first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                        eff_pct = first_cycle_eff * 100
-                        avg_eff_values.append(eff_pct)
+                        try:
+                            eff_pct = float(first_cycle_eff) * 100
+                            avg_eff_values.append(eff_pct)
+                        except (ValueError, TypeError):
+                            avg_eff_values.append(None) # Handle non-numeric efficiency
+                    else:
+                        avg_eff_values.append(None) # Handle missing efficiency
                     qdis_series = get_qdis_series(df_cell)
                     cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
                     cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
@@ -503,7 +1515,9 @@ if ready:
                         avg_ceff = sum(ceff_values) / len(ceff_values) * 100
                         avg_ceff_values.append(avg_ceff)
                 avg_qdis = sum(avg_qdis_values) / len(avg_qdis_values) if avg_qdis_values else 0
-                avg_eff = sum(avg_eff_values) / len(avg_eff_values) if avg_eff_values else 0
+                # Filter out None values for average calculation
+                valid_avg_eff_values = [v for v in avg_eff_values if v is not None]
+                avg_eff = sum(valid_avg_eff_values) / len(valid_avg_eff_values) if valid_avg_eff_values else None
                 avg_cycle_life = sum(avg_cycle_life_values) / len(avg_cycle_life_values) if avg_cycle_life_values else 0
                 avg_areal = sum(avg_areal_capacity_values) / len(avg_areal_capacity_values) if avg_areal_capacity_values else 0
                 avg_reversible = sum(avg_reversible_capacities) / len(avg_reversible_capacities) if avg_reversible_capacities else None
@@ -511,7 +1525,7 @@ if ready:
                 table_data.append([
                     "AVERAGE",
                     f"{avg_qdis:.1f}",
-                    f"{avg_eff:.1f}%",
+                    f"{avg_eff:.1f}%" if avg_eff is not None else "N/A",
                     f"{avg_cycle_life:.0f}",
                     f"{avg_areal:.3f}",
                     f"{avg_reversible:.1f}" if avg_reversible is not None else "N/A",
@@ -617,7 +1631,10 @@ if ready:
                 max_qdis = max(first_three_qdis) if first_three_qdis else None
                 if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                     first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                    eff_pct = first_cycle_eff * 100
+                    try:
+                        eff_pct = float(first_cycle_eff) * 100
+                    except (ValueError, TypeError):
+                        eff_pct = None
                 else:
                     eff_pct = None
                 qdis_series = get_qdis_series(df_cell)
@@ -688,8 +1705,11 @@ if ready:
                     qdis_str = f"{max_qdis:.1f}" if isinstance(max_qdis, (int, float)) else "N/A"
                     if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                         first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                        eff_pct = first_cycle_eff * 100
-                        eff_str = f"{eff_pct:.1f}%"
+                        try:
+                            eff_pct = float(first_cycle_eff) * 100
+                            eff_str = f"{eff_pct:.1f}%"
+                        except (ValueError, TypeError):
+                            eff_str = "N/A"
                     else:
                         eff_str = "N/A"
                     # Cycle Life (80%)
@@ -764,8 +1784,13 @@ if ready:
                                     avg_qdis_values.append(max_qdis)
                                 if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
                                     first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
-                                    eff_pct = first_cycle_eff * 100
-                                    avg_eff_values.append(eff_pct)
+                                    try:
+                                        eff_pct = float(first_cycle_eff) * 100
+                                        avg_eff_values.append(eff_pct)
+                                    except (ValueError, TypeError):
+                                        avg_eff_values.append(None) # Handle non-numeric efficiency
+                                else:
+                                    avg_eff_values.append(None) # Handle missing efficiency
                                 try:
                                     qdis_series = get_qdis_series(df_cell)
                                     cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
@@ -799,7 +1824,9 @@ if ready:
                                 if ceff_values:
                                     avg_ceff_values.append(sum(ceff_values)/len(ceff_values)*100)
                             avg_qdis = sum(avg_qdis_values) / len(avg_qdis_values) if avg_qdis_values else 0
-                            avg_eff = sum(avg_eff_values) / len(avg_eff_values) if avg_eff_values else 0
+                            # Filter out None values for average calculation
+                            valid_avg_eff_values = [v for v in avg_eff_values if v is not None]
+                            avg_eff = sum(valid_avg_eff_values) / len(valid_avg_eff_values) if valid_avg_eff_values else None
                             avg_cycle_life = sum(avg_cycle_life_values) / len(avg_cycle_life_values) if avg_cycle_life_values else 0
                             avg_areal = sum(avg_areal_capacity_values) / len(avg_areal_capacity_values) if avg_areal_capacity_values else 0
                             avg_reversible = sum(avg_reversible_capacities) / len(avg_reversible_capacities) if avg_reversible_capacities else None
@@ -807,7 +1834,7 @@ if ready:
                             ws_summary.append([
                                 group_name + " (Group Avg)",
                                 f"{avg_qdis:.1f}",
-                                f"{avg_eff:.1f}%",
+                                f"{avg_eff:.1f}%" if avg_eff is not None else "N/A",
                                 f"{avg_cycle_life:.0f}",
                                 f"{avg_areal:.3f}",
                                 f"{avg_reversible:.1f}" if avg_reversible is not None else "N/A",
@@ -830,4 +1857,108 @@ if ready:
             st.download_button(f'Download XLSX: {file_name}', data=output2, file_name=file_name, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', key='download_xlsx_final')
 
 else:
-    st.info('Please upload a file and enter valid disc loading and % active material.')   
+    st.info('Please upload a file and enter valid disc loading and % active material.')
+
+# --- Master Table Tab ---
+if tab_master and current_project_id:
+    with tab_master:
+        st.header("📋 Master Table")
+        current_project_name = st.session_state.get('current_project_name', 'Selected Project')
+        st.markdown(f"**Project:** {current_project_name}")
+        st.markdown("---")
+        
+        # Get all experiments data for this project
+        all_experiments_data = get_all_project_experiments_data(current_project_id)
+        
+        if not all_experiments_data:
+            st.info("📊 No experiments found in this project. Create experiments to see master table data.")
+        else:
+            # Process experiment data
+            experiment_summaries = []
+            individual_cells = []
+            
+            for exp_data in all_experiments_data:
+                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, formulation_json, data_json, created_date = exp_data
+                
+                try:
+                    parsed_data = json.loads(data_json)
+                    
+                    # Check if this is a multi-cell experiment or single cell
+                    if 'cells' in parsed_data:
+                        # Multi-cell experiment
+                        cells_data = parsed_data['cells']
+                        disc_diameter = parsed_data.get('disc_diameter_mm', 15)
+                        disc_area_cm2 = np.pi * (disc_diameter / 2 / 10) ** 2
+                        
+                        experiment_cells = []
+                        for cell_data in cells_data:
+                            try:
+                                df = pd.read_json(StringIO(cell_data['data_json']))
+                                cell_summary = calculate_cell_summary(df, cell_data, disc_area_cm2)
+                                cell_summary['experiment_name'] = exp_name
+                                cell_summary['experiment_date'] = parsed_data.get('experiment_date', created_date)
+                                # Add formulation data to cell summary
+                                if 'formulation' in cell_data:
+                                    cell_summary['formulation_json'] = json.dumps(cell_data['formulation'])
+                                experiment_cells.append(cell_summary)
+                                individual_cells.append(cell_summary)
+                            except Exception as e:
+                                continue
+                        
+                        # Calculate experiment average
+                        if experiment_cells:
+                            exp_summary = calculate_experiment_average(experiment_cells, exp_name, parsed_data.get('experiment_date', created_date))
+                            # Add formulation data to experiment summary (use first cell's formulation as representative)
+                            if experiment_cells and 'formulation_json' in experiment_cells[0]:
+                                exp_summary['formulation_json'] = experiment_cells[0]['formulation_json']
+                            experiment_summaries.append(exp_summary)
+                    
+                    else:
+                        # Legacy single cell experiment
+                        df = pd.read_json(StringIO(data_json))
+                        cell_summary = calculate_cell_summary(df, {
+                            'cell_name': test_number or exp_name,
+                            'loading': loading,
+                            'active_material': active_material,
+                            'formation_cycles': formation_cycles,
+                            'test_number': test_number
+                        }, np.pi * (15 / 2 / 10) ** 2)  # Default disc size
+                        cell_summary['experiment_name'] = exp_name
+                        cell_summary['experiment_date'] = created_date
+                        # Add formulation data to cell summary
+                        if formulation_json:
+                            cell_summary['formulation_json'] = formulation_json
+                        individual_cells.append(cell_summary)
+                        
+                        # Also add as experiment summary (since it's a single cell)
+                        exp_summary = cell_summary.copy()
+                        exp_summary['cell_name'] = f"{exp_name} (Single Cell)"
+                        experiment_summaries.append(exp_summary)
+                        
+                except Exception as e:
+                    st.error(f"Error processing experiment {exp_name}: {str(e)}")
+                    continue
+            
+            # Section 1: Average Cell Data per Experiment
+            with st.expander("### 📊 Section 1: Average Cell Data per Experiment", expanded=True):
+                if experiment_summaries:
+                    display_experiment_summaries_table(experiment_summaries)
+                else:
+                    st.info("No experiment summary data available.")
+            
+            st.markdown("---")
+            
+            # Section 2: All Individual Cells Data
+            with st.expander("### 🧪 Section 2: All Individual Cells Data", expanded=False):
+                if individual_cells:
+                    display_individual_cells_table(individual_cells)
+                else:
+                    st.info("No individual cell data available.")
+            
+            st.markdown("---")
+            
+            # Section 3: Best Performing Cells Analysis
+            with st.expander("### 🏅 Section 3: Best Performing Cells Analysis", expanded=True):
+                display_best_performers_analysis(individual_cells)
+
+# --- Data Preprocessing Section ---
