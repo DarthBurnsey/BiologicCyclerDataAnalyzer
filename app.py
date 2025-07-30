@@ -121,6 +121,31 @@ with st.sidebar:
             with project_cols[1]:
                 # Project name button
                 if st.button(project_name, key=f'project_select_{project_id}', use_container_width=True):
+                    # Clear any existing experiment data when switching projects
+                    if 'loaded_experiment' in st.session_state:
+                        del st.session_state['loaded_experiment']
+                    
+                    # Clear cell input session state when switching projects
+                    keys_to_clear = []
+                    for key in st.session_state.keys():
+                        # Clear cell-specific input fields
+                        if (key.startswith('loading_') or 
+                            key.startswith('active_') or 
+                            key.startswith('testnum_') or 
+                            key.startswith('formation_cycles_') or
+                            key.startswith('electrolyte_') or
+                            key.startswith('formulation_') or
+                            key.startswith('multi_file_upload_') or
+                            key.startswith('assign_all_cells_') or
+                            key == 'datasets' or
+                            key == 'processed_data_cache' or
+                            key == 'cache_key'):
+                            keys_to_clear.append(key)
+                    
+                    # Remove the keys
+                    for key in keys_to_clear:
+                        del st.session_state[key]
+                    
                     st.session_state['current_project_id'] = project_id
                     st.session_state['current_project_name'] = project_name
                     st.session_state[f'project_expanded_{project_id}'] = True
@@ -143,6 +168,28 @@ with st.sidebar:
                             st.session_state['start_new_experiment'] = True
                             if 'loaded_experiment' in st.session_state:
                                 del st.session_state['loaded_experiment']
+                            
+                            # Clear all cell input session state variables
+                            keys_to_clear = []
+                            for key in st.session_state.keys():
+                                # Clear cell-specific input fields
+                                if (key.startswith('loading_') or 
+                                    key.startswith('active_') or 
+                                    key.startswith('testnum_') or 
+                                    key.startswith('formation_cycles_') or
+                                    key.startswith('electrolyte_') or
+                                    key.startswith('formulation_') or
+                                    key.startswith('multi_file_upload_') or
+                                    key.startswith('assign_all_cells_') or
+                                    key == 'datasets' or
+                                    key == 'processed_data_cache' or
+                                    key == 'cache_key'):
+                                    keys_to_clear.append(key)
+                            
+                            # Remove the keys
+                            for key in keys_to_clear:
+                                del st.session_state[key]
+                            
                             st.session_state[f'project_menu_open_{project_id}'] = False
                             st.session_state['show_cell_inputs_prompt'] = True
                             st.rerun()
@@ -425,12 +472,34 @@ else:
 with tab_inputs:
     # If user started a new experiment, clear cell input state
     if st.session_state.get('start_new_experiment'):
+        # Clear experiment-level session state
         st.session_state['datasets'] = []
         st.session_state['current_experiment_name'] = ''
         st.session_state['current_experiment_date'] = date.today()
         st.session_state['current_disc_diameter_mm'] = 15
         st.session_state['current_group_assignments'] = None
         st.session_state['current_group_names'] = ["Group A", "Group B", "Group C"]
+        
+        # Clear any remaining cell input session state variables
+        keys_to_clear = []
+        for key in st.session_state.keys():
+            # Clear cell-specific input fields that might have been missed
+            if (key.startswith('loading_') or 
+                key.startswith('active_') or 
+                key.startswith('testnum_') or 
+                key.startswith('formation_cycles_') or
+                key.startswith('electrolyte_') or
+                key.startswith('formulation_') or
+                key.startswith('multi_file_upload_') or
+                key.startswith('assign_all_cells_') or
+                key == 'processed_data_cache' or
+                key == 'cache_key'):
+                keys_to_clear.append(key)
+        
+        # Remove the keys
+        for key in keys_to_clear:
+            del st.session_state[key]
+        
         st.session_state['start_new_experiment'] = False
     st.header("🧪 Cell Inputs & Experiment Setup")
     st.markdown("---")
