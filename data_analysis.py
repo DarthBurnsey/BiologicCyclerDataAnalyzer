@@ -85,7 +85,8 @@ def calculate_cell_summary(df, cell_data, disc_area_cm2):
             'cycle_life_80': cycle_life_80,
             'areal_capacity': areal_capacity,
             'reversible_capacity': reversible_capacity,
-            'coulombic_efficiency': ceff_avg
+            'coulombic_efficiency': ceff_avg,
+            'porosity': cell_data.get('porosity', None)
         }
     except Exception as e:
         # Return basic info if calculation fails
@@ -99,7 +100,8 @@ def calculate_cell_summary(df, cell_data, disc_area_cm2):
             'cycle_life_80': None,
             'areal_capacity': None,
             'reversible_capacity': None,
-            'coulombic_efficiency': None
+            'coulombic_efficiency': None,
+            'porosity': None
         }
 
 def calculate_experiment_average(experiment_cells, exp_name, exp_date):
@@ -108,7 +110,7 @@ def calculate_experiment_average(experiment_cells, exp_name, exp_date):
         return None
     
     # Calculate averages for numeric fields
-    numeric_fields = ['first_discharge', 'first_efficiency', 'cycle_life_80', 'areal_capacity', 'reversible_capacity', 'coulombic_efficiency']
+    numeric_fields = ['first_discharge', 'first_efficiency', 'cycle_life_80', 'areal_capacity', 'reversible_capacity', 'coulombic_efficiency', 'porosity']
     averages = {}
     
     for field in numeric_fields:

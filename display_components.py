@@ -66,13 +66,16 @@ def display_experiment_summaries_table(experiment_summaries):
     # Define all possible columns
     all_columns = [
         'Experiment',
-        'Active Material (%)',  # New column
+        'Active Material (%)',
+        'Loading (mg/cm²)',
+        'Pressed Thickness (μm)',
         'Reversible Capacity (mAh/g)',
         'Coulombic Efficiency (%)',
         'Areal Capacity (mAh/cm²)',
         '1st Discharge (mAh/g)',
         'First Efficiency (%)',
         'Cycle Life (80%)',
+        'Porosity (%)',
         'Date'
     ]
     
@@ -80,57 +83,71 @@ def display_experiment_summaries_table(experiment_summaries):
     for component in all_components:
         all_columns.append(f'{component} (%)')
     
-    # Column filtering with Excel-like interface
+    # Improved Column Filter UI
     with st.expander("🔧 Column Filter", expanded=False):
         st.markdown("**Select columns to display:**")
         
         # Initialize session state for column selection if not exists
         if 'section1_selected_columns' not in st.session_state:
-            st.session_state.section1_selected_columns = all_columns[:8]  # Default to first 8 columns
+            st.session_state.section1_selected_columns = all_columns[:11]  # Default to first 11 columns including Loading (mg/cm²)
         
-        # Create columns for better layout
-        col1, col2, col3 = st.columns([2, 1, 1])
-        
+        # Quick Actions Row
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
         with col1:
-            # Main column selection with checkboxes
-            st.markdown("**Data Columns:**")
-            selected_columns = []
-            
-            # Core data columns (first 8)
-            core_columns = all_columns[:8]
-            for col in core_columns:
-                if st.checkbox(col, value=col in st.session_state.section1_selected_columns, key=f"section1_core_{col}"):
-                    selected_columns.append(col)
-            
-            # Component columns (if any)
-            if all_components:
-                st.markdown("**Component Columns:**")
-                for component in all_components:
-                    col_name = f'{component} (%)'
-                    if st.checkbox(col_name, value=col_name in st.session_state.section1_selected_columns, key=f"section1_comp_{component}"):
-                        selected_columns.append(col_name)
-        
-        with col2:
-            st.markdown("**Quick Actions:**")
-            if st.button("Select All", key="section1_select_all"):
+            if st.button("Select All", key="section1_select_all", use_container_width=True):
                 st.session_state.section1_selected_columns = all_columns
                 st.rerun()
-            
-            if st.button("Clear All", key="section1_clear_all"):
+        with col2:
+            if st.button("Clear All", key="section1_clear_all", use_container_width=True):
                 st.session_state.section1_selected_columns = []
                 st.rerun()
-        
         with col3:
-            st.markdown("**Presets:**")
-            if st.button("Core Data", key="section1_core_preset"):
-                st.session_state.section1_selected_columns = all_columns[:8]
+            if st.button("Core Data", key="section1_core_preset", use_container_width=True):
+                st.session_state.section1_selected_columns = all_columns[:11]
                 st.rerun()
-            
-            if st.button("Performance", key="section1_perf_preset"):
+        with col4:
+            if st.button("Performance", key="section1_perf_preset", use_container_width=True):
                 perf_columns = ['Experiment', 'Reversible Capacity (mAh/g)', 'Coulombic Efficiency (%)', 
                                '1st Discharge (mAh/g)', 'First Efficiency (%)', 'Cycle Life (80%)']
                 st.session_state.section1_selected_columns = [col for col in perf_columns if col in all_columns]
                 st.rerun()
+        
+        st.markdown("---")
+        
+        # Column Selection in a more compact layout
+        selected_columns = []
+        
+        # Core Data Columns (2 columns layout)
+        st.markdown("**📊 Core Data Columns:**")
+        core_cols = st.columns(2)
+        
+        # Split core columns between the two columns
+        core_columns = all_columns[:11]  # First 11 columns including Loading (mg/cm²)
+        mid_point = len(core_columns) // 2
+        
+        with core_cols[0]:
+            for col in core_columns[:mid_point]:
+                if st.checkbox(col, value=col in st.session_state.section1_selected_columns, key=f"section1_core_{col}"):
+                    selected_columns.append(col)
+        
+        with core_cols[1]:
+            for col in core_columns[mid_point:]:
+                if st.checkbox(col, value=col in st.session_state.section1_selected_columns, key=f"section1_core_{col}"):
+                    selected_columns.append(col)
+        
+        # Component columns (if any) in a scrollable container
+        if all_components:
+            st.markdown("**🧪 Component Columns:**")
+            # Create a more compact layout for components
+            comp_cols = st.columns(3)  # 3 columns for components
+            comp_per_col = len(all_components) // 3 + 1
+            
+            for i, component in enumerate(all_components):
+                col_idx = i // comp_per_col
+                col_name = f'{component} (%)'
+                with comp_cols[col_idx]:
+                    if st.checkbox(col_name, value=col_name in st.session_state.section1_selected_columns, key=f"section1_comp_{component}"):
+                        selected_columns.append(col_name)
         
         # Update session state
         st.session_state.section1_selected_columns = selected_columns
@@ -145,16 +162,26 @@ def display_experiment_summaries_table(experiment_summaries):
     # Prepare data
     df_data = []
     for exp in experiment_summaries:
+        # Calculate loading density (mg/cm²)
+        loading_density = np.nan
+        if exp.get('loading') is not None and exp.get('disc_diameter_mm') is not None:
+            disc_radius_cm = (exp['disc_diameter_mm'] / 2) / 10.0  # mm to cm
+            disc_area_cm2 = np.pi * disc_radius_cm ** 2
+            loading_density = exp['loading'] / disc_area_cm2
+        
         row = {
             'Experiment': exp['experiment_name'],
             'Active Material (%)': exp.get('active_material', np.nan),
+            'Loading (mg/cm²)': f"{loading_density:.2f}" if loading_density is not np.nan else np.nan,
+            'Pressed Thickness (μm)': exp.get('pressed_thickness', np.nan),
             'Date': exp.get('experiment_date', np.nan),
-            '1st Discharge (mAh/g)': exp['first_discharge'] if exp['first_discharge'] is not None else np.nan,
-            'First Efficiency (%)': exp['first_efficiency'] if exp['first_efficiency'] is not None else np.nan,
-            'Cycle Life (80%)': exp['cycle_life_80'] if exp['cycle_life_80'] is not None else np.nan,
-            'Areal Capacity (mAh/cm²)': exp['areal_capacity'] if exp['areal_capacity'] is not None else np.nan,
-            'Reversible Capacity (mAh/g)': exp['reversible_capacity'] if exp['reversible_capacity'] is not None else np.nan,
-            'Coulombic Efficiency (%)': exp['coulombic_efficiency'] if exp['coulombic_efficiency'] is not None else np.nan
+            '1st Discharge (mAh/g)': f"{exp['first_discharge']:.1f}" if exp['first_discharge'] is not None else np.nan,
+            'First Efficiency (%)': f"{exp['first_efficiency']:.3f}%" if exp['first_efficiency'] is not None else np.nan,
+            'Cycle Life (80%)': f"{exp['cycle_life_80']:.1f}" if exp['cycle_life_80'] is not None else np.nan,
+            'Areal Capacity (mAh/cm²)': f"{exp['areal_capacity']:.2f}" if exp['areal_capacity'] is not None else np.nan,
+            'Reversible Capacity (mAh/g)': f"{exp['reversible_capacity']:.1f}" if exp['reversible_capacity'] is not None else np.nan,
+            'Coulombic Efficiency (%)': f"{exp['coulombic_efficiency']:.3f}%" if exp['coulombic_efficiency'] is not None else np.nan,
+            'Porosity (%)': f"{exp['porosity']*100:.1f}%" if exp['porosity'] is not None else np.nan,
         }
         
         # Add component data
@@ -187,14 +214,16 @@ def display_individual_cells_table(individual_cells):
     # Define all possible columns
     all_columns = [
         'Cell Name',
-        'Active Material (%)',  # Already exists, but ensure it's prominent
+        'Active Material (%)',
+        'Loading (mg/cm²)',
+        'Pressed Thickness (μm)',
         'Reversible Capacity (mAh/g)',
         'Coulombic Efficiency (%)',
         'Areal Capacity (mAh/cm²)',
         '1st Discharge (mAh/g)',
         'First Efficiency (%)',
         'Cycle Life (80%)',
-        'Loading (mg)',
+        'Porosity (%)',
         'Date',
         'Experiment'
     ]
@@ -203,57 +232,71 @@ def display_individual_cells_table(individual_cells):
     for component in all_components:
         all_columns.append(f'{component} (%)')
     
-    # Column filtering with Excel-like interface
+    # Improved Column Filter UI
     with st.expander("🔧 Column Filter", expanded=False):
         st.markdown("**Select columns to display:**")
         
         # Initialize session state for column selection if not exists
         if 'section2_selected_columns' not in st.session_state:
-            st.session_state.section2_selected_columns = all_columns[:11]  # Default to first 11 columns
+            st.session_state.section2_selected_columns = all_columns[:12]  # Default to first 12 columns
         
-        # Create columns for better layout
-        col1, col2, col3 = st.columns([2, 1, 1])
-        
+        # Quick Actions Row
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
         with col1:
-            # Main column selection with checkboxes
-            st.markdown("**Data Columns:**")
-            selected_columns = []
-            
-            # Core data columns (first 11)
-            core_columns = all_columns[:11]
-            for col in core_columns:
-                if st.checkbox(col, value=col in st.session_state.section2_selected_columns, key=f"section2_core_{col}"):
-                    selected_columns.append(col)
-            
-            # Component columns (if any)
-            if all_components:
-                st.markdown("**Component Columns:**")
-                for component in all_components:
-                    col_name = f'{component} (%)'
-                    if st.checkbox(col_name, value=col_name in st.session_state.section2_selected_columns, key=f"section2_comp_{component}"):
-                        selected_columns.append(col_name)
-        
-        with col2:
-            st.markdown("**Quick Actions:**")
-            if st.button("Select All", key="section2_select_all"):
+            if st.button("Select All", key="section2_select_all", use_container_width=True):
                 st.session_state.section2_selected_columns = all_columns
                 st.rerun()
-            
-            if st.button("Clear All", key="section2_clear_all"):
+        with col2:
+            if st.button("Clear All", key="section2_clear_all", use_container_width=True):
                 st.session_state.section2_selected_columns = []
                 st.rerun()
-        
         with col3:
-            st.markdown("**Presets:**")
-            if st.button("Core Data", key="section2_core_preset"):
-                st.session_state.section2_selected_columns = all_columns[:11]
+            if st.button("Core Data", key="section2_core_preset", use_container_width=True):
+                st.session_state.section2_selected_columns = all_columns[:12]
                 st.rerun()
-            
-            if st.button("Performance", key="section2_perf_preset"):
+        with col4:
+            if st.button("Performance", key="section2_perf_preset", use_container_width=True):
                 perf_columns = ['Cell Name', 'Reversible Capacity (mAh/g)', 'Coulombic Efficiency (%)', 
                                '1st Discharge (mAh/g)', 'First Efficiency (%)', 'Cycle Life (80%)', 'Experiment']
                 st.session_state.section2_selected_columns = [col for col in perf_columns if col in all_columns]
                 st.rerun()
+        
+        st.markdown("---")
+        
+        # Column Selection in a more compact layout
+        selected_columns = []
+        
+        # Core Data Columns (2 columns layout)
+        st.markdown("**📊 Core Data Columns:**")
+        core_cols = st.columns(2)
+        
+        # Split core columns between the two columns
+        core_columns = all_columns[:12]  # First 12 columns including Pressed Thickness
+        mid_point = len(core_columns) // 2
+        
+        with core_cols[0]:
+            for col in core_columns[:mid_point]:
+                if st.checkbox(col, value=col in st.session_state.section2_selected_columns, key=f"section2_core_{col}"):
+                    selected_columns.append(col)
+        
+        with core_cols[1]:
+            for col in core_columns[mid_point:]:
+                if st.checkbox(col, value=col in st.session_state.section2_selected_columns, key=f"section2_core_{col}"):
+                    selected_columns.append(col)
+        
+        # Component columns (if any) in a scrollable container
+        if all_components:
+            st.markdown("**🧪 Component Columns:**")
+            # Create a more compact layout for components
+            comp_cols = st.columns(3)  # 3 columns for components
+            comp_per_col = len(all_components) // 3 + 1
+            
+            for i, component in enumerate(all_components):
+                col_idx = i // comp_per_col
+                col_name = f'{component} (%)'
+                with comp_cols[col_idx]:
+                    if st.checkbox(col_name, value=col_name in st.session_state.section2_selected_columns, key=f"section2_comp_{component}"):
+                        selected_columns.append(col_name)
         
         # Update session state
         st.session_state.section2_selected_columns = selected_columns
@@ -268,18 +311,27 @@ def display_individual_cells_table(individual_cells):
     # Prepare data
     df_data = []
     for cell in individual_cells:
+        # Calculate loading density (mg/cm²)
+        loading_density = np.nan
+        if cell.get('loading') is not None and cell.get('disc_diameter_mm') is not None:
+            disc_radius_cm = (cell['disc_diameter_mm'] / 2) / 10.0  # mm to cm
+            disc_area_cm2 = np.pi * disc_radius_cm ** 2
+            loading_density = cell['loading'] / disc_area_cm2
+        
         row = {
             'Experiment': cell.get('experiment_name', np.nan),
             'Cell Name': cell['cell_name'],
             'Active Material (%)': cell['active_material'] if cell['active_material'] is not None else np.nan,
+            'Loading (mg/cm²)': f"{loading_density:.2f}" if loading_density is not np.nan else np.nan,
+            'Pressed Thickness (μm)': cell.get('pressed_thickness', np.nan),
             'Date': cell.get('experiment_date', np.nan),
-            'Loading (mg)': cell['loading'] if cell['loading'] is not None else np.nan,
-            '1st Discharge (mAh/g)': cell['first_discharge'] if cell['first_discharge'] is not None else np.nan,
-            'First Efficiency (%)': cell['first_efficiency'] if cell['first_efficiency'] is not None else np.nan,
-            'Cycle Life (80%)': cell['cycle_life_80'] if cell['cycle_life_80'] is not None else np.nan,
-            'Areal Capacity (mAh/cm²)': cell['areal_capacity'] if cell['areal_capacity'] is not None else np.nan,
-            'Reversible Capacity (mAh/g)': cell['reversible_capacity'] if cell['reversible_capacity'] is not None else np.nan,
-            'Coulombic Efficiency (%)': cell['coulombic_efficiency'] if cell['coulombic_efficiency'] is not None else np.nan
+            '1st Discharge (mAh/g)': f"{cell['first_discharge']:.1f}" if cell['first_discharge'] is not None else np.nan,
+            'First Efficiency (%)': f"{cell['first_efficiency']:.3f}%" if cell['first_efficiency'] is not None else np.nan,
+            'Cycle Life (80%)': f"{cell['cycle_life_80']:.1f}" if cell['cycle_life_80'] is not None else np.nan,
+            'Areal Capacity (mAh/cm²)': f"{cell['areal_capacity']:.2f}" if cell['areal_capacity'] is not None else np.nan,
+            'Reversible Capacity (mAh/g)': f"{cell['reversible_capacity']:.1f}" if cell['reversible_capacity'] is not None else np.nan,
+            'Coulombic Efficiency (%)': f"{cell['coulombic_efficiency']:.3f}%" if cell['coulombic_efficiency'] is not None else np.nan,
+            'Porosity (%)': f"{cell['porosity']*100:.1f}%" if cell['porosity'] is not None else np.nan,
         }
         
         # Add component data
@@ -307,7 +359,7 @@ def display_best_performers_analysis(individual_cells):
         st.info("No individual cell data available for analysis.")
         return
     
-    # Filter cells with valid data
+    # Filter cells with valid data (excluding porosity from performance metrics)
     valid_cells = [cell for cell in individual_cells if any([
         cell['first_discharge'], cell['first_efficiency'], cell['cycle_life_80'], 
         cell['areal_capacity'], cell['reversible_capacity'], cell['coulombic_efficiency']
@@ -336,9 +388,20 @@ def display_best_performers_analysis(individual_cells):
             if valid_for_metric:
                 best_cell = max(valid_for_metric, key=lambda x: transform(x[field]))
                 value = transform(best_cell[field])
+                
+                # Apply appropriate formatting based on metric type
+                if 'Reversible Capacity' in metric_name or '1st Discharge' in metric_name or 'Cycle Life' in metric_name:
+                    formatted_value = f"{value:.1f} {unit}"
+                elif 'Areal Capacity' in metric_name:
+                    formatted_value = f"{value:.2f} {unit}"
+                elif 'Efficiency' in metric_name:
+                    formatted_value = f"{value:.3f} {unit}"
+                else:
+                    formatted_value = f"{value:.2f} {unit}" if isinstance(value, float) else f"{value} {unit}"
+                
                 st.metric(
                     label=metric_name,
-                    value=f"{value:.2f} {unit}" if isinstance(value, float) else f"{value} {unit}",
+                    value=formatted_value,
                     help=f"Cell: {best_cell['cell_name']} from {best_cell.get('experiment_name', 'Unknown')}"
                 )
     
@@ -398,12 +461,12 @@ def display_best_performers_analysis(individual_cells):
             row = {
                 'Cell': cell['cell_name'],
                 'Experiment': cell.get('experiment_name', 'Unknown'),
-                'Reversible Capacity (mAh/g)': cell['reversible_capacity'] if cell['reversible_capacity'] is not None else np.nan,
-                'Coulombic Efficiency (%)': cell['coulombic_efficiency'] if cell['coulombic_efficiency'] is not None else np.nan,
-                '1st Cycle Discharge (mAh/g)': cell['first_discharge'] if cell['first_discharge'] is not None else np.nan,
-                'First Cycle Efficiency (%)': cell['first_efficiency'] if cell['first_efficiency'] is not None else np.nan,
-                'Areal Capacity (mAh/cm²)': cell['areal_capacity'] if cell['areal_capacity'] is not None else np.nan,
-                'Cycle Life (80%)': cell['cycle_life_80'] if cell['cycle_life_80'] is not None else np.nan
+                'Reversible Capacity (mAh/g)': f"{cell['reversible_capacity']:.1f}" if cell['reversible_capacity'] is not None else np.nan,
+                'Coulombic Efficiency (%)': f"{cell['coulombic_efficiency']:.3f}%" if cell['coulombic_efficiency'] is not None else np.nan,
+                '1st Cycle Discharge (mAh/g)': f"{cell['first_discharge']:.1f}" if cell['first_discharge'] is not None else np.nan,
+                'First Cycle Efficiency (%)': f"{cell['first_efficiency']:.3f}%" if cell['first_efficiency'] is not None else np.nan,
+                'Areal Capacity (mAh/cm²)': f"{cell['areal_capacity']:.2f}" if cell['areal_capacity'] is not None else np.nan,
+                'Cycle Life (80%)': f"{cell['cycle_life_80']:.1f}" if cell['cycle_life_80'] is not None else np.nan
             }
             df_data.append(row)
         

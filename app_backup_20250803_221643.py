@@ -1523,7 +1523,7 @@ if ready:
                         "Experiment notes",
                         value=False,
                         key="export_notes",
-                        help="Include experiment notes from the Cell Input page"
+                        help="Include custom experiment notes"
                     )
                     include_electrode_data = st.checkbox(
                         "Electrode data group",
@@ -1556,22 +1556,129 @@ if ready:
                 include_porosity = False
                 include_thickness = False
             
-            # Get stored experiment notes from the current experiment
-            stored_experiment_notes = ""
-            if include_notes and dfs:
-                # Get experiment notes from the first dataset (they should be the same for all cells in an experiment)
-                if 'experiment_notes' in dfs[0]:
-                    stored_experiment_notes = dfs[0]['experiment_notes'] or ""
-                else:
-                    # Try to get from session state as fallback
-                    stored_experiment_notes = st.session_state.get('experiment_notes', "")
+            # Experiment Notes Input
+            if include_notes:
+                st.markdown("#### 📝 Experiment Notes")
+                experiment_notes = st.text_area(
+                    "Enter experiment notes to include in the slide:",
+                    value="",
+                    height=100,
+                    key="export_notes_text",
+                    help="These notes will appear on the PowerPoint slide"
+                )
+            else:
+                experiment_notes = ""
             
             st.markdown("---")
             
-            # Note: Retention plot settings are automatically synchronized with the Plots tab
+            # Advanced Plot Settings for Retention Plot
             if include_retention_plot:
-                st.info("ℹ️ **Retention plot settings are automatically synchronized with the Plots tab**")
-                st.info("Configure retention plot parameters in the Plots tab, and they will be used in the export.")
+                st.subheader("⚙️ Retention Plot Settings")
+                
+                # Get current settings from the Plots tab for defaults
+                current_formation_cycles = st.session_state.get('current_formation_cycles', 4)
+                default_ref_cycle = current_formation_cycles + 1
+                
+                retention_col1, retention_col2, retention_col3 = st.columns(3)
+                
+                with retention_col1:
+                    export_reference_cycle = st.number_input(
+                        "Reference Cycle (100% baseline)",
+                        min_value=1,
+                        max_value=100,
+                        value=default_ref_cycle,
+                        step=1,
+                        key="export_ref_cycle",
+                        help="Which cycle to use as 100% reference"
+                    )
+                    
+                with retention_col2:
+                    export_retention_threshold = st.slider(
+                        "Retention Threshold (%)",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=80.0,
+                        step=5.0,
+                        key="export_threshold",
+                        help="Threshold line for capacity retention"
+                    )
+                    
+                with retention_col3:
+                    export_y_axis_preset = st.selectbox(
+                        "Y-Axis Range",
+                        options=["Full Range (0-110%)", "Focused View (70-110%)", "Standard View (50-110%)", "Custom Range"],
+                        index=0,
+                        key="export_y_axis",
+                        help="Y-axis range for retention plot"
+                    )
+                
+                # Set Y-axis range based on preset
+                if export_y_axis_preset == "Full Range (0-110%)":
+                    export_y_min, export_y_max = 0.0, 110.0
+                elif export_y_axis_preset == "Focused View (70-110%)":
+                    export_y_min, export_y_max = 70.0, 110.0
+                elif export_y_axis_preset == "Standard View (50-110%)":
+                    export_y_min, export_y_max = 50.0, 110.0
+                else:  # Custom Range
+                    custom_col1, custom_col2 = st.columns(2)
+                    with custom_col1:
+                        export_y_min = st.number_input("Min Y (%)", value=0.0, step=5.0, key="export_y_min")
+                    with custom_col2:
+                        export_y_max = st.number_input("Max Y (%)", value=110.0, step=5.0, key="export_y_max")
+                
+                # Retention plot display options
+                retention_display_col1, retention_display_col2, retention_display_col3 = st.columns(3)
+                
+                with retention_display_col1:
+                    export_retention_markers = not st.checkbox(
+                        "Remove markers",
+                        value=False,
+                        key="export_retention_no_markers",
+                        help="Hide data point markers"
+                    )
+                    
+                with retention_display_col2:
+                    export_retention_legend = not st.checkbox(
+                        "Hide legend",
+                        value=False,
+                        key="export_retention_no_legend",
+                        help="Hide plot legend"
+                    )
+                    
+                with retention_display_col3:
+                    export_retention_title = st.checkbox(
+                        "Show plot title",
+                        value=True,
+                        key="export_retention_title",
+                        help="Display plot title"
+                    )
+                    
+                # Reference lines
+                ref_lines_col1, ref_lines_col2 = st.columns(2)
+                with ref_lines_col1:
+                    export_show_baseline = st.checkbox(
+                        "Show 100% baseline",
+                        value=True,
+                        key="export_baseline",
+                        help="Show horizontal line at 100%"
+                    )
+                with ref_lines_col2:
+                    export_show_threshold = st.checkbox(
+                        "Show threshold line",
+                        value=True,
+                        key="export_threshold_line",
+                        help="Show threshold reference line"
+                    )
+            else:
+                # Set defaults when retention plot is not included
+                export_reference_cycle = current_formation_cycles + 1
+                export_retention_threshold = 80.0
+                export_y_min, export_y_max = 0.0, 110.0
+                export_retention_markers = True
+                export_retention_legend = True
+                export_retention_title = True
+                export_show_baseline = True
+                export_show_threshold = True
             
             st.markdown("---")
             
@@ -1584,12 +1691,9 @@ if ready:
             if include_main_plot:
                 content_items.append("✅ Capacity comparison plot")
             if include_retention_plot:
-                # Get current settings from session state
-                current_ref_cycle = st.session_state.get('reference_cycle', 5)
-                current_threshold = st.session_state.get('retention_threshold', 80.0)
-                content_items.append(f"✅ Capacity retention plot (ref: cycle {current_ref_cycle}, threshold: {current_threshold}%)")
-            if include_notes and stored_experiment_notes.strip():
-                content_items.append("✅ Experiment notes (from Cell Input page)")
+                content_items.append(f"✅ Capacity retention plot (ref: cycle {export_reference_cycle}, threshold: {export_retention_threshold}%)")
+            if include_notes and experiment_notes.strip():
+                content_items.append("✅ Experiment notes")
             if include_electrode_data:
                 electrode_items = []
                 if include_porosity:
@@ -1630,25 +1734,19 @@ if ready:
                         include_electrode_data=include_electrode_data,
                         include_porosity=include_porosity,
                         include_thickness=include_thickness,
-                        experiment_notes=stored_experiment_notes,
-                        # Retention plot parameters (use session state from Plots tab)
-                        retention_threshold=st.session_state.get('retention_threshold', 80.0),
-                        reference_cycle=st.session_state.get('reference_cycle', 5),
-                        formation_cycles=dfs[0].get('formation_cycles', 4) if dfs and len(dfs) > 0 else st.session_state.get('current_formation_cycles', 4),
+                        experiment_notes=experiment_notes,
+                        # Retention plot parameters
+                        retention_threshold=export_retention_threshold,
+                        reference_cycle=export_reference_cycle,
+                        formation_cycles=current_formation_cycles,
                         retention_show_lines=show_lines,  # Use same lines as main plot
-                        retention_remove_markers=st.session_state.get('retention_remove_markers', False),
-                        retention_hide_legend=st.session_state.get('retention_hide_legend', False),
-                        retention_show_title=st.session_state.get('retention_show_title', True),
-                        show_baseline_line=st.session_state.get('retention_show_baseline', True),
-                        show_threshold_line=st.session_state.get('retention_show_threshold', True),
-                        y_axis_min=st.session_state.get('y_axis_min', 0.0),
-                        y_axis_max=st.session_state.get('y_axis_max', 110.0),
-                        # Plot customization parameters (from session state)
-                        show_graph_title=st.session_state.get('show_graph_title', True),
-                        show_average_performance=show_average_performance,
-                        avg_line_toggles=st.session_state.get('avg_line_toggles', {}),
-                        remove_markers=st.session_state.get('remove_markers', False),
-                        hide_legend=st.session_state.get('hide_legend', False)
+                        retention_remove_markers=not export_retention_markers,
+                        retention_hide_legend=not export_retention_legend,
+                        retention_show_title=export_retention_title,
+                        show_baseline_line=export_show_baseline,
+                        show_threshold_line=export_show_threshold,
+                        y_axis_min=export_y_min,
+                        y_axis_max=export_y_max
                     )
                     
                     st.success("✅ PowerPoint generated successfully!")
@@ -1696,6 +1794,7 @@ if ready:
             except Exception as e:
                 st.error(f"❌ Error generating Excel file: {str(e)}")
                 st.error("Please check your data and try again.")
+                
         else:
             st.info("📈 Upload and process data files to access export options.")
             st.markdown("""
@@ -1706,6 +1805,645 @@ if ready:
             - 📋 **Summary Tables:** Key metrics and comparisons
             - 📊 **Excel:** Detailed data export with charts
             """)
+                title_shape = slide.shapes.title
+                if title_shape is not None:
+                    if experiment_name:
+                        title_shape.text = f"{experiment_name} - {testnum} Summary"
+                    else:
+                        title_shape.text = f"{testnum} Summary"
+                if hasattr(title_shape, 'text_frame') and getattr(title_shape, 'text_frame', None) is not None:
+                    title_shape.text_frame.paragraphs[0].font.size = Pt(30)
+                
+                # Echem header
+                echem_header_box = slide.shapes.add_textbox(Inches(0.5), Inches(1.2), Inches(3.5), Inches(0.5))
+                echem_header_tf = echem_header_box.text_frame
+                echem_header_tf.clear()
+                echem_header_p = echem_header_tf.add_paragraph()
+                echem_header_p.text = "Echem"
+                echem_header_p.level = 0
+                echem_header_p.font.size = Pt(24)
+                echem_header_p.font.bold = True
+                echem_header_p.font.color.rgb = RGBColor(0, 0, 0)
+                echem_header_p.font.italic = False
+                
+                # Summary bullets
+                content = slide.placeholders[1]
+                if hasattr(content, 'text'):
+                    content.text = ""
+                if hasattr(content, 'text_frame') and getattr(content, 'text_frame', None) is not None:
+                    p1 = content.text_frame.add_paragraph()
+                    p1.text = f"1st Cycle Discharge Capacity: {qdis_str} mAh/g"
+                    p1.level = 0
+                    p1.font.size = Pt(18)
+                    p2 = content.text_frame.add_paragraph()
+                    p2.text = f"First Cycle Efficiency: {eff_str}"
+                    p2.level = 0
+                    p2.font.size = Pt(18)
+                    p3 = content.text_frame.add_paragraph()
+                    p3.text = f"Cycle Life (80%): {cycle_life_str}"
+                    p3.level = 0
+                    p3.font.size = Pt(18)
+                
+                # Create graph for single cell
+                # Use plot_capacity_graph with show_graph_title as set by the user
+                fig = plot_capacity_graph(
+                    [dfs[0]], show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name,
+                    show_average_performance, avg_line_toggles, remove_markers, hide_legend
+                )
+                img_bytes = io.BytesIO()
+                fig.savefig(img_bytes, format='png', bbox_inches='tight')
+                plt.close(fig)
+                img_bytes.seek(0)
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
+                    tmp_img.write(img_bytes.read())
+                    img_path = tmp_img.name
+                slide.shapes.add_picture(img_path, Inches(5.5), Inches(1.2), width=Inches(4.5))
+                
+                # Download button
+                pptx_bytes = io.BytesIO()
+                prs.save(pptx_bytes)
+                pptx_bytes.seek(0)
+                # Update PowerPoint file name to include experiment name
+                if experiment_name:
+                    pptx_file_name = f'{experiment_name} {testnum} Summary.pptx'
+                else:
+                    pptx_file_name = f'{testnum} Summary.pptx'
+                st.download_button(f'Download PowerPoint: {pptx_file_name}', data=pptx_bytes, file_name=pptx_file_name, mime='application/vnd.openxmlformats-officedocument.presentationml.presentation', key='download_pptx_single')
+                
+            else:
+                # Multiple cells - use table format
+                slide = prs.slides.add_slide(prs.slide_layouts[1])  # Title and Content layout
+                title_shape = slide.shapes.title
+                if title_shape is not None:
+                    if experiment_name:
+                        title_shape.text = f"{experiment_name} - Cell Comparison Summary"
+                    else:
+                        title_shape.text = "Cell Comparison Summary"
+                if hasattr(title_shape, 'text_frame') and getattr(title_shape, 'text_frame', None) is not None:
+                    title_shape.text_frame.paragraphs[0].font.size = Pt(30)
+                
+                # Echem header
+                echem_header_box = slide.shapes.add_textbox(Inches(0.5), Inches(1.2), Inches(3.5), Inches(0.5))
+                echem_header_tf = echem_header_box.text_frame
+                echem_header_tf.clear()
+                echem_header_p = echem_header_tf.add_paragraph()
+                echem_header_p.text = "Echem"
+                echem_header_p.level = 0
+                echem_header_p.font.size = Pt(24)
+                echem_header_p.font.bold = True
+                echem_header_p.font.color.rgb = RGBColor(0, 0, 0)
+                echem_header_p.font.italic = False
+                
+                # Calculate summary data for all cells
+                table_data = []
+                headers = ["Cell", "1st Cycle Discharge Capacity (mAh/g)", "First Cycle Efficiency (%)", "Cycle Life (80%)", "Initial Areal Capacity (mAh/cm²)", "Reversible Capacity (mAh/g)", "Coulombic Efficiency (post-formation)"]
+                table_data.append(headers)
+                
+                # Individual cells
+                for i, d in enumerate(dfs):
+                    df_cell = d['df']
+                    cell_name = d['testnum'] if d['testnum'] else f'Cell {i+1}'
+                    # Calculate values
+                    first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
+                    max_qdis = max(first_three_qdis) if first_three_qdis else None
+                    qdis_str = f"{max_qdis:.1f}" if isinstance(max_qdis, (int, float)) else "N/A"
+                    if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
+                        first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
+                        try:
+                            eff_pct = float(first_cycle_eff) * 100
+                            eff_str = f"{eff_pct:.1f}%"
+                        except (ValueError, TypeError):
+                            eff_str = "N/A"
+                    else:
+                        eff_str = "N/A"
+                    # Cycle Life (80%)
+                    qdis_series = get_qdis_series(df_cell)
+                    cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+                    cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
+                    cycle_life_str = str(cycle_life_80) if isinstance(cycle_life_80, (int, float)) else "N/A"
+                    # Initial Areal Capacity (mAh/cm²)
+                    areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
+                    if areal_capacity is None:
+                        areal_str = "N/A"
+                    else:
+                        areal_str = f"{areal_capacity:.3f}"
+                    # Reversible Capacity (mAh/g)
+                    formation_cycles = d.get('formation_cycles', 4)
+                    if len(df_cell) > formation_cycles:
+                        reversible_capacity = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
+                        reversible_str = f"{reversible_capacity:.1f}"
+                    else:
+                        reversible_str = "N/A"
+                    # Coulombic Efficiency (post-formation, %)
+                    eff_col = 'Efficiency (-)'
+                    qdis_col = 'Q Dis (mAh/g)'
+                    n_cycles = len(df_cell)
+                    ceff_values = []
+                    if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
+                        prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
+                        prev_eff = df_cell[eff_col].iloc[formation_cycles]
+                        for j in range(formation_cycles+1, n_cycles):
+                            curr_qdis = df_cell[qdis_col].iloc[j]
+                            curr_eff = df_cell[eff_col].iloc[j]
+                            try:
+                                pq = float(prev_qdis)
+                                cq = float(curr_qdis)
+                                pe = float(prev_eff)
+                                ce = float(curr_eff)
+                                if pq > 0 and (cq < 0.95 * pq or ce < 0.95 * pe):
+                                    break
+                                ceff_values.append(ce)
+                                prev_qdis = cq
+                                prev_eff = ce
+                            except (ValueError, TypeError):
+                                # Skip this cycle if any value is not numeric
+                                continue
+                    if ceff_values:
+                        ceff_str = f"{sum(ceff_values)/len(ceff_values)*100:.2f}%"
+                    else:
+                        ceff_str = "N/A"
+                    table_data.append([cell_name, qdis_str, eff_str, cycle_life_str, areal_str, reversible_str, ceff_str])
+                # Prepare group summary rows (A, B, C) to insert before the average row
+                group_summary_rows = []
+                if enable_grouping and group_assignments is not None:
+                    for group_idx, group_name in enumerate(group_names):
+                        group_dfs = [df for df, g in zip(dfs, group_assignments) if g == group_name]
+                        if len(group_dfs) > 1:
+                            avg_qdis_values = []
+                            avg_eff_values = []
+                            avg_cycle_life_values = []
+                            avg_areal_capacity_values = []
+                            avg_reversible_capacities = []
+                            avg_ceff_values = []
+                            for d in group_dfs:
+                                df_cell = d['df']
+                                first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
+                                max_qdis = max(first_three_qdis) if first_three_qdis else None
+                                if max_qdis is not None:
+                                    avg_qdis_values.append(max_qdis)
+                                if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
+                                    first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
+                                    try:
+                                        eff_pct = float(first_cycle_eff) * 100
+                                        avg_eff_values.append(eff_pct)
+                                    except (ValueError, TypeError):
+                                        avg_eff_values.append(None) # Handle non-numeric efficiency
+                                else:
+                                    avg_eff_values.append(None) # Handle missing efficiency
+                                try:
+                                    qdis_series = get_qdis_series(df_cell)
+                                    cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+                                    cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
+                                    avg_cycle_life_values.append(cycle_life_80)
+                                except Exception:
+                                    pass
+                                areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
+                                if areal_capacity is not None:
+                                    avg_areal_capacity_values.append(areal_capacity)
+                                formation_cycles = d.get('formation_cycles', 4)
+                                if len(df_cell) > formation_cycles:
+                                    reversible_capacity = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
+                                    avg_reversible_capacities.append(reversible_capacity)
+                                # Coulombic Efficiency (post-formation, %)
+                                eff_col = 'Efficiency (-)'
+                                qdis_col = 'Q Dis (mAh/g)'
+                                n_cycles = len(df_cell)
+                                ceff_values = []
+                                if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
+                                    prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
+                                    prev_eff = df_cell[eff_col].iloc[formation_cycles]
+                                    for j in range(formation_cycles+1, n_cycles):
+                                        curr_qdis = df_cell[qdis_col].iloc[j]
+                                        curr_eff = df_cell[eff_col].iloc[j]
+                                        if prev_qdis > 0 and (curr_qdis < 0.95 * prev_qdis or curr_eff < 0.95 * prev_eff):
+                                            break
+                                        ceff_values.append(curr_eff)
+                                        prev_qdis = curr_qdis
+                                        prev_eff = curr_eff
+                                if ceff_values:
+                                    avg_ceff_values.append(sum(ceff_values)/len(ceff_values)*100)
+                            avg_qdis = sum(avg_qdis_values) / len(avg_qdis_values) if avg_qdis_values else 0
+                            # Filter out None values for average calculation
+                            valid_avg_eff_values = [v for v in avg_eff_values if v is not None]
+                            avg_eff = sum(valid_avg_eff_values) / len(valid_avg_eff_values) if valid_avg_eff_values else None
+                            avg_cycle_life = sum(avg_cycle_life_values) / len(avg_cycle_life_values) if avg_cycle_life_values else 0
+                            avg_areal = sum(avg_areal_capacity_values) / len(avg_areal_capacity_values) if avg_areal_capacity_values else 0
+                            avg_reversible = sum(avg_reversible_capacities) / len(avg_reversible_capacities) if avg_reversible_capacities else None
+                            avg_ceff = sum(avg_ceff_values) / len(avg_ceff_values) if avg_ceff_values else None
+                            group_summary_rows.append([
+                                group_name + " (Group Avg)",
+                                f"{avg_qdis:.1f}",
+                                f"{avg_eff:.1f}%" if avg_eff is not None else "N/A",
+                                f"{avg_cycle_life:.0f}",
+                                f"{avg_areal:.3f}",
+                                f"{avg_reversible:.1f}" if avg_reversible is not None else "N/A",
+                                f"{avg_ceff:.2f}%" if avg_ceff is not None else "N/A"
+                            ])
+                # Add average row for all cells at the end of the PowerPoint table
+                # Calculate averages for each parameter
+                avg_qdis_values = []
+                avg_eff_values = []
+                avg_cycle_life_values = []
+                avg_areal_capacity_values = []
+                avg_reversible_capacities = []
+                avg_ceff_values = []
+                for d in dfs:
+                    df_cell = d['df']
+                    first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
+                    max_qdis = max(first_three_qdis) if first_three_qdis else None
+                    if max_qdis is not None:
+                        avg_qdis_values.append(max_qdis)
+                    if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
+                        first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
+                        try:
+                            eff_pct = float(first_cycle_eff) * 100
+                            avg_eff_values.append(eff_pct)
+                        except (ValueError, TypeError):
+                            avg_eff_values.append(None) # Handle non-numeric efficiency
+                    else:
+                        avg_eff_values.append(None) # Handle missing efficiency
+                    qdis_series = get_qdis_series(df_cell)
+                    cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+                    cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
+                    if cycle_life_80 is not None:
+                        avg_cycle_life_values.append(cycle_life_80)
+                    areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
+                    if areal_capacity is not None:
+                        avg_areal_capacity_values.append(areal_capacity)
+                    formation_cycles = d.get('formation_cycles', 4)
+                    if len(df_cell) > formation_cycles:
+                        reversible_capacity = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
+                        avg_reversible_capacities.append(reversible_capacity)
+                    # Coulombic Efficiency (post-formation, %)
+                    eff_col = 'Efficiency (-)'
+                    qdis_col = 'Q Dis (mAh/g)'
+                    n_cycles = len(df_cell)
+                    ceff_values = []
+                    if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
+                        prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
+                        prev_eff = df_cell[eff_col].iloc[formation_cycles]
+                        for i in range(formation_cycles+1, n_cycles):
+                            curr_qdis = df_cell[qdis_col].iloc[i]
+                            curr_eff = df_cell[eff_col].iloc[i]
+                            try:
+                                pq = float(prev_qdis)
+                                cq = float(curr_qdis)
+                                pe = float(prev_eff)
+                                ce = float(curr_eff)
+                                if pq > 0 and (cq < 0.95 * pq or ce < 0.95 * pe):
+                                    break
+                                ceff_values.append(ce)
+                                prev_qdis = cq
+                                prev_eff = ce
+                            except (ValueError, TypeError):
+                                continue
+                    if ceff_values:
+                        avg_ceff = sum(ceff_values) / len(ceff_values) * 100
+                        avg_ceff_values.append(avg_ceff)
+                avg_qdis = sum(avg_qdis_values) / len(avg_qdis_values) if avg_qdis_values else 0
+                # Filter out None values for average calculation
+                valid_avg_eff_values = [v for v in avg_eff_values if v is not None]
+                avg_eff = sum(valid_avg_eff_values) / len(valid_avg_eff_values) if valid_avg_eff_values else None
+                avg_cycle_life = sum(avg_cycle_life_values) / len(avg_cycle_life_values) if avg_cycle_life_values else 0
+                avg_areal = sum(avg_areal_capacity_values) / len(avg_areal_capacity_values) if avg_areal_capacity_values else 0
+                avg_reversible = sum(avg_reversible_capacities) / len(avg_reversible_capacities) if avg_reversible_capacities else None
+                avg_ceff = sum(avg_ceff_values) / len(avg_ceff_values) if avg_ceff_values else None
+                table_data.append([
+                    "AVERAGE",
+                    f"{avg_qdis:.1f}",
+                    f"{avg_eff:.1f}%" if avg_eff is not None else "N/A",
+                    f"{avg_cycle_life:.0f}",
+                    f"{avg_areal:.3f}",
+                    f"{avg_reversible:.1f}" if avg_reversible is not None else "N/A",
+                    f"{avg_ceff:.2f}%" if avg_ceff is not None else "N/A"
+                ])
+                
+                # Create table - centered on slide
+                rows, cols = len(table_data), len(table_data[0])
+                table_width = 7  # inches
+                table_height = 2.5  # inches
+                # Center the table: (slide width - table width) / 2 = (10 - 7) / 2 = 1.5 inches from left
+                table_left = 1.5
+                table = slide.shapes.add_table(rows, cols, Inches(table_left), Inches(2.0), Inches(table_width), Inches(table_height)).table
+                
+                # Populate table
+                for i, row_data in enumerate(table_data):
+                    for j, cell_data in enumerate(row_data):
+                        cell = table.cell(i, j)
+                        cell.text = str(cell_data)
+                        
+                        # Format header row
+                        if i == 0:
+                            cell.fill.solid()
+                            cell.fill.fore_color.rgb = RGBColor(68, 114, 196)
+                            for paragraph in cell.text_frame.paragraphs:
+                                paragraph.font.color.rgb = RGBColor(255, 255, 255)
+                                paragraph.font.bold = True
+                                paragraph.font.size = Pt(12)
+                        # Format average row
+                        elif i == len(table_data) - 1:
+                            cell.fill.solid()
+                            cell.fill.fore_color.rgb = RGBColor(146, 208, 80)
+                            for paragraph in cell.text_frame.paragraphs:
+                                paragraph.font.bold = True
+                                paragraph.font.size = Pt(12)
+                        else:
+                            for paragraph in cell.text_frame.paragraphs:
+                                paragraph.font.size = Pt(11)
+                
+                # Create comparison graph
+                # Use the same plot as the main display, including average line if toggled, with show_graph_title as set by the user
+                fig = plot_capacity_graph(
+                    dfs, show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name,
+                    show_average_performance, avg_line_toggles, remove_markers, hide_legend,
+                    group_a_curve=(group_curves[0][0], group_curves[0][1]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][1] else None,
+                    group_b_curve=(group_curves[1][0], group_curves[1][1]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][1] else None,
+                    group_c_curve=(group_curves[2][0], group_curves[2][1]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][1] else None,
+                    group_a_qchg=(group_curves[0][0], group_curves[0][2]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][2] else None,
+                    group_b_qchg=(group_curves[1][0], group_curves[1][2]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][2] else None,
+                    group_c_qchg=(group_curves[2][0], group_curves[2][2]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][2] else None,
+                    group_a_eff=(group_curves[0][0], group_curves[0][3]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][3] else None,
+                    group_b_eff=(group_curves[1][0], group_curves[1][3]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][3] else None,
+                    group_c_eff=(group_curves[2][0], group_curves[2][3]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][3] else None,
+                    group_names=group_names
+                )
+                img_bytes = io.BytesIO()
+                fig.savefig(img_bytes, format='png', bbox_inches='tight', dpi=300)
+                plt.close(fig)
+                img_bytes.seek(0)
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
+                    tmp_img.write(img_bytes.read())
+                    img_path = tmp_img.name
+                # Set graph width to 11cm and calculate height to maintain aspect ratio
+                slide_width_cm = 11  # cm
+                slide_width_inches = slide_width_cm / 2.54  # convert cm to inches
+                aspect_ratio = 8/5  # width/height from figsize
+                slide_height_inches = slide_width_inches / aspect_ratio
+                slide.shapes.add_picture(img_path, Inches(14/2.54), Inches(12/2.54), width=Inches(slide_width_inches), height=Inches(slide_height_inches))
+                
+                # Download button
+                pptx_bytes = io.BytesIO()
+                prs.save(pptx_bytes)
+                pptx_bytes.seek(0)
+                # Update PowerPoint file name to include experiment name
+                if experiment_name:
+                    pptx_file_name = f'{experiment_name} Cell Comparison Summary.pptx'
+                else:
+                    pptx_file_name = 'Cell Comparison Summary.pptx'
+                st.download_button(f'Download PowerPoint: {pptx_file_name}', data=pptx_bytes, file_name=pptx_file_name, mime='application/vnd.openxmlformats-officedocument.presentationml.presentation', key='download_pptx_multiple')
+
+            # --- Excel Export ---
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                for d in dfs:
+                    df_cell = d['df']
+                    sheet_name = d['testnum'] if d['testnum'] else f'Cell {dfs.index(d)+1}'
+                    df_cell.to_excel(writer, index=False, startrow=4, sheet_name=sheet_name)
+            output.seek(0)
+
+            # Add summary values and native Excel chart to each sheet
+            from openpyxl import load_workbook
+            from openpyxl.chart import LineChart, Reference
+            output.seek(0)
+            wb = load_workbook(output)
+            for d in dfs:
+                ws = wb[d['testnum'] if d['testnum'] else f'Cell {dfs.index(d)+1}']
+                df_cell = d['df']
+                ws['A1'] = 'Total loading (mg)'
+                ws['B1'] = d['loading']
+                ws['A2'] = 'Active material loading (mg)'
+                ws['B2'] = d['loading'] * (d['active'] / 100)
+                first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
+                max_qdis = max(first_three_qdis) if first_three_qdis else None
+                if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
+                    first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
+                    try:
+                        eff_pct = float(first_cycle_eff) * 100
+                    except (ValueError, TypeError):
+                        eff_pct = None
+                else:
+                    eff_pct = None
+                qdis_series = get_qdis_series(df_cell)
+                cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+                cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
+                ws['P1'] = '1st Cycle Discharge Capacity (mAh/g)'
+                ws['Q1'] = f"{max_qdis:.1f}" if isinstance(max_qdis, (int, float)) and max_qdis is not None else ''
+                ws['P2'] = 'First Cycle Efficiency (%)'
+                ws['Q2'] = f"{eff_pct:.1f}" if isinstance(eff_pct, (int, float)) and eff_pct is not None else ''
+                ws['P3'] = 'Cycle Life (80%)'
+                ws['Q3'] = cycle_life_80 if cycle_life_80 is not None else ''
+                data_start_row = 6
+                data_end_row = data_start_row + len(df_cell) - 1
+                headers = list(df_cell.columns)
+                x_col_idx = 1
+                q_dis_col = headers.index('Q Dis (mAh/g)') + 1
+                q_chg_col = headers.index('Q Chg (mAh/g)') + 1
+                chart = LineChart()
+                chart.title = 'Gravimetric Capacity vs. ' + df_cell.columns[0]
+                chart.y_axis.title = 'Capacity (mAh/g)'
+                chart.x_axis.title = df_cell.columns[0]
+                chart.x_axis.majorTickMark = 'in'
+                chart.y_axis.majorTickMark = 'in'
+                chart.width = 20
+                chart.height = 12
+                data = Reference(ws, min_col=min(q_dis_col, q_chg_col), max_col=max(q_dis_col, q_chg_col), min_row=data_start_row-1, max_row=data_end_row)
+                chart.add_data(data, titles_from_data=True)
+                cats = Reference(ws, min_col=x_col_idx, min_row=data_start_row, max_row=data_end_row)
+                chart.set_categories(cats)
+                ws.add_chart(chart, 'S5')
+            output2 = io.BytesIO()
+            wb.save(output2)
+            output2.seek(0)
+
+            # Update file name to include experiment name
+            if experiment_name:
+                if len(dfs) > 1:
+                    file_name = f'{experiment_name} Comparison Cycling data.xlsx'
+                else:
+                    file_name = f'{experiment_name} {datasets[0]["testnum"]} Cycling data.xlsx' if datasets[0]["testnum"] else f'{experiment_name} Cycling data.xlsx'
+            else:
+                file_name = 'Comparison Cycling data.xlsx' if len(dfs) > 1 else f'{datasets[0]["testnum"]} Cycling data.xlsx' if datasets[0]["testnum"] else 'Cycling data.xlsx'
+            
+            st.success('Processing complete!')
+
+            # Add summary worksheet if multiple cells
+            if len(dfs) > 1:
+                summary_sheet_name = f"{experiment_name} Summary" if experiment_name else "Summary"
+                summary_sheet_name = summary_sheet_name[:31]  # Excel sheet names limited to 31 characters
+                ws_summary = wb.create_sheet(summary_sheet_name)
+                # Move summary sheet to the first position (leftmost tab)
+                wb._sheets.insert(0, wb._sheets.pop(wb._sheets.index(ws_summary)))
+                # Write headers
+                ws_summary['A1'] = 'Cell'
+                ws_summary['B1'] = '1st Cycle Discharge Capacity (mAh/g)'
+                ws_summary['C1'] = 'First Cycle Efficiency (%)'
+                ws_summary['D1'] = 'Cycle Life (80%)'
+                ws_summary['E1'] = 'Initial Areal Capacity (mAh/cm²)'
+                ws_summary['F1'] = 'Reversible Capacity (mAh/g)'
+                ws_summary['G1'] = 'Coulombic Efficiency (post-formation)'
+                # Write data for each cell
+                for i, d in enumerate(dfs):
+                    df_cell = d['df']
+                    cell_name = d['testnum'] if d['testnum'] else f'Cell {i+1}'
+                    # Calculate summary values (same as in your summary table)
+                    first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
+                    max_qdis = max(first_three_qdis) if first_three_qdis else None
+                    qdis_str = f"{max_qdis:.1f}" if isinstance(max_qdis, (int, float)) else "N/A"
+                    if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
+                        first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
+                        try:
+                            eff_pct = float(first_cycle_eff) * 100
+                            eff_str = f"{eff_pct:.1f}%"
+                        except (ValueError, TypeError):
+                            eff_str = "N/A"
+                    else:
+                        eff_str = "N/A"
+                    # Cycle Life (80%)
+                    qdis_series = get_qdis_series(df_cell)
+                    cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+                    cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
+                    cycle_life_str = str(cycle_life_80) if isinstance(cycle_life_80, (int, float)) else "N/A"
+                    # Initial Areal Capacity (mAh/cm²)
+                    areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
+                    if areal_capacity is None:
+                        areal_str = "N/A"
+                    else:
+                        areal_str = f"{areal_capacity:.3f}"
+                    # Reversible Capacity (mAh/g)
+                    formation_cycles = d.get('formation_cycles', 4)
+                    if len(df_cell) > formation_cycles:
+                        reversible_capacity = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
+                        reversible_str = f"{reversible_capacity:.1f}"
+                    else:
+                        reversible_str = "N/A"
+                    # Coulombic Efficiency (post-formation, %)
+                    eff_col = 'Efficiency (-)'
+                    qdis_col = 'Q Dis (mAh/g)'
+                    n_cycles = len(df_cell)
+                    ceff_values = []
+                    if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
+                        prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
+                        prev_eff = df_cell[eff_col].iloc[formation_cycles]
+                        for j in range(formation_cycles+1, n_cycles):
+                            curr_qdis = df_cell[qdis_col].iloc[j]
+                            curr_eff = df_cell[eff_col].iloc[j]
+                            try:
+                                pq = float(prev_qdis)
+                                cq = float(curr_qdis)
+                                pe = float(prev_eff)
+                                ce = float(curr_eff)
+                                if pq > 0 and (cq < 0.95 * pq or ce < 0.95 * pe):
+                                    break
+                                ceff_values.append(ce)
+                                prev_qdis = cq
+                                prev_eff = ce
+                            except (ValueError, TypeError):
+                                # Skip this cycle if any value is not numeric
+                                continue
+                    if ceff_values:
+                        ceff_str = f"{sum(ceff_values)/len(ceff_values)*100:.2f}%"
+                    else:
+                        ceff_str = "N/A"
+                    ws_summary[f'A{i+2}'] = cell_name
+                    ws_summary[f'B{i+2}'] = qdis_str
+                    ws_summary[f'C{i+2}'] = eff_str
+                    ws_summary[f'D{i+2}'] = cycle_life_str
+                    ws_summary[f'E{i+2}'] = areal_str
+                    ws_summary[f'F{i+2}'] = reversible_str
+                    ws_summary[f'G{i+2}'] = ceff_str
+                # Optionally, add group/average rows as well
+                if enable_grouping and group_assignments is not None:
+                    for group_idx, group_name in enumerate(group_names):
+                        group_dfs = [df for df, g in zip(dfs, group_assignments) if g == group_name]
+                        if len(group_dfs) > 1:
+                            avg_qdis_values = []
+                            avg_eff_values = []
+                            avg_cycle_life_values = []
+                            avg_areal_capacity_values = []
+                            avg_reversible_capacities = []
+                            avg_ceff_values = []
+                            for d in group_dfs:
+                                df_cell = d['df']
+                                first_three_qdis = df_cell['Q Dis (mAh/g)'].head(3).tolist()
+                                max_qdis = max(first_three_qdis) if first_three_qdis else None
+                                if max_qdis is not None:
+                                    avg_qdis_values.append(max_qdis)
+                                if 'Efficiency (-)' in df_cell.columns and not df_cell['Efficiency (-)'].empty:
+                                    first_cycle_eff = df_cell['Efficiency (-)'].iloc[0]
+                                    try:
+                                        eff_pct = float(first_cycle_eff) * 100
+                                        avg_eff_values.append(eff_pct)
+                                    except (ValueError, TypeError):
+                                        avg_eff_values.append(None) # Handle non-numeric efficiency
+                                else:
+                                    avg_eff_values.append(None) # Handle missing efficiency
+                                try:
+                                    qdis_series = get_qdis_series(df_cell)
+                                    cycle_index_series = df_cell[df_cell.columns[0]].iloc[qdis_series.index]
+                                    cycle_life_80 = calculate_cycle_life_80(qdis_series, cycle_index_series)
+                                    avg_cycle_life_values.append(cycle_life_80)
+                                except Exception:
+                                    pass
+                                areal_capacity, chosen_cycle, diff_pct, eff_val = get_initial_areal_capacity(df_cell, disc_area_cm2)
+                                if areal_capacity is not None:
+                                    avg_areal_capacity_values.append(areal_capacity)
+                                formation_cycles = d.get('formation_cycles', 4)
+                                if len(df_cell) > formation_cycles:
+                                    reversible_capacity = df_cell['Q Dis (mAh/g)'].iloc[formation_cycles]
+                                    avg_reversible_capacities.append(reversible_capacity)
+                                # Coulombic Efficiency (post-formation, %)
+                                eff_col = 'Efficiency (-)'
+                                qdis_col = 'Q Dis (mAh/g)'
+                                n_cycles = len(df_cell)
+                                ceff_values = []
+                                if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
+                                    prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
+                                    prev_eff = df_cell[eff_col].iloc[formation_cycles]
+                                    for j in range(formation_cycles+1, n_cycles):
+                                        curr_qdis = df_cell[qdis_col].iloc[j]
+                                        curr_eff = df_cell[eff_col].iloc[j]
+                                        if prev_qdis > 0 and (curr_qdis < 0.95 * prev_qdis or curr_eff < 0.95 * prev_eff):
+                                            break
+                                        ceff_values.append(curr_eff)
+                                        prev_qdis = curr_qdis
+                                        prev_eff = curr_eff
+                                if ceff_values:
+                                    avg_ceff_values.append(sum(ceff_values)/len(ceff_values)*100)
+                            avg_qdis = sum(avg_qdis_values) / len(avg_qdis_values) if avg_qdis_values else 0
+                            # Filter out None values for average calculation
+                            valid_avg_eff_values = [v for v in avg_eff_values if v is not None]
+                            avg_eff = sum(valid_avg_eff_values) / len(valid_avg_eff_values) if valid_avg_eff_values else None
+                            avg_cycle_life = sum(avg_cycle_life_values) / len(avg_cycle_life_values) if avg_cycle_life_values else 0
+                            avg_areal = sum(avg_areal_capacity_values) / len(avg_areal_capacity_values) if avg_areal_capacity_values else 0
+                            avg_reversible = sum(avg_reversible_capacities) / len(avg_reversible_capacities) if avg_reversible_capacities else None
+                            avg_ceff = sum(avg_ceff_values) / len(avg_ceff_values) if avg_ceff_values else None
+                            ws_summary.append([
+                                group_name + " (Group Avg)",
+                                f"{avg_qdis:.1f}",
+                                f"{avg_eff:.1f}%" if avg_eff is not None else "N/A",
+                                f"{avg_cycle_life:.0f}",
+                                f"{avg_areal:.3f}",
+                                f"{avg_reversible:.1f}" if avg_reversible is not None else "N/A",
+                                f"{avg_ceff:.2f}%" if avg_ceff is not None else "N/A"
+                            ])
+            # Save the updated workbook
+            wb.save(output2)
+            output2.seek(0)
+
+            # Update file name to include experiment name
+            if experiment_name:
+                if len(dfs) > 1:
+                    file_name = f'{experiment_name} Comparison Cycling data.xlsx'
+                else:
+                    file_name = f'{experiment_name} {datasets[0]["testnum"]} Cycling data.xlsx' if datasets[0]["testnum"] else f'{experiment_name} Cycling data.xlsx'
+            else:
+                file_name = 'Comparison Cycling data.xlsx' if len(dfs) > 1 else f'{datasets[0]["testnum"]} Cycling data.xlsx' if datasets[0]["testnum"] else 'Cycling data.xlsx'
+            
+            st.success('Processing complete!')
+            st.download_button(f'Download XLSX: {file_name}', data=output2, file_name=file_name, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', key='download_xlsx_final')
+
+else:
+    st.info('Please upload a file and enter valid disc loading and % active material.')
 
 # --- Comparison Tab ---
 if tab_comparison and current_project_id:
@@ -1726,7 +2464,7 @@ if tab_comparison and current_project_id:
             experiment_dict = {}
             
             for exp_data in all_experiments_data:
-                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, formulation_json, data_json, created_date, porosity = exp_data
                 experiment_options.append(exp_name)
                 experiment_dict[exp_name] = exp_data
             
@@ -1750,7 +2488,7 @@ if tab_comparison and current_project_id:
                 
                 for exp_name in selected_experiments:
                     exp_data = experiment_dict[exp_name]
-                    exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                    exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, formulation_json, data_json, created_date, porosity = exp_data
                     
                     try:
                         parsed_data = json.loads(data_json)
@@ -1780,20 +2518,11 @@ if tab_comparison and current_project_id:
                             # Calculate experiment average
                             if experiment_cells:
                                 exp_summary = calculate_experiment_average(experiment_cells, exp_name, parsed_data.get('experiment_date', created_date))
-                                # Add formulation data to experiment summary (use first cell's formulation as representative)
+                                # Add formulation data to experiment summary
                                 if experiment_cells and 'formulation_json' in experiment_cells[0]:
                                     exp_summary['formulation_json'] = experiment_cells[0]['formulation_json']
-                                # Add porosity data to experiment summary (use average from cells)
-                                porosity_values = [cell.get('porosity') for cell in experiment_cells if cell.get('porosity') is not None]
-                                if porosity_values:
-                                    exp_summary['porosity'] = sum(porosity_values) / len(porosity_values)
-                                # Add pressed thickness data to experiment summary
-                                exp_summary['pressed_thickness'] = parsed_data.get('pressed_thickness')
-                                # Add disc diameter data to experiment summary
-                                exp_summary['disc_diameter_mm'] = disc_diameter
-                                # Add experiment notes to experiment summary
-                                exp_summary['experiment_notes'] = experiment_notes
-                                experiment_summaries.append(exp_summary)
+                                comparison_data.append(exp_summary)
+                        
                         else:
                             # Legacy single cell experiment
                             df = pd.read_json(StringIO(data_json))
@@ -1994,7 +2723,7 @@ if tab_comparison and current_project_id:
                                 file_name="individual_cells_comparison.csv",
                                 mime="text/csv"
                             )
-else:
+                else:
                     st.error("No valid data found for selected experiments.")
 
 # --- Master Table Tab ---
@@ -2016,7 +2745,7 @@ if tab_master and current_project_id:
             individual_cells = []
             
             for exp_data in all_experiments_data:
-                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, formulation_json, data_json, created_date, porosity = exp_data
                 
                 try:
                     parsed_data = json.loads(data_json)
@@ -2064,8 +2793,6 @@ if tab_master and current_project_id:
                             exp_summary['pressed_thickness'] = parsed_data.get('pressed_thickness')
                             # Add disc diameter data to experiment summary
                             exp_summary['disc_diameter_mm'] = disc_diameter
-                            # Add experiment notes to experiment summary
-                            exp_summary['experiment_notes'] = experiment_notes
                             experiment_summaries.append(exp_summary)
                     
                     else:
@@ -2115,8 +2842,6 @@ if tab_master and current_project_id:
                             exp_summary['pressed_thickness'] = result[0]
                         # Add disc diameter data (default to 15mm for legacy experiments)
                         exp_summary['disc_diameter_mm'] = 15
-                        # Add experiment notes to experiment summary
-                        exp_summary['experiment_notes'] = experiment_notes
                         experiment_summaries.append(exp_summary)
                         
                 except Exception as e:

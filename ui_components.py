@@ -167,6 +167,57 @@ def render_toggle_section(dfs: List[Dict[str, Any]], enable_grouping: bool = Fal
                 group_plot_toggles["Group Efficiency"] = st.checkbox('Plot Group Efficiency', value=False, key='plot_group_eff')
         return show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles
 
+def render_retention_display_options() -> Tuple[bool, bool, bool, bool, bool]:
+    """Render capacity retention plot display options and return their states: 
+    remove_markers, hide_legend, show_graph_title, show_baseline_line, show_threshold_line."""
+    
+    with st.expander("🎨 Retention Plot Display Options", expanded=False):
+        st.markdown("### Capacity Retention Plot Customization")
+        
+        # Main display controls
+        display_col1, display_col2, display_col3 = st.columns(3)
+        
+        with display_col1:
+            st.markdown("**Data Display**")
+            remove_markers = st.checkbox(
+                '🔘 Remove markers', 
+                value=False,
+                key='retention_remove_markers',
+                help="Hide data point markers on the retention plot for cleaner lines"
+            )
+            show_graph_title = st.checkbox(
+                '📝 Show graph title', 
+                value=True,
+                key='retention_show_title',
+                help="Display the capacity retention plot title"
+            )
+        
+        with display_col2:
+            st.markdown("**Legend & Labels**")
+            hide_legend = st.checkbox(
+                '🏷️ Hide legend', 
+                value=False,
+                key='retention_hide_legend',
+                help="Remove the plot legend (useful for single-cell data or cleaner visuals)"
+            )
+            
+        with display_col3:
+            st.markdown("**Reference Lines**")
+            show_baseline_line = st.checkbox(
+                '📏 Show 100% baseline', 
+                value=True,
+                key='retention_show_baseline',
+                help="Display the horizontal reference line at 100% capacity"
+            )
+            show_threshold_line = st.checkbox(
+                '🚨 Show threshold line', 
+                value=True,
+                key='retention_show_threshold',
+                help="Display the horizontal threshold line at the selected retention percentage"
+            )
+    
+    return remove_markers, hide_legend, show_graph_title, show_baseline_line, show_threshold_line
+
 def render_cell_inputs(context_key=None, project_id=None, get_components_func=None):
     """Render multi-file upload and per-file inputs for each cell. Returns datasets list."""
     if context_key is None:
@@ -561,10 +612,18 @@ def display_summary_stats(dfs: List[Dict[str, Any]], disc_area_cm2: float, show_
         for v in summary_dict[param]:
             if v is None:
                 row.append("N/A")
-            elif idx == 1 or idx == 3:  # Efficiency columns (Coulombic Efficiency and First Cycle Efficiency)
-                row.append(f"{v:.2f}%")
-            elif idx == 5:  # Areal capacity
-                row.append(f"{v:.3f}")
+            elif idx == 0:  # Reversible Capacity (mAh/g) - 1 decimal place
+                row.append(f"{v:.1f}")
+            elif idx == 1:  # Coulombic Efficiency (post-formation) - 3 decimal places
+                row.append(f"{v:.3f}%")
+            elif idx == 2:  # 1st Cycle Discharge Capacity (mAh/g) - 1 decimal place
+                row.append(f"{v:.1f}")
+            elif idx == 3:  # First Cycle Efficiency (%) - 3 decimal places
+                row.append(f"{v:.3f}%")
+            elif idx == 4:  # Cycle Life (80%) - 1 decimal place
+                row.append(f"{v:.1f}")
+            elif idx == 5:  # Initial Areal Capacity (mAh/cm²) - 2 decimal places
+                row.append(f"{v:.2f}")
             else:
                 row.append(f"{v:.1f}")
         display_data[param] = row

@@ -128,7 +128,8 @@ def init_database():
                 data_json TEXT,
                 solids_content REAL,
                 pressed_thickness REAL,
-                experiment_notes TEXT,
+                experiment_notes", "ALTER TABLE cell_experiments ADD COLUMN experiment_notes TEXT"),
+            ("porosity", "ALTER TABLE cell_experiments ADD COLUMN porosity REAL"),
                 created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects (id)
             )
@@ -162,8 +163,9 @@ def migrate_database():
             ('formulation_json', 'ALTER TABLE cell_experiments ADD COLUMN formulation_json TEXT'),
             ('solids_content', 'ALTER TABLE cell_experiments ADD COLUMN solids_content REAL'),
             ('pressed_thickness', 'ALTER TABLE cell_experiments ADD COLUMN pressed_thickness REAL'),
-            ('experiment_notes', 'ALTER TABLE cell_experiments ADD COLUMN experiment_notes TEXT'),
-            ("porosity", "ALTER TABLE cell_experiments ADD COLUMN porosity REAL"),        ]
+            ('experiment_notes", "ALTER TABLE cell_experiments ADD COLUMN experiment_notes TEXT"),
+            ("porosity", "ALTER TABLE cell_experiments ADD COLUMN porosity REAL"),
+        ]
         for column_name, migration_sql in migrations:
             if column_name not in columns:
                 try:
@@ -373,39 +375,17 @@ def rename_experiment(experiment_id, new_name):
         ''', (new_name, f"{new_name}.json", experiment_id))
         conn.commit()
 
-def save_experiment(project_id, experiment_name, experiment_date, disc_diameter_mm, group_assignments, group_names, cells_data, solids_content=None, pressed_thickness=None, experiment_notes=None):
-    """Save a complete experiment with porosity calculation."""
-    try:
-        from porosity_calculations import calculate_porosity_from_experiment_data
-        
-        # Calculate porosity for each cell
-        for cell_data in cells_data:
-            if (cell_data.get("loading") and 
-                disc_diameter_mm and 
-                pressed_thickness and 
-                cell_data.get("formulation")):
-                
-                porosity_data = calculate_porosity_from_experiment_data(
-                    disc_mass_mg=cell_data["loading"],
-                    disc_diameter_mm=disc_diameter_mm,
-                    pressed_thickness_um=pressed_thickness,
-                    formulation=cell_data["formulation"]
-                )
-                
-                # Add porosity data to cell_data
-                cell_data["porosity"] = porosity_data["porosity"]
-                cell_data["electrode_density"] = porosity_data["electrode_density"]
-                cell_data["theoretical_density"] = porosity_data["theoretical_density"]
-    except ImportError:
-        # If porosity_calculations module is not available, skip porosity calculation
-        pass
+def save_experiment(project_id, experiment_name, experiment_date, disc_diameter_mm, group_assignments, group_names, cells_data, solids_content=None, pressed_thickness=None, experiment_notes", "ALTER TABLE cell_experiments ADD COLUMN experiment_notes TEXT"),
+            ("porosity", "ALTER TABLE cell_experiments ADD COLUMN porosity REAL"),
+    """Save a complete experiment with new experiment-level fields."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         # Create the main experiment record
         cursor.execute('''
             INSERT INTO cell_experiments 
-            (project_id, cell_name, file_name, data_json, solids_content, pressed_thickness, experiment_notes, porosity)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (project_id, cell_name, file_name, data_json, solids_content, pressed_thickness, experiment_notes", "ALTER TABLE cell_experiments ADD COLUMN experiment_notes TEXT"),
+            ("porosity", "ALTER TABLE cell_experiments ADD COLUMN porosity REAL"),
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (project_id, experiment_name, f"{experiment_name}.json", json.dumps({
             'experiment_date': experiment_date.isoformat() if experiment_date else None,
             'disc_diameter_mm': disc_diameter_mm,
@@ -414,8 +394,10 @@ def save_experiment(project_id, experiment_name, experiment_date, disc_diameter_
             'cells': cells_data,
             'solids_content': solids_content,
             'pressed_thickness': pressed_thickness,
-            'experiment_notes': experiment_notes
-        }), solids_content, pressed_thickness, experiment_notes, sum(cell.get("porosity", 0) for cell in cells_data) / len(cells_data) if cells_data else 0))
+            'experiment_notes", "ALTER TABLE cell_experiments ADD COLUMN experiment_notes TEXT"),
+            ("porosity", "ALTER TABLE cell_experiments ADD COLUMN porosity REAL"),
+        }), solids_content, pressed_thickness, experiment_notes", "ALTER TABLE cell_experiments ADD COLUMN experiment_notes TEXT"),
+            ("porosity", "ALTER TABLE cell_experiments ADD COLUMN porosity REAL"),
         # Update project last_modified
         cursor.execute('''
             UPDATE projects 
@@ -426,39 +408,16 @@ def save_experiment(project_id, experiment_name, experiment_date, disc_diameter_
         conn.commit()
         return experiment_id
 
-def update_experiment(experiment_id, project_id, experiment_name, experiment_date, disc_diameter_mm, group_assignments, group_names, cells_data, solids_content=None, pressed_thickness=None, experiment_notes=None):
+def update_experiment(experiment_id, project_id, experiment_name, experiment_date, disc_diameter_mm, group_assignments, group_names, cells_data, solids_content=None, pressed_thickness=None, experiment_notes", "ALTER TABLE cell_experiments ADD COLUMN experiment_notes TEXT"),
+            ("porosity", "ALTER TABLE cell_experiments ADD COLUMN porosity REAL"),
     """Update an existing experiment with new experiment-level fields."""
-    try:
-        from porosity_calculations import calculate_porosity_from_experiment_data
-        
-        # Calculate porosity for each cell if we have the required data
-        for cell_data in cells_data:
-            if (cell_data.get("loading") and 
-                disc_diameter_mm and 
-                pressed_thickness and 
-                cell_data.get("formulation")):
-                
-                porosity_data = calculate_porosity_from_experiment_data(
-                    disc_mass_mg=cell_data["loading"],
-                    disc_diameter_mm=disc_diameter_mm,
-                    pressed_thickness_um=pressed_thickness,
-                    formulation=cell_data["formulation"]
-                )
-                
-                # Add porosity data to cell_data
-                cell_data["porosity"] = porosity_data["porosity"]
-                cell_data["electrode_density"] = porosity_data["electrode_density"]
-                cell_data["theoretical_density"] = porosity_data["theoretical_density"]
-    except ImportError:
-        # If porosity_calculations module is not available, skip porosity calculation
-        pass
-    
     with get_db_connection() as conn:
         cursor = conn.cursor()
         # Update the experiment record
         cursor.execute('''
             UPDATE cell_experiments 
-            SET cell_name = ?, file_name = ?, data_json = ?, solids_content = ?, pressed_thickness = ?, experiment_notes = ?, porosity = ?
+            SET cell_name = ?, file_name = ?, data_json = ?, solids_content = ?, pressed_thickness = ?, experiment_notes", "ALTER TABLE cell_experiments ADD COLUMN experiment_notes TEXT"),
+            ("porosity", "ALTER TABLE cell_experiments ADD COLUMN porosity REAL"),
             WHERE id = ?
         ''', (experiment_name, f"{experiment_name}.json", json.dumps({
             'experiment_date': experiment_date.isoformat() if experiment_date else None,
@@ -468,8 +427,10 @@ def update_experiment(experiment_id, project_id, experiment_name, experiment_dat
             'cells': cells_data,
             'solids_content': solids_content,
             'pressed_thickness': pressed_thickness,
-            'experiment_notes': experiment_notes
-        }), solids_content, pressed_thickness, experiment_notes, sum(cell.get("porosity", 0) for cell in cells_data) / len(cells_data) if cells_data else 0, experiment_id))
+            'experiment_notes", "ALTER TABLE cell_experiments ADD COLUMN experiment_notes TEXT"),
+            ("porosity", "ALTER TABLE cell_experiments ADD COLUMN porosity REAL"),
+        }), solids_content, pressed_thickness, experiment_notes", "ALTER TABLE cell_experiments ADD COLUMN experiment_notes TEXT"),
+            ("porosity", "ALTER TABLE cell_experiments ADD COLUMN porosity REAL"),
         # Update project last_modified
         cursor.execute('''
             UPDATE projects 
@@ -508,7 +469,7 @@ def get_all_project_experiments_data(project_id):
         cursor = conn.cursor()
         cursor.execute('''
             SELECT id, cell_name, file_name, loading, active_material, formation_cycles, 
-                   test_number, electrolyte, formulation_json, data_json, created_date, porosity, experiment_notes
+                   test_number, electrolyte, formulation_json, data_json, created_date
             FROM cell_experiments 
             WHERE project_id = ? 
             ORDER BY created_date DESC
