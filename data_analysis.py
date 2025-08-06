@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-def calculate_cell_summary(df, cell_data, disc_area_cm2):
+def calculate_cell_summary(df, cell_data, disc_area_cm2, project_type="Full Cell"):
     """Calculate summary statistics for a single cell."""
     try:
         # Basic cell info
@@ -53,23 +53,53 @@ def calculate_cell_summary(df, cell_data, disc_area_cm2):
             n_cycles = len(df)
             ceff_values = []
             if eff_col in df.columns and qdis_col in df.columns and n_cycles > formation_cycles+1:
-                prev_qdis = df[qdis_col].iloc[formation_cycles]
-                prev_eff = df[eff_col].iloc[formation_cycles]
-                for i in range(formation_cycles+1, n_cycles):
-                    curr_qdis = df[qdis_col].iloc[i]
-                    curr_eff = df[eff_col].iloc[i]
-                    try:
-                        pq = float(prev_qdis)
-                        cq = float(curr_qdis)
-                        pe = float(prev_eff)
-                        ce = float(curr_eff)
-                        if pq > 0 and (cq < 0.95 * pq or ce < 0.95 * pe):
-                            break
-                        ceff_values.append(ce)
-                        prev_qdis = cq
-                        prev_eff = ce
-                    except (ValueError, TypeError):
-                        continue
+                # Use corrected efficiency calculation for anode projects
+                if project_type == "Anode" and 'Q charge (mA.h)' in df.columns and 'Q discharge (mA.h)' in df.columns:
+                    # Recalculate efficiency using corrected method for anode projects
+                    from data_processing import calculate_efficiency_based_on_project_type
+                    corrected_efficiency = calculate_efficiency_based_on_project_type(
+                        df['Q charge (mA.h)'], 
+                        df['Q discharge (mA.h)'], 
+                        project_type
+                    ) / 100  # Convert to decimal for consistency
+                    
+                    # Use corrected efficiency values for coulombic efficiency calculation
+                    prev_qdis = df[qdis_col].iloc[formation_cycles]
+                    prev_eff = corrected_efficiency.iloc[formation_cycles]
+                    for i in range(formation_cycles+1, n_cycles):
+                        curr_qdis = df[qdis_col].iloc[i]
+                        curr_eff = corrected_efficiency.iloc[i]
+                        try:
+                            pq = float(prev_qdis)
+                            cq = float(curr_qdis)
+                            pe = float(prev_eff)
+                            ce = float(curr_eff)
+                            if pq > 0 and (cq < 0.95 * pq or ce < 0.95 * pe):
+                                break
+                            ceff_values.append(ce)
+                            prev_qdis = cq
+                            prev_eff = ce
+                        except (ValueError, TypeError):
+                            continue
+                else:
+                    # Use original efficiency calculation for non-anode projects
+                    prev_qdis = df[qdis_col].iloc[formation_cycles]
+                    prev_eff = df[eff_col].iloc[formation_cycles]
+                    for i in range(formation_cycles+1, n_cycles):
+                        curr_qdis = df[qdis_col].iloc[i]
+                        curr_eff = df[eff_col].iloc[i]
+                        try:
+                            pq = float(prev_qdis)
+                            cq = float(curr_qdis)
+                            pe = float(prev_eff)
+                            ce = float(curr_eff)
+                            if pq > 0 and (cq < 0.95 * pq or ce < 0.95 * pe):
+                                break
+                            ceff_values.append(ce)
+                            prev_qdis = cq
+                            prev_eff = ce
+                        except (ValueError, TypeError):
+                            continue
             if ceff_values:
                 ceff_avg = sum(ceff_values) / len(ceff_values) * 100
         except:
