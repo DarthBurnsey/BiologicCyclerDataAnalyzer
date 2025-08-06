@@ -17,11 +17,29 @@ def calculate_cell_summary(df, cell_data, disc_area_cm2, project_type="Full Cell
         # First Cycle Efficiency (%)
         eff_pct = None
         if 'Efficiency (-)' in df.columns and not df['Efficiency (-)'].empty:
-            first_cycle_eff = df['Efficiency (-)'].iloc[0]
-            try:
-                eff_pct = float(first_cycle_eff) * 100
-            except (ValueError, TypeError):
-                eff_pct = None
+            # Use corrected efficiency calculation for anode projects
+            if project_type == "Anode" and 'Q charge (mA.h)' in df.columns and 'Q discharge (mA.h)' in df.columns:
+                # Recalculate efficiency using corrected method for anode projects
+                from data_processing import calculate_efficiency_based_on_project_type
+                corrected_efficiency = calculate_efficiency_based_on_project_type(
+                    df['Q charge (mA.h)'], 
+                    df['Q discharge (mA.h)'], 
+                    project_type
+                ) / 100  # Convert to decimal for consistency
+                
+                # Use corrected efficiency for first cycle
+                first_cycle_eff = corrected_efficiency.iloc[0]
+                try:
+                    eff_pct = float(first_cycle_eff) * 100
+                except (ValueError, TypeError):
+                    eff_pct = None
+            else:
+                # Use original efficiency calculation for non-anode projects
+                first_cycle_eff = df['Efficiency (-)'].iloc[0]
+                try:
+                    eff_pct = float(first_cycle_eff) * 100
+                except (ValueError, TypeError):
+                    eff_pct = None
         
         # Cycle Life (80%)
         cycle_life_80 = None
