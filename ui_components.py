@@ -3,6 +3,188 @@ import streamlit as st
 from typing import List, Dict, Any, Tuple
 import pandas as pd
 import uuid
+import numpy as np
+
+# Battery Materials Database for Autocomplete
+BATTERY_MATERIALS = {
+    "Active Materials": [
+        "Graphite", "Silicon", "Lithium Iron Phosphate (LFP)", "Lithium Cobalt Oxide (LCO)",
+        "Lithium Nickel Manganese Cobalt Oxide (NMC)", "Lithium Nickel Cobalt Aluminum Oxide (NCA)",
+        "Lithium Manganese Oxide (LMO)", "Lithium Titanate (LTO)", "Lithium Metal",
+        "Sulfur", "Oxygen", "Lithium Nickel Oxide", "Lithium Manganese Spinel",
+        "Lithium Vanadium Phosphate", "Lithium Iron Sulfate", "Lithium Cobalt Phosphate"
+    ],
+    "Binders": [
+        "Polyvinylidene Fluoride (PVDF)", "Carboxymethyl Cellulose (CMC)", "Styrene Butadiene Rubber (SBR)",
+        "Polyacrylic Acid (PAA)", "Polyethylene Oxide (PEO)", "Polyvinyl Alcohol (PVA)",
+        "Polyethylene Glycol (PEG)", "Polytetrafluoroethylene (PTFE)", "Polyvinyl Chloride (PVC)",
+        "Polyurethane", "Polyimide", "Polyamide", "Polyester", "Polypropylene"
+    ],
+    "Conductive Additives": [
+        "Carbon Black", "Super P", "Ketjen Black", "Vulcan XC-72", "Timcal Super C65",
+        "Carbon Nanotubes (CNT)", "Graphene", "Graphite Flakes", "Carbon Fiber",
+        "Carbon Nanofibers", "Reduced Graphene Oxide (rGO)", "Graphene Oxide",
+        "Carbon Nanospheres", "Carbon Nanorods", "Carbon Nanobelts"
+    ],
+    "Electrolytes": [
+        "Lithium Hexafluorophosphate (LiPF6)", "Lithium Bis(trifluoromethanesulfonyl)imide (LiTFSI)",
+        "Lithium Bis(fluorosulfonyl)imide (LiFSI)", "Lithium Perchlorate (LiClO4)",
+        "Lithium Tetrafluoroborate (LiBF4)", "Lithium Difluoro(oxalato)borate (LiDFOB)",
+        "Ethylene Carbonate (EC)", "Propylene Carbonate (PC)", "Dimethyl Carbonate (DMC)",
+        "Diethyl Carbonate (DEC)", "Ethyl Methyl Carbonate (EMC)", "Vinylene Carbonate (VC)",
+        "Fluoroethylene Carbonate (FEC)", "1,3-Dioxolane (DOL)", "1,2-Dimethoxyethane (DME)"
+    ],
+    "Separators": [
+        "Polyethylene (PE)", "Polypropylene (PP)", "Polyethylene/Polypropylene (PE/PP)",
+        "Cellulose", "Glass Fiber", "Ceramic Coated", "Polyimide", "Polyamide",
+        "Polyvinylidene Fluoride (PVDF)", "Polyacrylonitrile (PAN)", "Polymethyl Methacrylate (PMMA)"
+    ],
+    "Current Collectors": [
+        "Copper Foil", "Aluminum Foil", "Nickel Foil", "Titanium Foil", "Stainless Steel",
+        "Carbon Paper", "Carbon Cloth", "Carbon Felt", "Graphite Foil", "Copper Mesh",
+        "Aluminum Mesh", "Nickel Mesh", "Titanium Mesh"
+    ],
+    "Additives": [
+        "Vinylene Carbonate (VC)", "Fluoroethylene Carbonate (FEC)", "Succinonitrile",
+        "1,3-Propane Sultone", "1,4-Butane Sultone", "Methyl Methanesulfonate",
+        "Ethyl Methanesulfonate", "Propyl Methanesulfonate", "Butyl Methanesulfonate",
+        "Lithium Difluoro(oxalato)borate (LiDFOB)", "Lithium Bis(oxalato)borate (LiBOB)",
+        "Lithium Tetrafluorooxalatophosphate (LiTFOP)", "Lithium Difluorophosphate (LiPO2F2)"
+    ],
+    "Other": [
+        "Water", "Ethanol", "Methanol", "Isopropanol", "Acetone", "N-Methyl-2-pyrrolidone (NMP)",
+        "Dimethylformamide (DMF)", "Dimethylacetamide (DMAc)", "Tetrahydrofuran (THF)",
+        "Toluene", "Xylene", "Chloroform", "Dichloromethane", "Hexane", "Heptane",
+        "Cyclohexane", "Benzene", "Styrene", "Acrylic Acid", "Methacrylic Acid"
+    ]
+}
+
+def get_all_battery_materials():
+    """Get a flat list of all battery materials for autocomplete."""
+    all_materials = []
+    for category, materials in BATTERY_MATERIALS.items():
+        all_materials.extend(materials)
+    return sorted(all_materials)
+
+def filter_materials_by_query(query: str, materials: List[str] = None) -> List[str]:
+    """Filter materials based on user query for autocomplete."""
+    if materials is None:
+        materials = get_all_battery_materials()
+    
+    if not query:
+        return materials[:10]  # Return first 10 if no query
+    
+    query_lower = query.lower()
+    filtered = []
+    
+    # First priority: exact matches
+    exact_matches = [m for m in materials if query_lower == m.lower()]
+    filtered.extend(exact_matches)
+    
+    # Second priority: starts with query
+    starts_with = [m for m in materials if m.lower().startswith(query_lower) and m not in exact_matches]
+    filtered.extend(starts_with)
+    
+    # Third priority: contains query
+    contains = [m for m in materials if query_lower in m.lower() and m not in filtered]
+    filtered.extend(contains)
+    
+    return filtered[:10]  # Limit to 10 suggestions
+
+def render_autocomplete_input(key: str, label: str = "Component", placeholder: str = "Type to search materials...", 
+                            value: str = "", materials: List[str] = None, allow_custom: bool = True) -> str:
+    """
+    Render an autocomplete input field for battery materials.
+    
+    Args:
+        key: Unique key for the Streamlit component
+        label: Label for the input field
+        placeholder: Placeholder text
+        value: Initial value
+        materials: List of materials to search from (defaults to all battery materials)
+        allow_custom: Whether to allow custom entries not in the list
+    
+    Returns:
+        Selected or entered material name
+    """
+    if materials is None:
+        materials = get_all_battery_materials()
+    
+    # Initialize session state for this autocomplete
+    query_key = f"{key}_query"
+    suggestions_key = f"{key}_suggestions"
+    selected_key = f"{key}_selected"
+    show_suggestions_key = f"{key}_show_suggestions"
+    
+    if query_key not in st.session_state:
+        st.session_state[query_key] = ""
+    if suggestions_key not in st.session_state:
+        st.session_state[suggestions_key] = []
+    if selected_key not in st.session_state:
+        st.session_state[selected_key] = value
+    if show_suggestions_key not in st.session_state:
+        st.session_state[show_suggestions_key] = False
+    
+    # Handle text input
+    current_value = st.session_state[selected_key]
+    new_value = st.text_input(
+        label,
+        value=current_value,
+        key=f"{key}_input",
+        placeholder=placeholder,
+        label_visibility="collapsed"
+    )
+    
+    # Update query and filter suggestions
+    if new_value != current_value:
+        st.session_state[query_key] = new_value
+        st.session_state[suggestions_key] = filter_materials_by_query(new_value, materials)
+        st.session_state[show_suggestions_key] = len(new_value) > 0 and len(st.session_state[suggestions_key]) > 0
+        st.session_state[selected_key] = new_value
+    
+    # Show suggestions if there are any and we should show them
+    if st.session_state[show_suggestions_key]:
+        suggestions = st.session_state[suggestions_key]
+        
+        # Create a container for suggestions
+        suggestions_container = st.container()
+        
+        with suggestions_container:
+            st.markdown("**Suggestions:**")
+            
+            # Create columns for suggestions (3 per row)
+            cols = st.columns(3)
+            for i, suggestion in enumerate(suggestions):
+                col_idx = i % 3
+                with cols[col_idx]:
+                    if st.button(
+                        suggestion,
+                        key=f"{key}_suggestion_{i}",
+                        use_container_width=True
+                    ):
+                        st.session_state[selected_key] = suggestion
+                        st.session_state[show_suggestions_key] = False
+                        st.rerun()
+            
+            # Add "Clear suggestions" button
+            if st.button("Clear suggestions", key=f"{key}_clear"):
+                st.session_state[show_suggestions_key] = False
+                st.rerun()
+    
+    return st.session_state[selected_key]
+
+def get_substrate_options():
+    """
+    Get available substrate options. This function can be easily extended
+    to load options from a database or configuration file in the future.
+    """
+    return [
+        'Copper',
+        'Aluminum', 
+        'Carbon-Coated Aluminum',
+        'SS316',
+        'Cx-Cu'
+    ]
 
 def calculate_cell_metrics(df_cell, formation_cycles, disc_area_cm2):
     """Centralized metric calculation to avoid duplication"""
@@ -238,6 +420,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                     active_default = st.session_state.get('active_0', 90.0)
                     formation_default = st.session_state.get('formation_cycles_0', 4)
                     electrolyte_default = st.session_state.get('electrolyte_0', '1M LiPF6 1:1:1')
+                    substrate_default = st.session_state.get('substrate_0', 'Copper')
                     with col1:
                         disc_loading_0 = st.number_input(f'Disc loading (mg) for Cell 1', min_value=0.0, step=1.0, value=loading_default, key=f'loading_0')
                         formation_cycles_0 = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
@@ -245,11 +428,19 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         active_material_0 = st.number_input(f'% Active material for Cell 1', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_0')
                         test_number_0 = st.text_input(f'Test Number for Cell 1', value='Cell 1', key=f'testnum_0')
                     
-                    # Electrolyte selection
+                    # Electrolyte and Substrate selection
                     electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
-                    electrolyte_0 = st.selectbox(f'Electrolyte for Cell 1', electrolyte_options, 
-                                               index=electrolyte_options.index(electrolyte_default) if electrolyte_default in electrolyte_options else 0,
-                                               key=f'electrolyte_0')
+                    substrate_options = get_substrate_options()
+                    
+                    col3, col4 = st.columns(2)
+                    with col3:
+                        electrolyte_0 = st.selectbox(f'Electrolyte for Cell 1', electrolyte_options, 
+                                                   index=electrolyte_options.index(electrolyte_default) if electrolyte_default in electrolyte_options else 0,
+                                                   key=f'electrolyte_0')
+                    with col4:
+                        substrate_0 = st.selectbox(f'Substrate for Cell 1', substrate_options,
+                                                 index=substrate_options.index(substrate_default) if substrate_default in substrate_options else 0,
+                                                 key=f'substrate_0')
                     
                     # Formulation table
                     st.markdown("**Formulation:**")
@@ -265,6 +456,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                     'testnum': test_number_0, 
                     'formation_cycles': formation_cycles_0,
                     'electrolyte': electrolyte_0,
+                    'substrate': substrate_0,
                     'formulation': formulation_0
                 })
                 
@@ -279,6 +471,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             formation_cycles = formation_cycles_0
                             active_material = active_material_0
                             electrolyte = electrolyte_0
+                            substrate = substrate_0
                             formulation = formulation_0
                         else:
                             # Individual inputs for this cell
@@ -286,16 +479,22 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             active_default = st.session_state.get(f'active_{i}', active_material_0)
                             formation_default = st.session_state.get(f'formation_cycles_{i}', formation_cycles_0)
                             electrolyte_default = st.session_state.get(f'electrolyte_{i}', electrolyte_0)
+                            substrate_default = st.session_state.get(f'substrate_{i}', substrate_0)
                             with col1:
                                 disc_loading = st.number_input(f'Disc loading (mg) for Cell {i+1}', min_value=0.0, step=1.0, value=loading_default, key=f'loading_{i}')
                                 formation_cycles = st.number_input(f'Formation Cycles for Cell {i+1}', min_value=0, step=1, value=formation_default, key=f'formation_cycles_{i}')
                             with col2:
                                 active_material = st.number_input(f'% Active material for Cell {i+1}', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_{i}')
                             
-                            # Electrolyte selection
+                            # Electrolyte and Substrate selection
                             electrolyte = st.selectbox(f'Electrolyte for Cell {i+1}', electrolyte_options, 
                                                      index=electrolyte_options.index(electrolyte_default) if electrolyte_default in electrolyte_options else 0,
                                                      key=f'electrolyte_{i}')
+                            
+                            # Substrate selection
+                            substrate = st.selectbox(f'Substrate for Cell {i+1}', substrate_options,
+                                                   index=substrate_options.index(substrate_default) if substrate_default in substrate_options else 0,
+                                                   key=f'substrate_{i}')
                             
                             # Formulation table
                             st.markdown("**Formulation:**")
@@ -313,6 +512,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             'testnum': test_number, 
                             'formation_cycles': formation_cycles,
                             'electrolyte': electrolyte,
+                            'substrate': substrate,
                             'formulation': formulation
                         })
             else:
@@ -325,6 +525,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                     active_default = st.session_state.get('active_0', 90.0)
                     formation_default = st.session_state.get('formation_cycles_0', 4)
                     electrolyte_default = st.session_state.get('electrolyte_0', '1M LiPF6 1:1:1')
+                    substrate_default = st.session_state.get('substrate_0', 'Copper')
                     with col1:
                         disc_loading = st.number_input(f'Disc loading (mg) for Cell 1', min_value=0.0, step=1.0, value=loading_default, key=f'loading_0')
                         formation_cycles = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
@@ -332,11 +533,19 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         active_material = st.number_input(f'% Active material for Cell 1', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_0')
                         test_number = st.text_input(f'Test Number for Cell 1', value='Cell 1', key=f'testnum_0')
                     
-                    # Electrolyte selection
+                    # Electrolyte and Substrate selection
                     electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
-                    electrolyte = st.selectbox(f'Electrolyte for Cell 1', electrolyte_options, 
-                                             index=electrolyte_options.index(electrolyte_default) if electrolyte_default in electrolyte_options else 0,
-                                             key=f'electrolyte_0')
+                    substrate_options = get_substrate_options()
+                    
+                    col3, col4 = st.columns(2)
+                    with col3:
+                        electrolyte = st.selectbox(f'Electrolyte for Cell 1', electrolyte_options, 
+                                                 index=electrolyte_options.index(electrolyte_default) if electrolyte_default in electrolyte_options else 0,
+                                                 key=f'electrolyte_0')
+                    with col4:
+                        substrate = st.selectbox(f'Substrate for Cell 1', substrate_options,
+                                               index=substrate_options.index(substrate_default) if substrate_default in substrate_options else 0,
+                                               key=f'substrate_0')
                     
                     # Formulation table
                     st.markdown("**Formulation:**")
@@ -349,12 +558,13 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         'testnum': test_number, 
                         'formation_cycles': formation_cycles,
                         'electrolyte': electrolyte,
+                        'substrate': substrate,
                         'formulation': formulation
                     })
     return datasets
 
 def render_formulation_table(key_suffix, project_id=None, get_components_func=None):
-    """Render a formulation table with Component and Dry Mass Fraction columns."""
+    """Render a formulation table with Component and Dry Mass Fraction columns using autocomplete."""
     # Initialize formulation data in session state if not exists
     formulation_key = f'formulation_data_{key_suffix}'
     save_flag_key = f'formulation_saved_{key_suffix}'
@@ -375,6 +585,16 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
         except Exception:
             previous_components = []
     
+    # Combine battery materials with previous components for autocomplete
+    all_materials = get_all_battery_materials() + previous_components
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_materials = []
+    for material in all_materials:
+        if material not in seen:
+            unique_materials.append(material)
+            seen.add(material)
+    
     # Create editable table
     col1, col2, col3 = st.columns([3, 2, 1])
     with col1:
@@ -392,36 +612,15 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
     for i, row in enumerate(formulation_data):
         col1, col2, col3 = st.columns([3, 2, 1])
         with col1:
-            # Component selection with dropdown for previous components
-            component_options = ["Type new component..."] + previous_components
-            current_component = row['Component']
-            
-            # Determine default selection
-            if current_component in previous_components:
-                default_index = previous_components.index(current_component) + 1  # +1 for "Type new component"
-            else:
-                default_index = 0  # "Type new component"
-            
-            selected_option = st.selectbox(
-                f"Component", 
-                component_options, 
-                index=default_index,
-                key=f'component_dropdown_{i}_{key_suffix}', 
-                label_visibility="collapsed"
+            # Use autocomplete input for component selection
+            component = render_autocomplete_input(
+                key=f'component_{i}_{key_suffix}',
+                label="Component",
+                placeholder="Type to search materials...",
+                value=row['Component'],
+                materials=unique_materials,
+                allow_custom=True
             )
-            
-            if selected_option == "Type new component...":
-                # Show text input for new component
-                component = st.text_input(
-                    f"New Component", 
-                    value=current_component if current_component not in previous_components else '',
-                    key=f'component_text_{i}_{key_suffix}', 
-                    label_visibility="collapsed",
-                    placeholder="Enter component name"
-                )
-            else:
-                # Use selected component from dropdown
-                component = selected_option
                 
         with col2:
             fraction = st.number_input(f"Fraction", value=row['Dry Mass Fraction (%)'], min_value=0.0, max_value=100.0, step=0.1, key=f'fraction_{i}_{key_suffix}', label_visibility="collapsed")

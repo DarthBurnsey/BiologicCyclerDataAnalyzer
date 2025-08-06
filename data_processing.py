@@ -3,6 +3,37 @@ import pandas as pd
 from typing import List, Dict, Any
 import io
 
+def calculate_efficiency_based_on_project_type(charge_capacity, discharge_capacity, project_type="Full Cell"):
+    """
+    Calculate efficiency based on project type.
+    
+    Standard efficiency = (Discharge capacity) / (Charge capacity) * 100%
+    For 'Anode' projects: Efficiency = 100 / (reported efficiency) as percentage
+    
+    Args:
+        charge_capacity: Charge capacity values
+        discharge_capacity: Discharge capacity values  
+        project_type: Project type ('Cathode', 'Anode', 'Full Cell')
+    
+    Returns:
+        Efficiency values as percentages
+    """
+    # Avoid division by zero
+    valid_mask = (charge_capacity > 0) & (discharge_capacity > 0)
+    efficiency = pd.Series(0.0, index=charge_capacity.index)
+    
+    if project_type == "Anode":
+        # For anode projects, calculate standard efficiency first, then invert
+        standard_efficiency = discharge_capacity / charge_capacity
+        # Invert the efficiency: Efficiency = 100 / (reported efficiency)
+        efficiency.loc[valid_mask] = 100 / standard_efficiency.loc[valid_mask]
+    else:
+        # Standard efficiency calculation for Cathode and Full Cell projects
+        efficiency.loc[valid_mask] = (discharge_capacity.loc[valid_mask] / 
+                                    charge_capacity.loc[valid_mask]) * 100
+    
+    return efficiency
+
 def detect_file_type(file_obj) -> str:
     """Detect if the file is a Biologic CSV or Neware XLSX based on content."""
     # Reset file position
@@ -18,7 +49,7 @@ def detect_file_type(file_obj) -> str:
     else:
         return 'biologic_csv'
 
-def parse_biologic_csv(file_obj, dataset: Dict[str, Any]) -> pd.DataFrame:
+def parse_biologic_csv(file_obj, dataset: Dict[str, Any], project_type: str = "Full Cell") -> pd.DataFrame:
     """Parse Biologic CSV file format."""
     try:
         df = pd.read_csv(file_obj, delimiter=';')
@@ -55,7 +86,7 @@ def parse_biologic_csv(file_obj, dataset: Dict[str, Any]) -> pd.DataFrame:
     except Exception as e:
         raise ValueError(f"Error parsing Biologic CSV file: {str(e)}")
 
-def parse_neware_xlsx(file_obj, dataset: Dict[str, Any]) -> pd.DataFrame:
+def parse_neware_xlsx(file_obj, dataset: Dict[str, Any], project_type: str = "Full Cell") -> pd.DataFrame:
     """Parse Neware XLSX file format from the 'cycle' sheet."""
     try:
         # Read the 'cycle' sheet from the XLSX file
@@ -107,22 +138,26 @@ def parse_neware_xlsx(file_obj, dataset: Dict[str, Any]) -> pd.DataFrame:
         processed_df['Q Dis (mAh/g)'] = processed_df['Q discharge (mA.h)'] / active_mass
         processed_df['Test Number'] = dataset['testnum']
         
-        # Calculate efficiency if both charge and discharge are available
-        # Avoid division by zero
-        charge_nonzero = processed_df['Q charge (mA.h)'] > 0
-        processed_df['Efficiency (-)'] = 0.0  # Default value
-        processed_df.loc[charge_nonzero, 'Efficiency (-)'] = (
-            processed_df.loc[charge_nonzero, 'Q discharge (mA.h)'] / 
-            processed_df.loc[charge_nonzero, 'Q charge (mA.h)']
-        )
+        # Calculate efficiency based on project type
+        processed_df['Efficiency (-)'] = calculate_efficiency_based_on_project_type(
+            processed_df['Q charge (mA.h)'], 
+            processed_df['Q discharge (mA.h)'], 
+            project_type
+        ) / 100  # Convert back to decimal for consistency with existing code
         
         return processed_df
         
     except Exception as e:
         raise ValueError(f"Error parsing Neware XLSX file: {str(e)}")
 
-def load_and_preprocess_data(datasets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Load CSVs or XLSX files, calculate columns, and return list of dicts for each cell."""
+def load_and_preprocess_data(datasets: List[Dict[str, Any]], project_type: str = "Full Cell") -> List[Dict[str, Any]]:
+    """
+    Load CSVs or XLSX files, calculate columns, and return list of dicts for each cell.
+    
+    Args:
+        datasets: List of dataset dictionaries with file objects and parameters
+        project_type: Project type ('Cathode', 'Anode', 'Full Cell') for efficiency calculation
+    """
     dfs = []
     for ds in datasets:
         file_obj = ds['file']
@@ -143,9 +178,9 @@ def load_and_preprocess_data(datasets: List[Dict[str, Any]]) -> List[Dict[str, A
             pass
         
         if file_type == 'biologic_csv':
-            df = parse_biologic_csv(file_obj, ds)
+            df = parse_biologic_csv(file_obj, ds, project_type)
         elif file_type == 'neware_xlsx':
-            df = parse_neware_xlsx(file_obj, ds)
+            df = parse_neware_xlsx(file_obj, ds, project_type)
         else:
             raise ValueError(f"Unsupported file type: {file_type}")
         
@@ -154,7 +189,8 @@ def load_and_preprocess_data(datasets: List[Dict[str, Any]]) -> List[Dict[str, A
             'testnum': ds['testnum'],
             'loading': ds['loading'],
             'active': ds['active'],
-            'file_type': file_type
+            'file_type': file_type,
+            'project_type': project_type
         })
     return dfs
 

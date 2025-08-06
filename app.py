@@ -19,7 +19,8 @@ from database import (
     get_experiment_by_name_and_file, get_project_experiments, check_experiment_exists,
     get_experiment_data, delete_cell_experiment, delete_project, rename_project,
     rename_experiment, save_experiment, update_experiment, check_experiment_name_exists,
-    get_experiment_by_name, get_all_project_experiments_data, TEST_USER_ID
+    get_experiment_by_name, get_all_project_experiments_data, TEST_USER_ID,
+    update_project_type, get_project_by_id
 )
 from data_analysis import (
     calculate_cell_summary, calculate_experiment_average,
@@ -30,13 +31,13 @@ from display_components import (
     display_best_performers_analysis
 )
 from file_processing import extract_date_from_filename
-from data_processing import load_and_preprocess_data
+from data_processing import load_and_preprocess_data, calculate_efficiency_based_on_project_type
 from dialogs import confirm_delete_project, confirm_delete_experiment, show_delete_dialogs
 
 # Initialize database
 init_database()
 migrate_database()
-from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs, get_initial_areal_capacity, render_formulation_table, render_retention_display_options
+from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs, get_initial_areal_capacity, render_formulation_table, render_retention_display_options, get_substrate_options
 from plotting import plot_capacity_graph, plot_capacity_retention_graph
 
 # =============================
@@ -106,7 +107,7 @@ with st.sidebar:
     user_projects = get_user_projects(TEST_USER_ID)
     if user_projects:
         for p in user_projects:
-            project_id, project_name, project_desc, created_date, last_modified = p
+            project_id, project_name, project_desc, project_type, created_date, last_modified = p
             project_expanded = st.session_state.get(f'project_expanded_{project_id}', False)
             
             # Project row with dropdown arrow and three dots
@@ -119,8 +120,9 @@ with st.sidebar:
                     st.rerun()
             
             with project_cols[1]:
-                # Project name button
-                if st.button(project_name, key=f'project_select_{project_id}', use_container_width=True):
+                # Project name button with type indicator
+                project_display_name = f"{project_name} ({project_type})"
+                if st.button(project_display_name, key=f'project_select_{project_id}', use_container_width=True):
                     # Clear any existing experiment data when switching projects
                     if 'loaded_experiment' in st.session_state:
                         del st.session_state['loaded_experiment']
@@ -134,7 +136,14 @@ with st.sidebar:
                             key.startswith('testnum_') or 
                             key.startswith('formation_cycles_') or
                             key.startswith('electrolyte_') or
-                            key.startswith('formulation_') or
+                            key.startswith('substrate_') or
+                            key.startswith('formulation_data_') or 
+                            key.startswith('formulation_saved_') or
+                            key.startswith('component_dropdown_') or
+                            key.startswith('component_text_') or
+                            key.startswith('fraction_') or
+                            key.startswith('add_row_') or
+                            key.startswith('delete_row_') or
                             key.startswith('multi_file_upload_') or
                             key.startswith('assign_all_cells_') or
                             key == 'datasets' or
@@ -178,7 +187,14 @@ with st.sidebar:
                                     key.startswith('testnum_') or 
                                     key.startswith('formation_cycles_') or
                                     key.startswith('electrolyte_') or
-                                    key.startswith('formulation_') or
+                                    key.startswith('substrate_') or
+                                    key.startswith('formulation_data_') or 
+                                    key.startswith('formulation_saved_') or
+                                    key.startswith('component_dropdown_') or
+                                    key.startswith('component_text_') or
+                                    key.startswith('fraction_') or
+                                    key.startswith('add_row_') or
+                                    key.startswith('delete_row_') or
                                     key.startswith('multi_file_upload_') or
                                     key.startswith('assign_all_cells_') or
                                     key == 'datasets' or
@@ -195,6 +211,10 @@ with st.sidebar:
                             st.rerun()
                         if st.button('Rename', key=f'project_rename_{project_id}_menu', use_container_width=True):
                             st.session_state[f'renaming_project_{project_id}'] = True
+                            st.session_state[f'project_menu_open_{project_id}'] = False
+                            st.rerun()
+                        if st.button('Change Type', key=f'project_change_type_{project_id}_menu', use_container_width=True):
+                            st.session_state[f'changing_project_type_{project_id}'] = True
                             st.session_state[f'project_menu_open_{project_id}'] = False
                             st.rerun()
                         if st.button('Delete', key=f'project_delete_{project_id}_menu', use_container_width=True):
@@ -229,6 +249,37 @@ with st.sidebar:
                             st.session_state[f'renaming_project_{project_id}'] = False
                             st.rerun()
             
+            # Inline project type editing
+            if st.session_state.get(f'changing_project_type_{project_id}', False):
+                type_cols = st.columns([0.8, 0.2])
+                with type_cols[0]:
+                    project_type_options = ["Cathode", "Anode", "Full Cell"]
+                    new_project_type = st.selectbox(
+                        "Project Type:",
+                        options=project_type_options,
+                        index=project_type_options.index(project_type),
+                        key=f'type_input_project_{project_id}',
+                        label_visibility="collapsed"
+                    )
+                with type_cols[1]:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button('✅', key=f'confirm_type_project_{project_id}', help="Confirm type change"):
+                            if new_project_type != project_type:
+                                try:
+                                    update_project_type(project_id, new_project_type)
+                                    st.session_state[f'changing_project_type_{project_id}'] = False
+                                    st.success(f"✅ Changed type to '{new_project_type}'!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
+                            else:
+                                st.warning("Please select a different type.")
+                    with col2:
+                        if st.button('❌', key=f'cancel_type_project_{project_id}', help="Cancel type change"):
+                            st.session_state[f'changing_project_type_{project_id}'] = False
+                            st.rerun()
+            
             # Show experiments if project is expanded and selected
             if (project_expanded and st.session_state.get('current_project_id') == project_id):
                 existing_experiments = get_project_experiments(project_id)
@@ -244,6 +295,22 @@ with st.sidebar:
                         
                         with exp_cols[1]:
                             if st.button(experiment_name, key=f'exp_select_{experiment_id}', use_container_width=True):
+                                # Clear all formulation-related session state keys before loading new experiment
+                                keys_to_clear = []
+                                for key in st.session_state.keys():
+                                    if (key.startswith('formulation_data_') or 
+                                        key.startswith('formulation_saved_') or
+                                        key.startswith('component_dropdown_') or
+                                        key.startswith('component_text_') or
+                                        key.startswith('fraction_') or
+                                        key.startswith('add_row_') or
+                                        key.startswith('delete_row_')):
+                                        keys_to_clear.append(key)
+                                
+                                # Remove the formulation keys
+                                for key in keys_to_clear:
+                                    del st.session_state[key]
+                                
                                 st.session_state['loaded_experiment'] = {
                                     'experiment_id': experiment_id,
                                     'experiment_name': experiment_name,
@@ -306,10 +373,21 @@ with st.sidebar:
     with st.expander("➕ Create New Project", expanded=False):
         new_project_name = st.text_input("Project Name", key="new_project_name")
         new_project_description = st.text_area("Description (optional)", key="new_project_description")
+        
+        # Project type selection
+        project_type_options = ["Cathode", "Anode", "Full Cell"]
+        new_project_type = st.selectbox(
+            "Project Type", 
+            options=project_type_options,
+            index=2,  # Default to "Full Cell"
+            key="new_project_type",
+            help="Select the type of battery component this project will focus on"
+        )
+        
         if st.button("Create Project", key="create_project_btn"):
             if new_project_name:
-                project_id = create_project(TEST_USER_ID, new_project_name, new_project_description)
-                st.success(f"Project '{new_project_name}' created successfully!")
+                project_id = create_project(TEST_USER_ID, new_project_name, new_project_description, new_project_type)
+                st.success(f"Project '{new_project_name}' ({new_project_type}) created successfully!")
                 st.rerun()
             else:
                 st.error("Please enter a project name.")
@@ -490,9 +568,17 @@ with tab_inputs:
                 key.startswith('testnum_') or 
                 key.startswith('formation_cycles_') or
                 key.startswith('electrolyte_') or
-                key.startswith('formulation_') or
+                key.startswith('substrate_') or
+                key.startswith('formulation_data_') or 
+                key.startswith('formulation_saved_') or
+                key.startswith('component_dropdown_') or
+                key.startswith('component_text_') or
+                key.startswith('fraction_') or
+                key.startswith('add_row_') or
+                key.startswith('delete_row_') or
                 key.startswith('multi_file_upload_') or
                 key.startswith('assign_all_cells_') or
+                key == 'datasets' or
                 key == 'processed_data_cache' or
                 key == 'cache_key'):
                 keys_to_clear.append(key)
@@ -642,14 +728,25 @@ with tab_inputs:
                         key=f'edit_testnum_0'
                     )
                 
-                # Electrolyte selection
+                # Electrolyte and Substrate selection
                 electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
-                electrolyte_0 = st.selectbox(
-                    f'Electrolyte for Cell 1', 
-                    electrolyte_options,
-                    index=electrolyte_options.index(datasets[0]["electrolyte"]) if datasets[0]["electrolyte"] in electrolyte_options else 0,
-                    key=f'edit_electrolyte_0'
-                )
+                substrate_options = get_substrate_options()
+                
+                col3, col4 = st.columns(2)
+                with col3:
+                    electrolyte_0 = st.selectbox(
+                        f'Electrolyte for Cell 1', 
+                        electrolyte_options,
+                        index=electrolyte_options.index(datasets[0]["electrolyte"]) if datasets[0]["electrolyte"] in electrolyte_options else 0,
+                        key=f'edit_electrolyte_0'
+                    )
+                with col4:
+                    substrate_0 = st.selectbox(
+                        f'Substrate for Cell 1', 
+                        substrate_options,
+                        index=substrate_options.index(datasets[0].get("substrate", "Copper")) if datasets[0].get("substrate") in substrate_options else 0,
+                        key=f'edit_substrate_0'
+                    )
                 
                 # Formulation table
                 st.markdown("**Formulation:**")
@@ -673,6 +770,7 @@ with tab_inputs:
                         'testnum': test_number_0,
                         'formation_cycles': formation_cycles_0,
                         'electrolyte': electrolyte_0,
+                        'substrate': substrate_0,
                         'formulation': formulation_0
                     }
                 else:
@@ -683,6 +781,7 @@ with tab_inputs:
                             formation_cycles = formation_cycles_0
                             active_material = active_material_0
                             electrolyte = electrolyte_0
+                            substrate = substrate_0
                             formulation = formulation_0
                             # Test number should remain individual (not assigned to all)
                             test_number = dataset['testnum'] or f'Cell {i+1}'
@@ -717,14 +816,25 @@ with tab_inputs:
                                     key=f'edit_testnum_{i}'
                                 )
                             
-                            # Electrolyte selection
+                            # Electrolyte and Substrate selection
                             electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
-                            electrolyte = st.selectbox(
-                                f'Electrolyte for Cell {i+1}', 
-                                electrolyte_options,
-                                index=electrolyte_options.index(dataset['electrolyte']) if dataset['electrolyte'] in electrolyte_options else 0,
-                                key=f'edit_electrolyte_{i}'
-                            )
+                            substrate_options = get_substrate_options()
+                            
+                            col3, col4 = st.columns(2)
+                            with col3:
+                                electrolyte = st.selectbox(
+                                    f'Electrolyte for Cell {i+1}', 
+                                    electrolyte_options,
+                                    index=electrolyte_options.index(dataset['electrolyte']) if dataset['electrolyte'] in electrolyte_options else 0,
+                                    key=f'edit_electrolyte_{i}'
+                                )
+                            with col4:
+                                substrate = st.selectbox(
+                                    f'Substrate for Cell {i+1}', 
+                                    substrate_options,
+                                    index=substrate_options.index(dataset.get('substrate', 'Copper')) if dataset.get('substrate') in substrate_options else 0,
+                                    key=f'edit_substrate_{i}'
+                                )
                             
                             # Formulation table
                             st.markdown("**Formulation:**")
@@ -744,6 +854,7 @@ with tab_inputs:
                                 'testnum': test_number,
                                 'formation_cycles': formation_cycles,
                                 'electrolyte': electrolyte,
+                                'substrate': substrate,
                                 'formulation': formulation
                             }
                 edited_datasets.append(edited_dataset)
@@ -784,14 +895,25 @@ with tab_inputs:
                             key=f'edit_testnum_{i}'
                         )
                     
-                    # Electrolyte selection
+                    # Electrolyte and Substrate selection
                     electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
-                    electrolyte = st.selectbox(
-                        f'Electrolyte for Cell {i+1}', 
-                        electrolyte_options,
-                        index=electrolyte_options.index(dataset['electrolyte']) if dataset['electrolyte'] in electrolyte_options else 0,
-                        key=f'edit_single_electrolyte_{i}'
-                    )
+                    substrate_options = get_substrate_options()
+                    
+                    col3, col4 = st.columns(2)
+                    with col3:
+                        electrolyte = st.selectbox(
+                            f'Electrolyte for Cell {i+1}', 
+                            electrolyte_options,
+                            index=electrolyte_options.index(dataset['electrolyte']) if dataset['electrolyte'] in electrolyte_options else 0,
+                            key=f'edit_single_electrolyte_{i}'
+                        )
+                    with col4:
+                        substrate = st.selectbox(
+                            f'Substrate for Cell {i+1}', 
+                            substrate_options,
+                            index=substrate_options.index(dataset.get('substrate', 'Copper')) if dataset.get('substrate') in substrate_options else 0,
+                            key=f'edit_single_substrate_{i}'
+                        )
                     
                     # Formulation table
                     st.markdown("**Formulation:**")
@@ -810,6 +932,7 @@ with tab_inputs:
                         'testnum': test_number,
                         'formation_cycles': formation_cycles,
                         'electrolyte': electrolyte,
+                        'substrate': substrate,
                         'formulation': formulation
                     }
                 dataset.update(edited_dataset)
@@ -968,8 +1091,16 @@ with tab_inputs:
                     file_name = ds['file'].name if ds['file'] else f'cell_{i+1}.csv'
                     
                     try:
+                        # Get project type for efficiency calculation
+                        project_type = "Full Cell"  # Default
+                        if st.session_state.get('current_project_id'):
+                            current_project_id = st.session_state['current_project_id']
+                            project_info = get_project_by_id(current_project_id)
+                            if project_info:
+                                project_type = project_info[3]  # project_type is the 4th field
+                        
                         # Process the data to get DataFrame
-                        temp_dfs = load_and_preprocess_data([ds])
+                        temp_dfs = load_and_preprocess_data([ds], project_type)
                         if temp_dfs and len(temp_dfs) > 0:
                             df = temp_dfs[0]['df']
                             
@@ -1054,12 +1185,31 @@ if loaded_experiment:
         cell_name = cell_data.get('cell_name', 'Unknown')
         try:
             df = pd.read_json(cell_data['data_json'])
+            
+            # Get project type for efficiency recalculation
+            project_type = "Full Cell"  # Default
+            if st.session_state.get('current_project_id'):
+                current_project_id = st.session_state['current_project_id']
+                project_info = get_project_by_id(current_project_id)
+                if project_info:
+                    project_type = project_info[3]  # project_type is the 4th field
+            
+            # Recalculate efficiency based on project type if this is an anode project
+            if project_type == "Anode" and 'Q charge (mA.h)' in df.columns and 'Q discharge (mA.h)' in df.columns:
+                # Recalculate efficiency for anode projects
+                df['Efficiency (-)'] = calculate_efficiency_based_on_project_type(
+                    df['Q charge (mA.h)'], 
+                    df['Q discharge (mA.h)'], 
+                    project_type
+                ) / 100  # Convert to decimal for consistency
+            
             loaded_dfs.append({
                 'df': df,
                 'testnum': cell_data.get('test_number'),
                 'loading': cell_data.get('loading'),
                 'active': cell_data.get('active_material'),
-                'formation_cycles': cell_data.get('formation_cycles')
+                'formation_cycles': cell_data.get('formation_cycles'),
+                'project_type': project_type
             })
         except Exception as e:
             st.error(f"Error loading data for {cell_name}: {str(e)}")
@@ -1138,7 +1288,15 @@ else:
                     continue
             
             if safe_datasets:
-                dfs = load_and_preprocess_data(safe_datasets)
+                # Get project type for efficiency calculation
+                project_type = "Full Cell"  # Default
+                if st.session_state.get('current_project_id'):
+                    current_project_id = st.session_state['current_project_id']
+                    project_info = get_project_by_id(current_project_id)
+                    if project_info:
+                        project_type = project_info[3]  # project_type is the 4th field
+                
+                dfs = load_and_preprocess_data(safe_datasets, project_type)
                 # After loading and preprocessing, re-attach the latest formation_cycles to each dfs entry
                 for i, d in enumerate(dfs):
                     if i < len(safe_datasets):

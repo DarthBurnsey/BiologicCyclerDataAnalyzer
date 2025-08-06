@@ -16,6 +16,7 @@ COMMON_THEORETICAL_DENSITIES = {
     'Ketjen Black': 1.8,
     'Vulcan XC-72': 1.8,
     'Cx(B)': 1.8,  # Carbon black variant
+    'Cx(e)': 1.8,  # Carbon black variant
     'Polyvinylidene Fluoride (PVDF)': 1.78,
     'PVDF HSV900': 1.78,  # PVDF variant
     'Carboxymethyl Cellulose (CMC)': 1.6,
