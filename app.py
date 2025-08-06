@@ -2208,7 +2208,16 @@ if tab_master and current_project_id:
                         for cell_data in cells_data:
                             try:
                                 df = pd.read_json(StringIO(cell_data['data_json']))
-                                cell_summary = calculate_cell_summary(df, cell_data, disc_area_cm2)
+                                
+                                # Get project type for efficiency calculation
+                                project_type = "Full Cell"  # Default
+                                if st.session_state.get('current_project_id'):
+                                    current_project_id = st.session_state['current_project_id']
+                                    project_info = get_project_by_id(current_project_id)
+                                    if project_info:
+                                        project_type = project_info[3]  # project_type is the 4th field
+                                
+                                cell_summary = calculate_cell_summary(df, cell_data, disc_area_cm2, project_type)
                                 cell_summary['experiment_name'] = exp_name
                                 cell_summary['experiment_date'] = parsed_data.get('experiment_date', created_date)
                                 # Add pressed thickness data from experiment
@@ -2247,13 +2256,22 @@ if tab_master and current_project_id:
                     else:
                         # Legacy single cell experiment
                         df = pd.read_json(StringIO(data_json))
+                        
+                        # Get project type for efficiency calculation
+                        project_type = "Full Cell"  # Default
+                        if st.session_state.get('current_project_id'):
+                            current_project_id = st.session_state['current_project_id']
+                            project_info = get_project_by_id(current_project_id)
+                            if project_info:
+                                project_type = project_info[3]  # project_type is the 4th field
+                        
                         cell_summary = calculate_cell_summary(df, {
                             'cell_name': test_number or exp_name,
                             'loading': loading,
                             'active_material': active_material,
                             'formation_cycles': formation_cycles,
                             'test_number': test_number
-                        }, np.pi * (15 / 2 / 10) ** 2)  # Default disc size
+                        }, np.pi * (15 / 2 / 10) ** 2, project_type)  # Default disc size
                         cell_summary['experiment_name'] = exp_name
                         cell_summary['experiment_date'] = created_date
                         # Add formulation data to cell summary
