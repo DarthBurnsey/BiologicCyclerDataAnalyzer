@@ -1951,6 +1951,7 @@ if tab_comparison and current_project_id:
                                 exp_summary['disc_diameter_mm'] = disc_diameter
                                 # Add experiment notes to experiment summary
                                 exp_summary['experiment_notes'] = experiment_notes
+                                comparison_data.append(exp_summary)
                         else:
                             # Legacy single cell experiment
                             df = pd.read_json(StringIO(data_json))
