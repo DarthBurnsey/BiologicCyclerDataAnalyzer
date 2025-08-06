@@ -76,6 +76,10 @@ def calculate_electrode_density(disc_mass_mg: float, disc_diameter_mm: float, pr
     Returns:
         Electrode density in g/cm³
     """
+    # Validate inputs
+    if not all(isinstance(x, (int, float)) and x > 0 for x in [disc_mass_mg, disc_diameter_mm, pressed_thickness_um]):
+        return 0.0
+    
     # Convert units
     disc_mass_g = disc_mass_mg / 1000.0  # mg to g
     disc_radius_cm = (disc_diameter_mm / 2) / 10.0  # mm to cm
@@ -101,10 +105,17 @@ def calculate_theoretical_density_from_formulation(formulation: List[Dict[str, A
     Returns:
         Theoretical density in g/cm³
     """
+    if not isinstance(formulation, list) or not formulation:
+        return 0.0
+    
     total_mass_fraction = 0.0
     total_volume_fraction = 0.0
+    valid_components = 0
     
     for component in formulation:
+        if not isinstance(component, dict):
+            continue
+            
         component_name = component.get('Component', '').strip()
         mass_fraction = component.get('Dry Mass Fraction (%)', 0.0) / 100.0  # Convert % to decimal
         
@@ -116,9 +127,10 @@ def calculate_theoretical_density_from_formulation(formulation: List[Dict[str, A
                 volume_fraction = mass_fraction / theoretical_density
                 total_volume_fraction += volume_fraction
                 total_mass_fraction += mass_fraction
+                valid_components += 1
     
     # Theoretical density = total mass / total volume
-    if total_volume_fraction > 0:
+    if total_volume_fraction > 0 and valid_components > 0:
         theoretical_density = total_mass_fraction / total_volume_fraction
         return theoretical_density
     else:
@@ -163,6 +175,14 @@ def calculate_porosity_from_experiment_data(
         - theoretical_density: g/cm³
         - porosity: decimal (0.0 to 1.0)
     """
+    # Validate inputs
+    if not isinstance(formulation, list) or not formulation:
+        return {
+            'electrode_density': 0.0,
+            'theoretical_density': 0.0,
+            'porosity': 0.0
+        }
+    
     # Calculate electrode density
     electrode_density = calculate_electrode_density(disc_mass_mg, disc_diameter_mm, pressed_thickness_um)
     
@@ -171,6 +191,14 @@ def calculate_porosity_from_experiment_data(
     
     # Calculate porosity
     porosity = calculate_porosity(electrode_density, theoretical_density)
+    
+    # Validate results
+    if electrode_density <= 0 or theoretical_density <= 0:
+        return {
+            'electrode_density': electrode_density,
+            'theoretical_density': theoretical_density,
+            'porosity': 0.0
+        }
     
     return {
         'electrode_density': electrode_density,

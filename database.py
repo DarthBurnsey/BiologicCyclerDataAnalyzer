@@ -452,7 +452,11 @@ def save_experiment(project_id, experiment_name, experiment_date, disc_diameter_
             'solids_content': solids_content,
             'pressed_thickness': pressed_thickness,
             'experiment_notes': experiment_notes
-        }), solids_content, pressed_thickness, experiment_notes, sum(cell.get("porosity", 0) for cell in cells_data) / len(cells_data) if cells_data else 0))
+        }), solids_content, pressed_thickness, experiment_notes, 
+        # Calculate average porosity only from cells with valid porosity values
+        sum(cell.get("porosity", 0) for cell in cells_data if cell.get("porosity") is not None and cell.get("porosity") > 0) / 
+        len([cell for cell in cells_data if cell.get("porosity") is not None and cell.get("porosity") > 0]) 
+        if cells_data and any(cell.get("porosity") is not None and cell.get("porosity") > 0 for cell in cells_data) else 0))
         # Update project last_modified
         cursor.execute('''
             UPDATE projects 
@@ -506,7 +510,11 @@ def update_experiment(experiment_id, project_id, experiment_name, experiment_dat
             'solids_content': solids_content,
             'pressed_thickness': pressed_thickness,
             'experiment_notes': experiment_notes
-        }), solids_content, pressed_thickness, experiment_notes, sum(cell.get("porosity", 0) for cell in cells_data) / len(cells_data) if cells_data else 0, experiment_id))
+        }), solids_content, pressed_thickness, experiment_notes, 
+        # Calculate average porosity only from cells with valid porosity values
+        sum(cell.get("porosity", 0) for cell in cells_data if cell.get("porosity") is not None and cell.get("porosity") > 0) / 
+        len([cell for cell in cells_data if cell.get("porosity") is not None and cell.get("porosity") > 0]) 
+        if cells_data and any(cell.get("porosity") is not None and cell.get("porosity") > 0 for cell in cells_data) else 0, experiment_id))
         # Update project last_modified
         cursor.execute('''
             UPDATE projects 
