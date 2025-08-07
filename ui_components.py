@@ -122,6 +122,8 @@ def render_autocomplete_input(key: str, label: str = "Component", placeholder: s
         st.session_state[suggestions_key] = []
     if selected_key not in st.session_state:
         st.session_state[selected_key] = value
+    elif value and st.session_state[selected_key] == "":  # Update if we have a new value and current is empty
+        st.session_state[selected_key] = value
     if show_suggestions_key not in st.session_state:
         st.session_state[show_suggestions_key] = False
     
@@ -404,6 +406,16 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
     """Render multi-file upload and per-file inputs for each cell. Returns datasets list."""
     if context_key is None:
         context_key = str(uuid.uuid4())
+    
+    # Get project preferences for defaults
+    project_defaults = {}
+    if project_id:
+        try:
+            from preference_components import get_default_values_for_experiment
+            project_defaults = get_default_values_for_experiment(project_id)
+        except ImportError:
+            project_defaults = {}
+    
     with st.expander('🧪 Cell Inputs', expanded=True):
         upload_key = f"multi_file_upload_{context_key}"
         uploaded_files = st.file_uploader('Upload CSV or XLSX file(s) for Cells', type=['csv', 'xlsx'], accept_multiple_files=True, key=upload_key)
@@ -415,12 +427,20 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                 # First cell with assign-to-all checkbox
                 with st.expander(f'Cell 1: {uploaded_files[0].name}', expanded=False):
                     col1, col2 = st.columns(2)
-                    # --- Defaults logic ---
+                    # --- Defaults logic with project preferences ---
                     loading_default = st.session_state.get('loading_0', 20.0)
                     active_default = st.session_state.get('active_0', 90.0)
-                    formation_default = st.session_state.get('formation_cycles_0', 4)
-                    electrolyte_default = st.session_state.get('electrolyte_0', '1M LiPF6 1:1:1')
-                    substrate_default = st.session_state.get('substrate_0', 'Copper')
+                    # Handle formation cycles from project defaults (could be string or int)
+                    formation_cycles_default = project_defaults.get('formation_cycles', 4)
+                    if isinstance(formation_cycles_default, str):
+                        try:
+                            formation_cycles_default = int(formation_cycles_default)
+                        except (ValueError, TypeError):
+                            formation_cycles_default = 4
+                    formation_default = st.session_state.get('formation_cycles_0', formation_cycles_default)
+                    # Prioritize project defaults for electrolyte and substrate
+                    electrolyte_default = st.session_state.get('electrolyte_0', project_defaults.get('electrolyte', '1M LiPF6 1:1:1'))
+                    substrate_default = st.session_state.get('substrate_0', project_defaults.get('substrate', 'Copper'))
                     with col1:
                         disc_loading_0 = st.number_input(f'Disc loading (mg) for Cell 1', min_value=0.0, step=1.0, value=loading_default, key=f'loading_0')
                         formation_cycles_0 = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
@@ -477,7 +497,14 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             # Individual inputs for this cell
                             loading_default = st.session_state.get(f'loading_{i}', disc_loading_0)
                             active_default = st.session_state.get(f'active_{i}', active_material_0)
-                            formation_default = st.session_state.get(f'formation_cycles_{i}', formation_cycles_0)
+                            # Handle formation cycles from project defaults for subsequent cells
+                            formation_cycles_default = project_defaults.get('formation_cycles', formation_cycles_0)
+                            if isinstance(formation_cycles_default, str):
+                                try:
+                                    formation_cycles_default = int(formation_cycles_default)
+                                except (ValueError, TypeError):
+                                    formation_cycles_default = formation_cycles_0
+                            formation_default = st.session_state.get(f'formation_cycles_{i}', formation_cycles_default)
                             electrolyte_default = st.session_state.get(f'electrolyte_{i}', electrolyte_0)
                             substrate_default = st.session_state.get(f'substrate_{i}', substrate_0)
                             with col1:
@@ -523,9 +550,17 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                     # --- Defaults logic ---
                     loading_default = st.session_state.get('loading_0', 20.0)
                     active_default = st.session_state.get('active_0', 90.0)
-                    formation_default = st.session_state.get('formation_cycles_0', 4)
-                    electrolyte_default = st.session_state.get('electrolyte_0', '1M LiPF6 1:1:1')
-                    substrate_default = st.session_state.get('substrate_0', 'Copper')
+                    # Handle formation cycles from project defaults for single cell
+                    formation_cycles_default = project_defaults.get('formation_cycles', 4)
+                    if isinstance(formation_cycles_default, str):
+                        try:
+                            formation_cycles_default = int(formation_cycles_default)
+                        except (ValueError, TypeError):
+                            formation_cycles_default = 4
+                    formation_default = st.session_state.get('formation_cycles_0', formation_cycles_default)
+                    # Prioritize project defaults for electrolyte and substrate
+                    electrolyte_default = st.session_state.get('electrolyte_0', project_defaults.get('electrolyte', '1M LiPF6 1:1:1'))
+                    substrate_default = st.session_state.get('substrate_0', project_defaults.get('substrate', 'Copper'))
                     with col1:
                         disc_loading = st.number_input(f'Disc loading (mg) for Cell 1', min_value=0.0, step=1.0, value=loading_default, key=f'loading_0')
                         formation_cycles = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
@@ -568,10 +603,24 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
     # Initialize formulation data in session state if not exists
     formulation_key = f'formulation_data_{key_suffix}'
     save_flag_key = f'formulation_saved_{key_suffix}'
+    
+    # Get project preferences for default formulation
+    default_formulation = []
+    if project_id:
+        try:
+            from preference_components import get_default_values_for_experiment
+            project_defaults = get_default_values_for_experiment(project_id)
+            default_formulation = project_defaults.get('formulation', [])
+        except ImportError:
+            default_formulation = []
+    
     if formulation_key not in st.session_state:
-        st.session_state[formulation_key] = [
-            {'Component': '', 'Dry Mass Fraction (%)': 0.0}
-        ]
+        if default_formulation:
+            st.session_state[formulation_key] = default_formulation
+        else:
+            st.session_state[formulation_key] = [
+                {'Component': '', 'Dry Mass Fraction (%)': 0.0}
+            ]
     if save_flag_key not in st.session_state:
         st.session_state[save_flag_key] = False
     
@@ -647,9 +696,10 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
     if changed:
         st.session_state[save_flag_key] = False
     
-    # Save/Done Editing button
-    if st.button("💾 Save Formulation", key=f'save_formulation_{key_suffix}'):
-        st.session_state[save_flag_key] = True
+    # Save/Done Editing button - only show if not in preferences modal
+    if not key_suffix.startswith('pref_formulation_editor'):
+        if st.button("💾 Save Formulation", key=f'save_formulation_{key_suffix}'):
+            st.session_state[save_flag_key] = True
     
     # Validation (only show if saved)
     if st.session_state[save_flag_key]:

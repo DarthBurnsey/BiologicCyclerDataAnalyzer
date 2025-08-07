@@ -55,6 +55,21 @@ def extract_formulation_data(experiment_summaries, individual_cells):
     
     return sorted(list(all_components)), component_data, active_material_data
 
+def style_porosity(val):
+    """Style porosity values with color coding for warnings."""
+    if val == "N/A":
+        return 'background-color: #ffcccc; color: #cc0000; font-weight: bold;'
+    try:
+        porosity_val = float(val.replace('%', ''))
+        if porosity_val < 10 or porosity_val > 80:  # Unusual porosity range
+            return 'background-color: #fff2cc; color: #cc6600; font-weight: bold;'
+        elif porosity_val < 20 or porosity_val > 60:  # Warning range
+            return 'background-color: #ffe6cc; color: #cc4400;'
+        else:  # Normal range
+            return ''
+    except:
+        return ''
+
 def display_experiment_summaries_table(experiment_summaries):
     """Display the experiment summaries table with column filtering and Active Material % column."""
     if not experiment_summaries:
@@ -181,7 +196,7 @@ def display_experiment_summaries_table(experiment_summaries):
             'Areal Capacity (mAh/cm²)': f"{exp['areal_capacity']:.2f}" if exp['areal_capacity'] is not None else np.nan,
             'Reversible Capacity (mAh/g)': f"{exp['reversible_capacity']:.1f}" if exp['reversible_capacity'] is not None else np.nan,
             'Coulombic Efficiency (%)': f"{exp['coulombic_efficiency']:.3f}%" if exp['coulombic_efficiency'] is not None else np.nan,
-            'Porosity (%)': f"{exp['porosity']*100:.1f}%" if exp['porosity'] is not None else np.nan,
+            'Porosity (%)': f"{exp['porosity']*100:.1f}%" if exp['porosity'] is not None and exp['porosity'] > 0 else "N/A",
         }
         
         # Add component data
@@ -201,7 +216,9 @@ def display_experiment_summaries_table(experiment_summaries):
     available_columns = [col for col in st.session_state.section1_selected_columns if col in df.columns]
     df = df[available_columns]
     
-    st.dataframe(df, use_container_width=True)
+    # Display the dataframe with styling
+    styled_df = df.style.map(style_porosity, subset=['Porosity (%)'])
+    st.dataframe(styled_df, use_container_width=True)
 
 def display_individual_cells_table(individual_cells):
     """Display the individual cells table with column filtering and component columns."""
@@ -331,7 +348,7 @@ def display_individual_cells_table(individual_cells):
             'Areal Capacity (mAh/cm²)': f"{cell['areal_capacity']:.2f}" if cell['areal_capacity'] is not None else np.nan,
             'Reversible Capacity (mAh/g)': f"{cell['reversible_capacity']:.1f}" if cell['reversible_capacity'] is not None else np.nan,
             'Coulombic Efficiency (%)': f"{cell['coulombic_efficiency']:.3f}%" if cell['coulombic_efficiency'] is not None else np.nan,
-            'Porosity (%)': f"{cell['porosity']*100:.1f}%" if cell['porosity'] is not None else np.nan,
+            'Porosity (%)': f"{cell['porosity']*100:.1f}%" if cell['porosity'] is not None and cell['porosity'] > 0 else "N/A",
         }
         
         # Add component data
@@ -351,7 +368,9 @@ def display_individual_cells_table(individual_cells):
     available_columns = [col for col in st.session_state.section2_selected_columns if col in df.columns]
     df = df[available_columns]
     
-    st.dataframe(df, use_container_width=True)
+    # Display the dataframe with styling
+    styled_df = df.style.map(style_porosity, subset=['Porosity (%)'])
+    st.dataframe(styled_df, use_container_width=True)
 
 def display_best_performers_analysis(individual_cells):
     """Display the best performers analysis with the requested column order."""

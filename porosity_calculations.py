@@ -8,6 +8,7 @@ COMMON_THEORETICAL_DENSITIES = {
     'Lithium Cobalt Oxide (LiCoO2)': 5.1,
     'Lithium Iron Phosphate (LiFePO4)': 3.6,
     'LFP': 3.6,  # Lithium Iron Phosphate
+    'Lithium Iron Phosphate (LFP)': 3.6,  # Alternative naming
     'Lithium Nickel Manganese Cobalt Oxide (NMC)': 4.7,
     'Lithium Nickel Cobalt Aluminum Oxide (NCA)': 4.8,
     'Lithium Manganese Oxide (LiMn2O4)': 4.2,
@@ -26,6 +27,7 @@ COMMON_THEORETICAL_DENSITIES = {
     'Lithium Titanate (Li4Ti5O12)': 3.5,
     'Silicon': 2.33,
     'nano SI': 2.33,  # Nano Silicon
+    'nano Si': 2.33,  # Nano Silicon (alternative spelling)
     'Tin': 7.31,
     'Aluminum': 2.7,
     'Copper': 8.96,
@@ -111,6 +113,7 @@ def calculate_theoretical_density_from_formulation(formulation: List[Dict[str, A
     total_mass_fraction = 0.0
     total_volume_fraction = 0.0
     valid_components = 0
+    missing_components = []
     
     for component in formulation:
         if not isinstance(component, dict):
@@ -128,12 +131,23 @@ def calculate_theoretical_density_from_formulation(formulation: List[Dict[str, A
                 total_volume_fraction += volume_fraction
                 total_mass_fraction += mass_fraction
                 valid_components += 1
+            else:
+                # Track missing components for debugging
+                missing_components.append(component_name)
     
     # Theoretical density = total mass / total volume
     if total_volume_fraction > 0 and valid_components > 0:
         theoretical_density = total_mass_fraction / total_volume_fraction
+        
+        # If we have missing components, log a warning
+        if missing_components:
+            print(f"Warning: Missing theoretical densities for components: {missing_components}")
+            print(f"Calculated density based on {valid_components} valid components out of {len(formulation)} total")
+        
         return theoretical_density
     else:
+        if missing_components:
+            print(f"Error: No valid theoretical densities found. Missing: {missing_components}")
         return 0.0
 
 def calculate_porosity(electrode_density: float, theoretical_density: float) -> float:
@@ -227,6 +241,40 @@ def get_missing_density_components(formulation: List[Dict[str, Any]]) -> List[st
                 missing_components.append(component_name)
     
     return missing_components
+
+def suggest_material_alternatives(missing_component: str) -> List[str]:
+    """
+    Suggest alternative material names for missing components.
+    
+    Args:
+        missing_component: Component name that wasn't found
+    
+    Returns:
+        List of suggested alternative names
+    """
+    suggestions = []
+    
+    # Common variations and abbreviations
+    component_lower = missing_component.lower()
+    
+    if 'lithium iron phosphate' in component_lower or 'lfp' in component_lower:
+        suggestions = [
+            'Lithium Iron Phosphate (LiFePO4)',
+            'LFP',
+            'Lithium Iron Phosphate (LFP)'
+        ]
+    elif 'graphite' in component_lower:
+        suggestions = ['Graphite']
+    elif 'carbon black' in component_lower or 'super p' in component_lower:
+        suggestions = ['Carbon Black', 'Super P', 'Cx(B)']
+    elif 'pvdf' in component_lower:
+        suggestions = ['Polyvinylidene Fluoride (PVDF)', 'PVDF HSV900']
+    elif 'cmc' in component_lower:
+        suggestions = ['Carboxymethyl Cellulose (CMC)']
+    elif 'sbr' in component_lower:
+        suggestions = ['Styrene Butadiene Rubber (SBR)']
+    
+    return suggestions
 
 def format_porosity_display(porosity: float) -> str:
     """

@@ -39,6 +39,7 @@ init_database()
 migrate_database()
 from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs, get_initial_areal_capacity, render_formulation_table, render_retention_display_options, get_substrate_options
 from plotting import plot_capacity_graph, plot_capacity_retention_graph
+from preference_components import render_preferences_sidebar, render_formulation_editor_modal, get_default_values_for_experiment, render_default_indicator
 
 # =============================
 # Battery Data Gravimetric Capacity Calculator App
@@ -141,7 +142,15 @@ with st.sidebar:
                             key.startswith('formulation_saved_') or
                             key.startswith('component_dropdown_') or
                             key.startswith('component_text_') or
+                            key.startswith('component_') or  # Add autocomplete input keys
                             key.startswith('fraction_') or
+                            key.endswith('_query') or  # Autocomplete query keys
+                            key.endswith('_suggestions') or  # Autocomplete suggestions keys
+                            key.endswith('_selected') or  # Autocomplete selected keys
+                            key.endswith('_show_suggestions') or  # Autocomplete show suggestions keys
+                            key.endswith('_input') or  # Autocomplete input keys
+                            key.endswith('_clear') or  # Autocomplete clear keys
+                            key.startswith('component_') and key.endswith('_suggestion_') or  # Autocomplete suggestion button keys
                             key.startswith('add_row_') or
                             key.startswith('delete_row_') or
                             key.startswith('multi_file_upload_') or
@@ -192,7 +201,15 @@ with st.sidebar:
                                     key.startswith('formulation_saved_') or
                                     key.startswith('component_dropdown_') or
                                     key.startswith('component_text_') or
+                                    key.startswith('component_') or  # Add autocomplete input keys
                                     key.startswith('fraction_') or
+                                    key.endswith('_query') or  # Autocomplete query keys
+                                    key.endswith('_suggestions') or  # Autocomplete suggestions keys
+                                    key.endswith('_selected') or  # Autocomplete selected keys
+                                    key.endswith('_show_suggestions') or  # Autocomplete show suggestions keys
+                                    key.endswith('_input') or  # Autocomplete input keys
+                                    key.endswith('_clear') or  # Autocomplete clear keys
+                                    key.startswith('component_') and key.endswith('_suggestion_') or  # Autocomplete suggestion button keys
                                     key.startswith('add_row_') or
                                     key.startswith('delete_row_') or
                                     key.startswith('multi_file_upload_') or
@@ -400,6 +417,10 @@ with st.sidebar:
     st.markdown("1. **Create or select a project** above")
     st.markdown("2. **Go to Cell Inputs tab** to upload data or edit experiments") 
     st.markdown("3. **View results** in Summary, Plots, and Export tabs")
+    
+    # Render project preferences sidebar if a project is selected
+    if st.session_state.get('current_project_id'):
+        render_preferences_sidebar(st.session_state['current_project_id'])
 
 # --- Dropdown CSS and Global State Management ---
 # Add CSS for Gmail-style popup dropdown
@@ -1013,6 +1034,9 @@ with tab_inputs:
     st.session_state['current_disc_diameter_mm'] = disc_diameter_input
     st.session_state['current_group_assignments'] = group_assignments
     st.session_state['current_group_names'] = group_names
+    
+    # Render formulation editor modal if needed
+    render_formulation_editor_modal()
     
     # Save/Update experiment button
     st.markdown("---")
@@ -2227,9 +2251,29 @@ if tab_master and current_project_id:
                                 # Add formulation data to cell summary
                                 if 'formulation' in cell_data:
                                     cell_summary['formulation_json'] = json.dumps(cell_data['formulation'])
-                                # Add porosity data from cell_data if available
-                                if 'porosity' in cell_data:
+                                # Add porosity data from cell_data if available, or recalculate if missing
+                                if 'porosity' in cell_data and cell_data['porosity'] is not None and cell_data['porosity'] > 0:
                                     cell_summary['porosity'] = cell_data['porosity']
+                                else:
+                                    # Recalculate porosity if missing or invalid
+                                    try:
+                                        from porosity_calculations import calculate_porosity_from_experiment_data
+                                        if (cell_data.get('loading') and 
+                                            disc_diameter and 
+                                            parsed_data.get('pressed_thickness') and 
+                                            cell_data.get('formulation')):
+                                            
+                                            porosity_data = calculate_porosity_from_experiment_data(
+                                                disc_mass_mg=cell_data['loading'],
+                                                disc_diameter_mm=disc_diameter,
+                                                pressed_thickness_um=parsed_data['pressed_thickness'],
+                                                formulation=cell_data['formulation']
+                                            )
+                                            cell_summary['porosity'] = porosity_data['porosity']
+                                        else:
+                                            cell_summary['porosity'] = None
+                                    except Exception:
+                                        cell_summary['porosity'] = None
                                 experiment_cells.append(cell_summary)
                                 individual_cells.append(cell_summary)
                             except Exception as e:
@@ -2277,9 +2321,42 @@ if tab_master and current_project_id:
                         # Add formulation data to cell summary
                         if formulation_json:
                             cell_summary['formulation_json'] = formulation_json
-                        # Add porosity data from database if available
-                        if porosity is not None:
+                        # Add porosity data from database if available, or recalculate if missing
+                        if porosity is not None and porosity > 0:
                             cell_summary['porosity'] = porosity
+                        else:
+                            # Recalculate porosity for legacy experiments if missing or invalid
+                            try:
+                                from porosity_calculations import calculate_porosity_from_experiment_data
+                                if (loading and 
+                                    disc_diameter and 
+                                    formulation_json):
+                                    
+                                    # Parse formulation data
+                                    formulation_data = json.loads(formulation_json)
+                                    
+                                    # Get pressed thickness from database
+                                    conn = get_db_connection()
+                                    cursor = conn.cursor()
+                                    cursor.execute('SELECT pressed_thickness FROM cell_experiments WHERE id = ?', (exp_id,))
+                                    result = cursor.fetchone()
+                                    conn.close()
+                                    pressed_thickness = result[0] if result and result[0] is not None else None
+                                    
+                                    if pressed_thickness:
+                                        porosity_data = calculate_porosity_from_experiment_data(
+                                            disc_mass_mg=loading,
+                                            disc_diameter_mm=disc_diameter,
+                                            pressed_thickness_um=pressed_thickness,
+                                            formulation=formulation_data
+                                        )
+                                        cell_summary['porosity'] = porosity_data['porosity']
+                                    else:
+                                        cell_summary['porosity'] = None
+                                else:
+                                    cell_summary['porosity'] = None
+                            except Exception:
+                                cell_summary['porosity'] = None
                         # Add pressed thickness data from database if available
                         conn = get_db_connection()
                         cursor = conn.cursor()
@@ -2295,9 +2372,42 @@ if tab_master and current_project_id:
                         # Also add as experiment summary (since it's a single cell)
                         exp_summary = cell_summary.copy()
                         exp_summary['cell_name'] = f"{exp_name} (Single Cell)"
-                        # Add porosity data from database if available
-                        if porosity is not None:
+                        # Add porosity data from database if available, or recalculate if missing
+                        if porosity is not None and porosity > 0:
                             exp_summary['porosity'] = porosity
+                        else:
+                            # Recalculate porosity for legacy experiments if missing or invalid
+                            try:
+                                from porosity_calculations import calculate_porosity_from_experiment_data
+                                if (loading and 
+                                    disc_diameter and 
+                                    formulation_json):
+                                    
+                                    # Parse formulation data
+                                    formulation_data = json.loads(formulation_json)
+                                    
+                                    # Get pressed thickness from database
+                                    conn = get_db_connection()
+                                    cursor = conn.cursor()
+                                    cursor.execute('SELECT pressed_thickness FROM cell_experiments WHERE id = ?', (exp_id,))
+                                    result = cursor.fetchone()
+                                    conn.close()
+                                    pressed_thickness = result[0] if result and result[0] is not None else None
+                                    
+                                    if pressed_thickness:
+                                        porosity_data = calculate_porosity_from_experiment_data(
+                                            disc_mass_mg=loading,
+                                            disc_diameter_mm=disc_diameter,
+                                            pressed_thickness_um=pressed_thickness,
+                                            formulation=formulation_data
+                                        )
+                                        exp_summary['porosity'] = porosity_data['porosity']
+                                    else:
+                                        exp_summary['porosity'] = None
+                                else:
+                                    exp_summary['porosity'] = None
+                            except Exception:
+                                exp_summary['porosity'] = None
                         # Add pressed thickness data from database if available
                         # For legacy experiments, we need to get this from the database
                         conn = get_db_connection()

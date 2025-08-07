@@ -148,6 +148,20 @@ def init_database():
             )
         ''')
         
+        # Create project preferences table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS project_preferences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                preference_key TEXT NOT NULL,
+                preference_value TEXT,
+                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (project_id) REFERENCES projects (id),
+                UNIQUE(project_id, preference_key)
+            )
+        ''')
+        
         conn.commit()
 
 def migrate_database():
@@ -186,6 +200,26 @@ def migrate_database():
                 print("Added project_type column to projects table")
             except sqlite3.OperationalError as e:
                 print(f"Error adding project_type column: {e}")
+        
+        # Check if project_preferences table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='project_preferences'")
+        if not cursor.fetchone():
+            try:
+                cursor.execute('''
+                    CREATE TABLE project_preferences (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        project_id INTEGER NOT NULL,
+                        preference_key TEXT NOT NULL,
+                        preference_value TEXT,
+                        created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (project_id) REFERENCES projects (id),
+                        UNIQUE(project_id, preference_key)
+                    )
+                ''')
+                print("Created project_preferences table")
+            except sqlite3.OperationalError as e:
+                print(f"Error creating project_preferences table: {e}")
         
         conn.commit()
 
@@ -559,6 +593,51 @@ def get_all_project_experiments_data(project_id):
             ORDER BY created_date DESC
         ''', (project_id,))
         return cursor.fetchall()
+
+def get_project_preferences(project_id):
+    """Get all preferences for a project."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT preference_key, preference_value
+            FROM project_preferences 
+            WHERE project_id = ?
+            ORDER BY preference_key
+        ''', (project_id,))
+        return dict(cursor.fetchall())
+
+def save_project_preferences(project_id, preferences):
+    """Save preferences for a project."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        for key, value in preferences.items():
+            if value is not None and value != "":
+                cursor.execute('''
+                    INSERT OR REPLACE INTO project_preferences 
+                    (project_id, preference_key, preference_value, updated_date)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (project_id, key, str(value)))
+            else:
+                # Remove preference if value is None or empty
+                cursor.execute('''
+                    DELETE FROM project_preferences 
+                    WHERE project_id = ? AND preference_key = ?
+                ''', (project_id, key))
+        
+        conn.commit()
+
+def get_project_preference(project_id, key, default=None):
+    """Get a specific preference for a project."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT preference_value
+            FROM project_preferences 
+            WHERE project_id = ? AND preference_key = ?
+        ''', (project_id, key))
+        result = cursor.fetchone()
+        return result[0] if result else default
 
 # Initialize database when module is imported
 init_database()
