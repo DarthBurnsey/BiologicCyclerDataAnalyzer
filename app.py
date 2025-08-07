@@ -1062,8 +1062,8 @@ with tab_inputs:
                     updated_data_json = original_cell.get('data_json', '{}')
                     if (new_loading != original_loading or new_active != original_active) and updated_data_json:
                         try:
-                            # Parse the original DataFrame
-                            original_df = pd.read_json(updated_data_json)
+                            # Parse the original DataFrame - fix deprecation warning
+                            original_df = pd.read_json(StringIO(updated_data_json))
                             
                             # Recalculate gravimetric capacities
                             updated_df = recalculate_gravimetric_capacities(original_df, new_loading, new_active)
@@ -1115,6 +1115,12 @@ with tab_inputs:
                     'pressed_thickness': pressed_thickness,
                     'experiment_notes': experiment_notes
                 })
+                
+                # Clear any cached processed data to force recalculation
+                if 'processed_data_cache' in st.session_state:
+                    del st.session_state['processed_data_cache']
+                if 'cache_key' in st.session_state:
+                    del st.session_state['cache_key']
                 
                 st.success("✅ Experiment updated successfully!")
                 st.rerun()
@@ -1233,7 +1239,8 @@ if loaded_experiment:
     for cell_data in cells_data:
         cell_name = cell_data.get('cell_name', 'Unknown')
         try:
-            df = pd.read_json(cell_data['data_json'])
+            # Fix the deprecation warning by using StringIO
+            df = pd.read_json(StringIO(cell_data['data_json']))
             
             # Get project type for efficiency recalculation
             project_type = "Full Cell"  # Default
