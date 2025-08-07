@@ -266,7 +266,7 @@ def create_retention_plot_from_session_state(
         # Create the plot using the same function as the Plots tab
         fig = plot_capacity_retention_graph(
             dfs, show_lines, reference_cycle, formation_cycles, remove_last_cycle,
-            retention_show_title, experiment_name, False, {}, remove_markers, hide_legend,
+            show_title, experiment_name, False, {}, remove_markers, hide_legend,
             None, None, None, None, retention_threshold, y_axis_min, y_axis_max,
             show_baseline_line, show_threshold_line
         )

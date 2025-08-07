@@ -1,16 +1,16 @@
 # preference_components.py
 import streamlit as st
 import json
-from database import get_project_preferences, save_project_preferences, get_project_preference
-from ui_components import render_autocomplete_input, BATTERY_MATERIALS, render_formulation_table
 
 def render_preferences_sidebar(project_id):
     """Render the project preferences sidebar."""
     if not project_id:
         return
     
+    # Import database functions inside the function to avoid circular imports
+    from database import get_project_preferences, save_project_preferences, get_project_by_id
+    
     # Get project name
-    from database import get_project_by_id
     project_info = get_project_by_id(project_id)
     project_name = project_info[1] if project_info else "Unknown Project"
     
@@ -105,6 +105,10 @@ def render_formulation_editor_modal():
     if not st.session_state.get('show_formulation_editor', False):
         return
     
+    # Import database functions inside the function to avoid circular imports
+    from database import get_project_preferences, save_project_preferences
+    from ui_components import render_formulation_table
+    
     st.markdown("### Edit Default Formulation")
     st.markdown("Configure the default formulation that will be used for new experiments in this project.")
     
@@ -153,6 +157,9 @@ def render_formulation_editor_modal():
 
 def get_default_values_for_experiment(project_id):
     """Get default values for a new experiment based on project preferences."""
+    # Import database functions inside the function to avoid circular imports
+    from database import get_project_preferences
+    
     preferences = get_project_preferences(project_id)
     
     defaults = {
