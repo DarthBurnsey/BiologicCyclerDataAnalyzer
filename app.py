@@ -1046,20 +1046,45 @@ with tab_inputs:
             experiment_id = loaded_experiment['experiment_id']
             project_id = loaded_experiment['project_id']
             
-            # Prepare updated cells data
+            # Prepare updated cells data with recalculated gravimetric capacities
             updated_cells_data = []
             for i, dataset in enumerate(datasets):
                 if i < len(experiment_data.get('cells', [])):
                     original_cell = experiment_data['cells'][i]
+                    
+                    # Check if loading or active material has changed
+                    original_loading = original_cell.get('loading', 0)
+                    original_active = original_cell.get('active_material', 0)
+                    new_loading = dataset['loading']
+                    new_active = dataset['active']
+                    
+                    # Recalculate gravimetric capacities if loading or active material changed
+                    updated_data_json = original_cell.get('data_json', '{}')
+                    if (new_loading != original_loading or new_active != original_active) and updated_data_json:
+                        try:
+                            # Parse the original DataFrame
+                            original_df = pd.read_json(updated_data_json)
+                            
+                            # Recalculate gravimetric capacities
+                            updated_df = recalculate_gravimetric_capacities(original_df, new_loading, new_active)
+                            
+                            # Update the data JSON with recalculated values
+                            updated_data_json = updated_df.to_json()
+                            
+                            st.info(f"🔄 Recalculated gravimetric capacities for {dataset['testnum']} (Loading: {original_loading}→{new_loading}mg, Active: {original_active}→{new_active}%)")
+                        except Exception as e:
+                            st.warning(f"⚠️ Could not recalculate capacities for {dataset['testnum']}: {str(e)}")
+                    
                     updated_cell = original_cell.copy()
                     updated_cell.update({
-                        'loading': dataset['loading'],
-                        'active_material': dataset['active'],
+                        'loading': new_loading,
+                        'active_material': new_active,
                         'formation_cycles': dataset['formation_cycles'],
                         'test_number': dataset['testnum'],
                         'cell_name': dataset['testnum'],
                         'electrolyte': dataset.get('electrolyte', '1M LiPF6 1:1:1'),
-                        'formulation': dataset.get('formulation', [])
+                        'formulation': dataset.get('formulation', []),
+                        'data_json': updated_data_json  # Updated with recalculated values
                     })
                     updated_cells_data.append(updated_cell)
             
@@ -2450,3 +2475,29 @@ if tab_master and current_project_id:
                 display_best_performers_analysis(individual_cells)
 
 # --- Data Preprocessing Section ---
+
+# Add this function after the imports at the top of the file
+def recalculate_gravimetric_capacities(df, new_loading, new_active_material):
+    """
+    Recalculate gravimetric capacities when loading or active material values change.
+    Returns a new DataFrame with updated Q Chg (mAh/g) and Q Dis (mAh/g) values.
+    """
+    try:
+        # Create a copy of the DataFrame to avoid modifying the original
+        updated_df = df.copy()
+        
+        # Calculate new active mass
+        active_mass = (new_loading / 1000) * (new_active_material / 100)
+        if active_mass <= 0:
+            raise ValueError("Active mass must be greater than 0. Check loading and active material values.")
+        
+        # Recalculate gravimetric capacities
+        if 'Q charge (mA.h)' in updated_df.columns:
+            updated_df['Q Chg (mAh/g)'] = updated_df['Q charge (mA.h)'] / active_mass
+        if 'Q discharge (mA.h)' in updated_df.columns:
+            updated_df['Q Dis (mAh/g)'] = updated_df['Q discharge (mA.h)'] / active_mass
+        
+        return updated_df
+    except Exception as e:
+        st.error(f"Error recalculating gravimetric capacities: {str(e)}")
+        return df  # Return original DataFrame if calculation fails
