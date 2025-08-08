@@ -37,7 +37,7 @@ from dialogs import confirm_delete_project, confirm_delete_experiment, show_dele
 # Initialize database
 init_database()
 migrate_database()
-from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs, get_initial_areal_capacity, render_formulation_table, render_retention_display_options, get_substrate_options
+from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs, get_initial_areal_capacity, render_formulation_table, render_retention_display_options, get_substrate_options, render_hybrid_electrolyte_input, render_hybrid_separator_input
 from plotting import plot_capacity_graph, plot_capacity_retention_graph
 from preference_components import render_preferences_sidebar, render_formulation_editor_modal, get_default_values_for_experiment, render_default_indicator
 
