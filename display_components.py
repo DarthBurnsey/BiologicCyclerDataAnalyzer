@@ -494,18 +494,18 @@ def display_best_performers_analysis(individual_cells):
     
     # New subsection with detailed rankings tables
     with st.expander("📊 Detailed Rankings Tables", expanded=False):
-        # Create DataFrame for analysis
+        # Create DataFrame for analysis with numeric values for proper sorting
         df_data = []
         for cell in individual_cells:
             row = {
                 'Cell': cell['cell_name'],
                 'Experiment': cell.get('experiment_name', 'Unknown'),
-                'Reversible Capacity (mAh/g)': f"{cell['reversible_capacity']:.1f}" if cell['reversible_capacity'] is not None else np.nan,
-                'Coulombic Efficiency (%)': f"{cell['coulombic_efficiency']:.3f}%" if cell['coulombic_efficiency'] is not None else np.nan,
-                '1st Cycle Discharge (mAh/g)': f"{cell['first_discharge']:.1f}" if cell['first_discharge'] is not None else np.nan,
-                'First Cycle Efficiency (%)': f"{cell['first_efficiency']:.3f}%" if cell['first_efficiency'] is not None else np.nan,
-                'Areal Capacity (mAh/cm²)': f"{cell['areal_capacity']:.2f}" if cell['areal_capacity'] is not None else np.nan,
-                'Cycle Life (80%)': f"{cell['cycle_life_80']:.1f}" if cell['cycle_life_80'] is not None else np.nan
+                'Reversible Capacity (mAh/g)': cell['reversible_capacity'] if cell['reversible_capacity'] is not None else np.nan,
+                'Coulombic Efficiency (%)': cell['coulombic_efficiency'] if cell['coulombic_efficiency'] is not None else np.nan,
+                '1st Cycle Discharge (mAh/g)': cell['first_discharge'] if cell['first_discharge'] is not None else np.nan,
+                'First Cycle Efficiency (%)': cell['first_efficiency'] if cell['first_efficiency'] is not None else np.nan,
+                'Areal Capacity (mAh/cm²)': cell['areal_capacity'] if cell['areal_capacity'] is not None else np.nan,
+                'Cycle Life (80%)': cell['cycle_life_80'] if cell['cycle_life_80'] is not None else np.nan
             }
             df_data.append(row)
         
@@ -540,7 +540,18 @@ def display_best_performers_analysis(individual_cells):
                 else:
                     sorted_df = df_clean.sort_values(metric, ascending=True)
                 
-                # Show top 5
-                top_5 = sorted_df.head(5)[['Cell', 'Experiment', metric]]
+                # Show top 5 with proper formatting
+                top_5 = sorted_df.head(5)[['Cell', 'Experiment', metric]].copy()
+                
+                # Format the metric column for display
+                if 'Reversible Capacity' in metric or '1st Cycle Discharge' in metric or 'Cycle Life' in metric:
+                    top_5[metric] = top_5[metric].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "N/A")
+                elif 'Areal Capacity' in metric:
+                    top_5[metric] = top_5[metric].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+                elif 'Efficiency' in metric:
+                    top_5[metric] = top_5[metric].apply(lambda x: f"{x:.3f}%" if pd.notna(x) else "N/A")
+                else:
+                    top_5[metric] = top_5[metric].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+                
                 st.dataframe(top_5, use_container_width=True)
                 st.markdown("---")
