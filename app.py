@@ -750,15 +750,14 @@ with tab_inputs:
                     )
                 
                 # Electrolyte and Substrate selection
-                electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
                 substrate_options = get_substrate_options()
                 
                 col3, col4 = st.columns(2)
                 with col3:
-                    electrolyte_0 = st.selectbox(
+                    from ui_components import render_hybrid_electrolyte_input
+                    electrolyte_0 = render_hybrid_electrolyte_input(
                         f'Electrolyte for Cell 1', 
-                        electrolyte_options,
-                        index=electrolyte_options.index(datasets[0]["electrolyte"]) if datasets[0]["electrolyte"] in electrolyte_options else 0,
+                        default_value=datasets[0]["electrolyte"],
                         key=f'edit_electrolyte_0'
                     )
                 with col4:
@@ -838,15 +837,13 @@ with tab_inputs:
                                 )
                             
                             # Electrolyte and Substrate selection
-                            electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
                             substrate_options = get_substrate_options()
                             
                             col3, col4 = st.columns(2)
                             with col3:
-                                electrolyte = st.selectbox(
+                                electrolyte = render_hybrid_electrolyte_input(
                                     f'Electrolyte for Cell {i+1}', 
-                                    electrolyte_options,
-                                    index=electrolyte_options.index(dataset['electrolyte']) if dataset['electrolyte'] in electrolyte_options else 0,
+                                    default_value=dataset['electrolyte'],
                                     key=f'edit_electrolyte_{i}'
                                 )
                             with col4:
@@ -917,15 +914,13 @@ with tab_inputs:
                         )
                     
                     # Electrolyte and Substrate selection
-                    electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
                     substrate_options = get_substrate_options()
                     
                     col3, col4 = st.columns(2)
                     with col3:
-                        electrolyte = st.selectbox(
+                        electrolyte = render_hybrid_electrolyte_input(
                             f'Electrolyte for Cell {i+1}', 
-                            electrolyte_options,
-                            index=electrolyte_options.index(dataset['electrolyte']) if dataset['electrolyte'] in electrolyte_options else 0,
+                            default_value=dataset['electrolyte'],
                             key=f'edit_single_electrolyte_{i}'
                         )
                     with col4:
@@ -2168,7 +2163,7 @@ if tab_comparison and current_project_id:
                                 'First Efficiency (%)': exp.get('first_efficiency', 'N/A'),
                                 'Cycle Life (80%)': exp.get('cycle_life_80', 'N/A'),
                                 'Areal Capacity (mAh/cm²)': exp.get('areal_capacity', 'N/A'),
-                                'Active Material (%)': exp.get('active_material', 'N/A'),
+                                'Active Material (%)': f"{exp.get('active_material', 'N/A'):.1f}" if exp.get('active_material') is not None and exp.get('active_material') != 'N/A' else 'N/A',
                                 'Date': exp.get('experiment_date', 'N/A')
                             }
                             comparison_df_data.append(row)

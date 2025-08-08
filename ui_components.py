@@ -5,6 +5,81 @@ import pandas as pd
 import uuid
 import numpy as np
 
+# Comprehensive Electrolyte Database
+COMPREHENSIVE_ELECTROLYTES = [
+    # Standard Electrolytes
+    "1M LiPF6 1:1:1",
+    "1M LiTFSI 3:7 +10% FEC",
+    "1M LiPF6 EC:DMC (1:1)",
+    "1M LiPF6 EC:DMC:EMC (1:1:1)",
+    "1M LiPF6 EC:DMC:EMC (3:3:4)",
+    "1M LiPF6 EC:DMC:EMC (1:1:1) + 2% VC",
+    "1M LiPF6 EC:DMC:EMC (1:1:1) + 5% FEC",
+    "1M LiPF6 EC:DMC:EMC (1:1:1) + 10% FEC",
+    "1M LiPF6 EC:DMC:EMC (1:1:1) + 2% VC + 5% FEC",
+    
+    # Advanced Electrolytes
+    "1M LiTFSI EC:DMC:EMC (1:1:1)",
+    "1M LiTFSI EC:DMC:EMC (3:7) + 10% FEC",
+    "1M LiTFSI EC:DMC:EMC (3:7) + 5% FEC",
+    "1M LiTFSI EC:DMC:EMC (3:7) + 2% VC",
+    "1M LiTFSI EC:DMC:EMC (3:7) + 2% VC + 5% FEC",
+    "1M LiTFSI DOL:DME (1:1) + 1% LiNO3",
+    "1M LiTFSI DOL:DME (1:1) + 2% LiNO3",
+    "1M LiTFSI DOL:DME (1:1) + 1% LiNO3 + 1% LiDFOB",
+    
+    # Hybrid Dual Salt Electrolytes
+    "Hybrid Dual Salt (HDE)",
+    "0.5M LiPF6 + 0.5M LiTFSI EC:DMC:EMC (1:1:1)",
+    "0.5M LiPF6 + 0.5M LiTFSI EC:DMC:EMC (3:7) + 10% FEC",
+    "0.5M LiPF6 + 0.5M LiFSI EC:DMC:EMC (1:1:1)",
+    "0.5M LiPF6 + 0.5M LiFSI EC:DMC:EMC (3:7) + 10% FEC",
+    "0.5M LiTFSI + 0.5M LiFSI EC:DMC:EMC (1:1:1)",
+    "0.5M LiTFSI + 0.5M LiFSI EC:DMC:EMC (3:7) + 10% FEC",
+    
+    # High Concentration Electrolytes
+    "3M LiTFSI EC:DMC:EMC (1:1:1)",
+    "3M LiTFSI EC:DMC:EMC (3:7) + 10% FEC",
+    "4M LiTFSI EC:DMC:EMC (1:1:1)",
+    "4M LiTFSI EC:DMC:EMC (3:7) + 10% FEC",
+    "5M LiTFSI EC:DMC:EMC (1:1:1)",
+    "5M LiTFSI EC:DMC:EMC (3:7) + 10% FEC",
+    
+    # Localized High Concentration Electrolytes (LHCE)
+    "1M LiTFSI EC:DMC:TFE (1:1:3)",
+    "1M LiTFSI EC:DMC:TFE (1:1:4)",
+    "1M LiTFSI EC:DMC:TFE (1:1:5)",
+    "1M LiTFSI EC:DMC:TTE (1:1:3)",
+    "1M LiTFSI EC:DMC:TTE (1:1:4)",
+    "1M LiTFSI EC:DMC:TTE (1:1:5)",
+    
+    # Sulfolane-based Electrolytes
+    "1M LiPF6 EC:DMC:TMS (1:1:1)",
+    "1M LiPF6 EC:DMC:TMS (3:7) + 10% FEC",
+    "1M LiTFSI EC:DMC:TMS (1:1:1)",
+    "1M LiTFSI EC:DMC:TMS (3:7) + 10% FEC",
+    
+    # Ionic Liquid Electrolytes
+    "1M LiTFSI [EMIM][TFSI]",
+    "1M LiTFSI [BMIM][TFSI]",
+    "1M LiTFSI [EMIM][BF4]",
+    "1M LiTFSI [BMIM][BF4]",
+    
+    # Solid State Electrolytes
+    "PEO + LiTFSI (EO:Li = 20:1)",
+    "PEO + LiTFSI (EO:Li = 16:1)",
+    "PEO + LiTFSI (EO:Li = 12:1)",
+    "PEO + LiTFSI + LLZTO",
+    "PEO + LiTFSI + Al2O3",
+    "PEO + LiTFSI + SiO2",
+    
+    # Custom/Experimental Electrolytes
+    "Custom Electrolyte",
+    "Experimental Electrolyte",
+    "Research Electrolyte",
+    "Proprietary Electrolyte"
+]
+
 # Battery Materials Database for Autocomplete
 BATTERY_MATERIALS = {
     "Active Materials": [
@@ -58,6 +133,100 @@ BATTERY_MATERIALS = {
         "Cyclohexane", "Benzene", "Styrene", "Acrylic Acid", "Methacrylic Acid"
     ]
 }
+
+def get_electrolyte_options():
+    """
+    Get comprehensive electrolyte options including all predefined electrolytes.
+    This function can be easily extended to load options from a database in the future.
+    """
+    return COMPREHENSIVE_ELECTROLYTES.copy()
+
+def render_hybrid_electrolyte_input(label: str, default_value: str = "", key: str = None) -> str:
+    """
+    Render a hybrid electrolyte input that allows both dropdown selection and manual entry.
+    
+    Args:
+        label: Label for the input field
+        default_value: Default value to display
+        key: Unique key for the Streamlit widget
+    
+    Returns:
+        The selected/entered electrolyte value
+    """
+    if key is None:
+        key = f"electrolyte_{uuid.uuid4().hex[:8]}"
+    
+    # Get all available electrolyte options
+    electrolyte_options = get_electrolyte_options()
+    
+    # Initialize session state for this input
+    value_key = f"{key}_value"
+    mode_key = f"{key}_mode"
+    
+    if value_key not in st.session_state:
+        st.session_state[value_key] = default_value
+    if mode_key not in st.session_state:
+        st.session_state[mode_key] = "dropdown"  # "dropdown" or "custom"
+    
+    # Create two columns for the hybrid input
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        # Main input field - can be either dropdown or text input
+        if st.session_state[mode_key] == "dropdown":
+            # Dropdown mode
+            current_value = st.session_state[value_key]
+            index = 0
+            if current_value in electrolyte_options:
+                index = electrolyte_options.index(current_value)
+            
+            selected = st.selectbox(
+                label,
+                options=electrolyte_options,
+                index=index,
+                key=f"{key}_dropdown"
+            )
+            st.session_state[value_key] = selected
+        else:
+            # Custom entry mode
+            custom_value = st.text_input(
+                label,
+                value=st.session_state[value_key],
+                key=f"{key}_text"
+            )
+            st.session_state[value_key] = custom_value
+    
+    with col2:
+        # Toggle button to switch between dropdown and custom entry
+        if st.button(
+            "📝" if st.session_state[mode_key] == "dropdown" else "📋",
+            help="Switch to custom entry" if st.session_state[mode_key] == "dropdown" else "Switch to dropdown",
+            key=f"{key}_toggle"
+        ):
+            st.session_state[mode_key] = "custom" if st.session_state[mode_key] == "dropdown" else "dropdown"
+            st.rerun()
+    
+    # Add autocomplete suggestions if in custom mode
+    if st.session_state[mode_key] == "custom":
+        current_input = st.session_state[value_key].lower()
+        if current_input:
+            # Filter suggestions based on current input
+            suggestions = [opt for opt in electrolyte_options if current_input in opt.lower()]
+            if suggestions:
+                st.markdown("**💡 Suggestions:**")
+                suggestion_cols = st.columns(min(3, len(suggestions)))
+                for i, suggestion in enumerate(suggestions[:6]):  # Limit to 6 suggestions
+                    col_idx = i % 3
+                    with suggestion_cols[col_idx]:
+                        if st.button(
+                            suggestion,
+                            key=f"{key}_suggestion_{i}",
+                            use_container_width=True
+                        ):
+                            st.session_state[value_key] = suggestion
+                            st.rerun()
+    
+    return st.session_state[value_key]
 
 def get_all_battery_materials():
     """Get a flat list of all battery materials for autocomplete."""
@@ -449,14 +618,15 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         test_number_0 = st.text_input(f'Test Number for Cell 1', value='Cell 1', key=f'testnum_0')
                     
                     # Electrolyte and Substrate selection
-                    electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
                     substrate_options = get_substrate_options()
                     
                     col3, col4 = st.columns(2)
                     with col3:
-                        electrolyte_0 = st.selectbox(f'Electrolyte for Cell 1', electrolyte_options, 
-                                                   index=electrolyte_options.index(electrolyte_default) if electrolyte_default in electrolyte_options else 0,
-                                                   key=f'electrolyte_0')
+                        electrolyte_0 = render_hybrid_electrolyte_input(
+                            f'Electrolyte for Cell 1', 
+                            default_value=electrolyte_default,
+                            key=f'electrolyte_0'
+                        )
                     with col4:
                         substrate_0 = st.selectbox(f'Substrate for Cell 1', substrate_options,
                                                  index=substrate_options.index(substrate_default) if substrate_default in substrate_options else 0,
@@ -514,9 +684,11 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                                 active_material = st.number_input(f'% Active material for Cell {i+1}', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_{i}')
                             
                             # Electrolyte and Substrate selection
-                            electrolyte = st.selectbox(f'Electrolyte for Cell {i+1}', electrolyte_options, 
-                                                     index=electrolyte_options.index(electrolyte_default) if electrolyte_default in electrolyte_options else 0,
-                                                     key=f'electrolyte_{i}')
+                            electrolyte = render_hybrid_electrolyte_input(
+                                f'Electrolyte for Cell {i+1}', 
+                                default_value=electrolyte_default,
+                                key=f'electrolyte_{i}'
+                            )
                             
                             # Substrate selection
                             substrate = st.selectbox(f'Substrate for Cell {i+1}', substrate_options,
@@ -569,14 +741,15 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         test_number = st.text_input(f'Test Number for Cell 1', value='Cell 1', key=f'testnum_0')
                     
                     # Electrolyte and Substrate selection
-                    electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
                     substrate_options = get_substrate_options()
                     
                     col3, col4 = st.columns(2)
                     with col3:
-                        electrolyte = st.selectbox(f'Electrolyte for Cell 1', electrolyte_options, 
-                                                 index=electrolyte_options.index(electrolyte_default) if electrolyte_default in electrolyte_options else 0,
-                                                 key=f'electrolyte_0')
+                        electrolyte = render_hybrid_electrolyte_input(
+                            f'Electrolyte for Cell 1', 
+                            default_value=electrolyte_default,
+                            key=f'electrolyte_0'
+                        )
                     with col4:
                         substrate = st.selectbox(f'Substrate for Cell 1', substrate_options,
                                                index=substrate_options.index(substrate_default) if substrate_default in substrate_options else 0,

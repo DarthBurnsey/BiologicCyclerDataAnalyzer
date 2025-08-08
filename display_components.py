@@ -91,6 +91,9 @@ def display_experiment_summaries_table(experiment_summaries):
         'First Efficiency (%)',
         'Cycle Life (80%)',
         'Porosity (%)',
+        'Electrolyte',
+        'Substrate',
+        'Separator',
         'Date'
     ]
     
@@ -104,7 +107,7 @@ def display_experiment_summaries_table(experiment_summaries):
         
         # Initialize session state for column selection if not exists
         if 'section1_selected_columns' not in st.session_state:
-            st.session_state.section1_selected_columns = all_columns[:11]  # Default to first 11 columns including Loading (mg/cm²)
+            st.session_state.section1_selected_columns = all_columns[:14]  # Default to first 14 columns including Electrolyte, Substrate, Separator
         
         # Quick Actions Row
         col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
@@ -118,7 +121,7 @@ def display_experiment_summaries_table(experiment_summaries):
                 st.rerun()
         with col3:
             if st.button("Core Data", key="section1_core_preset", use_container_width=True):
-                st.session_state.section1_selected_columns = all_columns[:11]
+                st.session_state.section1_selected_columns = all_columns[:14]
                 st.rerun()
         with col4:
             if st.button("Performance", key="section1_perf_preset", use_container_width=True):
@@ -137,7 +140,7 @@ def display_experiment_summaries_table(experiment_summaries):
         core_cols = st.columns(2)
         
         # Split core columns between the two columns
-        core_columns = all_columns[:11]  # First 11 columns including Loading (mg/cm²)
+        core_columns = all_columns[:14]  # First 14 columns including Electrolyte, Substrate, Separator
         mid_point = len(core_columns) // 2
         
         with core_cols[0]:
@@ -186,7 +189,7 @@ def display_experiment_summaries_table(experiment_summaries):
         
         row = {
             'Experiment': exp['experiment_name'],
-            'Active Material (%)': exp.get('active_material', np.nan),
+            'Active Material (%)': f"{exp.get('active_material', np.nan):.1f}" if exp.get('active_material') is not None and not np.isnan(exp.get('active_material')) else np.nan,
             'Loading (mg/cm²)': f"{loading_density:.2f}" if loading_density is not np.nan else np.nan,
             'Pressed Thickness (μm)': exp.get('pressed_thickness', np.nan),
             'Date': exp.get('experiment_date', np.nan),
@@ -197,6 +200,9 @@ def display_experiment_summaries_table(experiment_summaries):
             'Reversible Capacity (mAh/g)': f"{exp['reversible_capacity']:.1f}" if exp['reversible_capacity'] is not None else np.nan,
             'Coulombic Efficiency (%)': f"{exp['coulombic_efficiency']:.3f}%" if exp['coulombic_efficiency'] is not None else np.nan,
             'Porosity (%)': f"{exp['porosity']*100:.1f}%" if exp['porosity'] is not None and exp['porosity'] > 0 else "N/A",
+            'Electrolyte': exp.get('electrolyte', 'N/A'),
+            'Substrate': exp.get('substrate', 'N/A'),
+            'Separator': exp.get('separator', 'N/A'),
         }
         
         # Add component data
@@ -217,7 +223,11 @@ def display_experiment_summaries_table(experiment_summaries):
     df = df[available_columns]
     
     # Display the dataframe with styling
-    styled_df = df.style.map(style_porosity, subset=['Porosity (%)'])
+    # Only apply porosity styling if the column exists in the filtered dataframe
+    if 'Porosity (%)' in df.columns:
+        styled_df = df.style.map(style_porosity, subset=['Porosity (%)'])
+    else:
+        styled_df = df.style
     st.dataframe(styled_df, use_container_width=True)
 
 def display_individual_cells_table(individual_cells):
@@ -241,6 +251,9 @@ def display_individual_cells_table(individual_cells):
         'First Efficiency (%)',
         'Cycle Life (80%)',
         'Porosity (%)',
+        'Electrolyte',
+        'Substrate',
+        'Separator',
         'Date',
         'Experiment'
     ]
@@ -255,7 +268,7 @@ def display_individual_cells_table(individual_cells):
         
         # Initialize session state for column selection if not exists
         if 'section2_selected_columns' not in st.session_state:
-            st.session_state.section2_selected_columns = all_columns[:12]  # Default to first 12 columns
+            st.session_state.section2_selected_columns = all_columns[:14]  # Default to first 14 columns including Electrolyte, Substrate, Separator
         
         # Quick Actions Row
         col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
@@ -269,7 +282,7 @@ def display_individual_cells_table(individual_cells):
                 st.rerun()
         with col3:
             if st.button("Core Data", key="section2_core_preset", use_container_width=True):
-                st.session_state.section2_selected_columns = all_columns[:12]
+                st.session_state.section2_selected_columns = all_columns[:14]
                 st.rerun()
         with col4:
             if st.button("Performance", key="section2_perf_preset", use_container_width=True):
@@ -288,7 +301,7 @@ def display_individual_cells_table(individual_cells):
         core_cols = st.columns(2)
         
         # Split core columns between the two columns
-        core_columns = all_columns[:12]  # First 12 columns including Pressed Thickness
+        core_columns = all_columns[:14]  # First 14 columns including Electrolyte, Substrate, Separator
         mid_point = len(core_columns) // 2
         
         with core_cols[0]:
@@ -338,7 +351,7 @@ def display_individual_cells_table(individual_cells):
         row = {
             'Experiment': cell.get('experiment_name', np.nan),
             'Cell Name': cell['cell_name'],
-            'Active Material (%)': cell['active_material'] if cell['active_material'] is not None else np.nan,
+            'Active Material (%)': f"{cell['active_material']:.1f}" if cell['active_material'] is not None and not np.isnan(cell['active_material']) else np.nan,
             'Loading (mg/cm²)': f"{loading_density:.2f}" if loading_density is not np.nan else np.nan,
             'Pressed Thickness (μm)': cell.get('pressed_thickness', np.nan),
             'Date': cell.get('experiment_date', np.nan),
@@ -349,6 +362,9 @@ def display_individual_cells_table(individual_cells):
             'Reversible Capacity (mAh/g)': f"{cell['reversible_capacity']:.1f}" if cell['reversible_capacity'] is not None else np.nan,
             'Coulombic Efficiency (%)': f"{cell['coulombic_efficiency']:.3f}%" if cell['coulombic_efficiency'] is not None else np.nan,
             'Porosity (%)': f"{cell['porosity']*100:.1f}%" if cell['porosity'] is not None and cell['porosity'] > 0 else "N/A",
+            'Electrolyte': cell.get('electrolyte', 'N/A'),
+            'Substrate': cell.get('substrate', 'N/A'),
+            'Separator': cell.get('separator', 'N/A'),
         }
         
         # Add component data
@@ -369,7 +385,11 @@ def display_individual_cells_table(individual_cells):
     df = df[available_columns]
     
     # Display the dataframe with styling
-    styled_df = df.style.map(style_porosity, subset=['Porosity (%)'])
+    # Only apply porosity styling if the column exists in the filtered dataframe
+    if 'Porosity (%)' in df.columns:
+        styled_df = df.style.map(style_porosity, subset=['Porosity (%)'])
+    else:
+        styled_df = df.style
     st.dataframe(styled_df, use_container_width=True)
 
 def display_best_performers_analysis(individual_cells):

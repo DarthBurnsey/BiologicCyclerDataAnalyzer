@@ -23,13 +23,12 @@ def render_preferences_sidebar(project_id):
     
     with st.sidebar.expander("📋 Default Settings", expanded=False):
         # Electrolyte preference
-        electrolyte_options = ['1M LiPF6 1:1:1', '1M LiTFSI 3:7 +10% FEC']
+        from ui_components import get_electrolyte_options, render_hybrid_electrolyte_input
         current_electrolyte = preferences.get('electrolyte', '')
-        new_electrolyte = st.selectbox(
+        new_electrolyte = render_hybrid_electrolyte_input(
             "Electrolyte",
-            options=electrolyte_options,
-            index=electrolyte_options.index(current_electrolyte) if current_electrolyte in electrolyte_options else 0,
-            help="Default electrolyte for new experiments"
+            default_value=current_electrolyte,
+            key="pref_electrolyte"
         )
         
         # Substrate preference
