@@ -43,7 +43,7 @@ def get_db_connection():
             except:
                 pass
 
-def save_cell_experiment(project_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, df, electrolyte=None, substrate=None, group_assignment=None, max_retries=3):
+def save_cell_experiment(project_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, df, electrolyte=None, substrate=None, separator=None, group_assignment=None, max_retries=3):
     """Simple, reliable cell experiment saving with minimal complexity."""
     for attempt in range(max_retries):
         try:
@@ -56,9 +56,9 @@ def save_cell_experiment(project_id, cell_name, file_name, loading, active_mater
                 # Simple single transaction
                 cursor.execute('''
                     INSERT INTO cell_experiments 
-                    (project_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, group_assignment, data_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (project_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, group_assignment, data_json))
+                    (project_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, group_assignment, data_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (project_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, group_assignment, data_json))
                 
                 experiment_id = cursor.lastrowid
                 
@@ -176,6 +176,7 @@ def migrate_database():
         migrations = [
             ('electrolyte', 'ALTER TABLE cell_experiments ADD COLUMN electrolyte TEXT'),
             ('substrate', 'ALTER TABLE cell_experiments ADD COLUMN substrate TEXT'),
+            ('separator', 'ALTER TABLE cell_experiments ADD COLUMN separator TEXT'),
             ('formulation_json', 'ALTER TABLE cell_experiments ADD COLUMN formulation_json TEXT'),
             ('solids_content', 'ALTER TABLE cell_experiments ADD COLUMN solids_content REAL'),
             ('pressed_thickness', 'ALTER TABLE cell_experiments ADD COLUMN pressed_thickness REAL'),
@@ -290,7 +291,7 @@ def create_project(user_id, name, description="", project_type="Full Cell"):
         conn.commit()
         return project_id
 
-def update_cell_experiment(experiment_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, df, project_id, electrolyte=None, substrate=None, group_assignment=None):
+def update_cell_experiment(experiment_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, df, project_id, electrolyte=None, substrate=None, separator=None, group_assignment=None):
     """Update an existing cell experiment in the database."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -301,9 +302,9 @@ def update_cell_experiment(experiment_id, cell_name, file_name, loading, active_
         cursor.execute('''
             UPDATE cell_experiments 
             SET cell_name = ?, file_name = ?, loading = ?, active_material = ?, 
-                formation_cycles = ?, test_number = ?, electrolyte = ?, substrate = ?, data_json = ?
+                formation_cycles = ?, test_number = ?, electrolyte = ?, substrate = ?, separator = ?, data_json = ?
             WHERE id = ?
-        ''', (cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, data_json, experiment_id))
+        ''', (cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, data_json, experiment_id))
         
         # Update project last_modified
         cursor.execute('''
@@ -356,7 +357,7 @@ def get_experiment_data(experiment_id):
         cursor = conn.cursor()
         cursor.execute('''
             SELECT id, project_id, cell_name, file_name, loading, active_material, 
-                   formation_cycles, test_number, electrolyte, substrate, data_json, created_date
+                   formation_cycles, test_number, electrolyte, substrate, separator, data_json, created_date
             FROM cell_experiments 
             WHERE id = ?
         ''', (experiment_id,))
@@ -473,11 +474,16 @@ def save_experiment(project_id, experiment_name, experiment_date, disc_diameter_
     with get_db_connection() as conn:
         cursor = conn.cursor()
         # Create the main experiment record
+        # Extract representative electrolyte, substrate, and separator values from first cell
+        representative_electrolyte = cells_data[0].get('electrolyte', '1M LiPF6 1:1:1') if cells_data else '1M LiPF6 1:1:1'
+        representative_substrate = cells_data[0].get('substrate', 'Copper') if cells_data else 'Copper'
+        representative_separator = cells_data[0].get('separator', '25um PP') if cells_data else '25um PP'
+        
         cursor.execute('''
             INSERT INTO cell_experiments 
-            (project_id, cell_name, file_name, data_json, solids_content, pressed_thickness, experiment_notes, porosity)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (project_id, experiment_name, f"{experiment_name}.json", json.dumps({
+            (project_id, cell_name, file_name, electrolyte, substrate, separator, data_json, solids_content, pressed_thickness, experiment_notes, porosity)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (project_id, experiment_name, f"{experiment_name}.json", representative_electrolyte, representative_substrate, representative_separator, json.dumps({
             'experiment_date': experiment_date.isoformat() if experiment_date else None,
             'disc_diameter_mm': disc_diameter_mm,
             'group_assignments': group_assignments,
@@ -531,11 +537,16 @@ def update_experiment(experiment_id, project_id, experiment_name, experiment_dat
     with get_db_connection() as conn:
         cursor = conn.cursor()
         # Update the experiment record
+        # Extract representative electrolyte, substrate, and separator values from first cell
+        representative_electrolyte = cells_data[0].get('electrolyte', '1M LiPF6 1:1:1') if cells_data else '1M LiPF6 1:1:1'
+        representative_substrate = cells_data[0].get('substrate', 'Copper') if cells_data else 'Copper'
+        representative_separator = cells_data[0].get('separator', '25um PP') if cells_data else '25um PP'
+        
         cursor.execute('''
             UPDATE cell_experiments 
-            SET cell_name = ?, file_name = ?, data_json = ?, solids_content = ?, pressed_thickness = ?, experiment_notes = ?, porosity = ?
+            SET cell_name = ?, file_name = ?, electrolyte = ?, substrate = ?, separator = ?, data_json = ?, solids_content = ?, pressed_thickness = ?, experiment_notes = ?, porosity = ?
             WHERE id = ?
-        ''', (experiment_name, f"{experiment_name}.json", json.dumps({
+        ''', (experiment_name, f"{experiment_name}.json", representative_electrolyte, representative_substrate, representative_separator, json.dumps({
             'experiment_date': experiment_date.isoformat() if experiment_date else None,
             'disc_diameter_mm': disc_diameter_mm,
             'group_assignments': group_assignments,
@@ -587,7 +598,7 @@ def get_all_project_experiments_data(project_id):
         cursor = conn.cursor()
         cursor.execute('''
             SELECT id, cell_name, file_name, loading, active_material, formation_cycles, 
-                   test_number, electrolyte, formulation_json, data_json, created_date, porosity, experiment_notes
+                   test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes
             FROM cell_experiments 
             WHERE project_id = ? 
             ORDER BY created_date DESC

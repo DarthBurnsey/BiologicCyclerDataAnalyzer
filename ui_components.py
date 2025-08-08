@@ -5,6 +5,65 @@ import pandas as pd
 import uuid
 import numpy as np
 
+# Comprehensive Separator Database
+COMPREHENSIVE_SEPARATORS = [
+    # Original 4 separators
+    "2+12+2 CCS",
+    "25um PP", 
+    "CellPET",
+    "GA - Glass Fiber",
+    
+    # Additional 10 common lithium-ion battery separators
+    "PE (Polyethylene) 20μm",
+    "PP (Polypropylene) 25μm", 
+    "PP/PE/PP Trilayer",
+    "PE/PP Bilayer",
+    "Celgard 2325 (PP/PE/PP)",
+    "Celgard 2400 (PP)",
+    "Celgard 2500 (PP)",
+    "Ceramic-coated PE",
+    "UHMWPE (Ultra-high Molecular Weight PE)",
+    "Aramid-coated PE",
+    
+    # Additional common separators for completeness
+    "PE (Polyethylene) 16μm",
+    "PE (Polyethylene) 25μm",
+    "PP (Polypropylene) 20μm",
+    "PP (Polypropylene) 30μm",
+    "PP/PE/PP Trilayer 20μm",
+    "PP/PE/PP Trilayer 25μm",
+    "PE/PP Bilayer 20μm",
+    "PE/PP Bilayer 25μm",
+    "Celgard 2320 (PP/PE/PP)",
+    "Celgard 2340 (PP/PE/PP)",
+    "Celgard 2400 (PP) 25μm",
+    "Celgard 2500 (PP) 20μm",
+    "Ceramic-coated PE 20μm",
+    "Ceramic-coated PE 25μm",
+    "Al2O3-coated PE",
+    "SiO2-coated PE",
+    "TiO2-coated PE",
+    "UHMWPE 20μm",
+    "UHMWPE 25μm",
+    "Aramid-coated PE 20μm",
+    "Aramid-coated PE 25μm",
+    
+    # Specialized separators
+    "Glass Fiber Separator",
+    "Cellulose Separator",
+    "Polyimide Separator",
+    "Polyamide Separator",
+    "PVDF Separator",
+    "PAN Separator",
+    "PMMA Separator",
+    
+    # Custom/Experimental separators
+    "Custom Separator",
+    "Experimental Separator",
+    "Research Separator",
+    "Proprietary Separator"
+]
+
 # Comprehensive Electrolyte Database
 COMPREHENSIVE_ELECTROLYTES = [
     # Standard Electrolytes
@@ -134,6 +193,13 @@ BATTERY_MATERIALS = {
     ]
 }
 
+def get_separator_options():
+    """
+    Get comprehensive separator options including all predefined separators.
+    This function can be easily extended to load options from a database in the future.
+    """
+    return COMPREHENSIVE_SEPARATORS.copy()
+
 def get_electrolyte_options():
     """
     Get comprehensive electrolyte options including all predefined electrolytes.
@@ -212,6 +278,93 @@ def render_hybrid_electrolyte_input(label: str, default_value: str = "", key: st
         if current_input:
             # Filter suggestions based on current input
             suggestions = [opt for opt in electrolyte_options if current_input in opt.lower()]
+            if suggestions:
+                st.markdown("**💡 Suggestions:**")
+                suggestion_cols = st.columns(min(3, len(suggestions)))
+                for i, suggestion in enumerate(suggestions[:6]):  # Limit to 6 suggestions
+                    col_idx = i % 3
+                    with suggestion_cols[col_idx]:
+                        if st.button(
+                            suggestion,
+                            key=f"{key}_suggestion_{i}",
+                            use_container_width=True
+                        ):
+                            st.session_state[value_key] = suggestion
+                            st.rerun()
+    
+    return st.session_state[value_key]
+
+def render_hybrid_separator_input(label: str, default_value: str = "", key: str = None) -> str:
+    """
+    Render a hybrid separator input that allows both dropdown selection and manual entry.
+    
+    Args:
+        label: Label for the input field
+        default_value: Default value to display
+        key: Unique key for the Streamlit widget
+    
+    Returns:
+        The selected/entered separator value
+    """
+    if key is None:
+        key = f"separator_{uuid.uuid4().hex[:8]}"
+    
+    # Get all available separator options
+    separator_options = get_separator_options()
+    
+    # Initialize session state for this input
+    value_key = f"{key}_value"
+    mode_key = f"{key}_mode"
+    
+    if value_key not in st.session_state:
+        st.session_state[value_key] = default_value
+    if mode_key not in st.session_state:
+        st.session_state[mode_key] = "dropdown"  # "dropdown" or "custom"
+    
+    # Create two columns for the hybrid input
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        # Main input field - can be either dropdown or text input
+        if st.session_state[mode_key] == "dropdown":
+            # Dropdown mode
+            current_value = st.session_state[value_key]
+            index = 0
+            if current_value in separator_options:
+                index = separator_options.index(current_value)
+            
+            selected = st.selectbox(
+                label,
+                options=separator_options,
+                index=index,
+                key=f"{key}_dropdown"
+            )
+            st.session_state[value_key] = selected
+        else:
+            # Custom entry mode
+            custom_value = st.text_input(
+                label,
+                value=st.session_state[value_key],
+                key=f"{key}_text"
+            )
+            st.session_state[value_key] = custom_value
+    
+    with col2:
+        # Toggle button to switch between dropdown and custom entry
+        if st.button(
+            "📝" if st.session_state[mode_key] == "dropdown" else "📋",
+            help="Switch to custom entry" if st.session_state[mode_key] == "dropdown" else "Switch to dropdown",
+            key=f"{key}_toggle"
+        ):
+            st.session_state[mode_key] = "custom" if st.session_state[mode_key] == "dropdown" else "dropdown"
+            st.rerun()
+    
+    # Add autocomplete suggestions if in custom mode
+    if st.session_state[mode_key] == "custom":
+        current_input = st.session_state[value_key].lower()
+        if current_input:
+            # Filter suggestions based on current input
+            suggestions = [opt for opt in separator_options if current_input in opt.lower()]
             if suggestions:
                 st.markdown("**💡 Suggestions:**")
                 suggestion_cols = st.columns(min(3, len(suggestions)))
@@ -610,6 +763,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                     # Prioritize project defaults for electrolyte and substrate
                     electrolyte_default = st.session_state.get('electrolyte_0', project_defaults.get('electrolyte', '1M LiPF6 1:1:1'))
                     substrate_default = st.session_state.get('substrate_0', project_defaults.get('substrate', 'Copper'))
+                    separator_default = st.session_state.get('separator_0', project_defaults.get('separator', '25um PP'))
                     with col1:
                         disc_loading_0 = st.number_input(f'Disc loading (mg) for Cell 1', min_value=0.0, step=1.0, value=loading_default, key=f'loading_0')
                         formation_cycles_0 = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
@@ -617,10 +771,10 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         active_material_0 = st.number_input(f'% Active material for Cell 1', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_0')
                         test_number_0 = st.text_input(f'Test Number for Cell 1', value='Cell 1', key=f'testnum_0')
                     
-                    # Electrolyte and Substrate selection
+                    # Electrolyte, Substrate, and Separator selection
                     substrate_options = get_substrate_options()
                     
-                    col3, col4 = st.columns(2)
+                    col3, col4, col5 = st.columns(3)
                     with col3:
                         electrolyte_0 = render_hybrid_electrolyte_input(
                             f'Electrolyte for Cell 1', 
@@ -631,6 +785,12 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         substrate_0 = st.selectbox(f'Substrate for Cell 1', substrate_options,
                                                  index=substrate_options.index(substrate_default) if substrate_default in substrate_options else 0,
                                                  key=f'substrate_0')
+                    with col5:
+                        separator_0 = render_hybrid_separator_input(
+                            f'Separator for Cell 1', 
+                            default_value=separator_default,
+                            key=f'separator_0'
+                        )
                     
                     # Formulation table
                     st.markdown("**Formulation:**")
@@ -647,6 +807,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                     'formation_cycles': formation_cycles_0,
                     'electrolyte': electrolyte_0,
                     'substrate': substrate_0,
+                    'separator': separator_0,
                     'formulation': formulation_0
                 })
                 
@@ -662,6 +823,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             active_material = active_material_0
                             electrolyte = electrolyte_0
                             substrate = substrate_0
+                            separator = separator_0
                             formulation = formulation_0
                         else:
                             # Individual inputs for this cell
@@ -677,13 +839,14 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             formation_default = st.session_state.get(f'formation_cycles_{i}', formation_cycles_default)
                             electrolyte_default = st.session_state.get(f'electrolyte_{i}', electrolyte_0)
                             substrate_default = st.session_state.get(f'substrate_{i}', substrate_0)
+                            separator_default = st.session_state.get(f'separator_{i}', separator_0)
                             with col1:
                                 disc_loading = st.number_input(f'Disc loading (mg) for Cell {i+1}', min_value=0.0, step=1.0, value=loading_default, key=f'loading_{i}')
                                 formation_cycles = st.number_input(f'Formation Cycles for Cell {i+1}', min_value=0, step=1, value=formation_default, key=f'formation_cycles_{i}')
                             with col2:
                                 active_material = st.number_input(f'% Active material for Cell {i+1}', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_{i}')
                             
-                            # Electrolyte and Substrate selection
+                            # Electrolyte, Substrate, and Separator selection
                             electrolyte = render_hybrid_electrolyte_input(
                                 f'Electrolyte for Cell {i+1}', 
                                 default_value=electrolyte_default,
@@ -694,6 +857,13 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             substrate = st.selectbox(f'Substrate for Cell {i+1}', substrate_options,
                                                    index=substrate_options.index(substrate_default) if substrate_default in substrate_options else 0,
                                                    key=f'substrate_{i}')
+                            
+                            # Separator selection
+                            separator = render_hybrid_separator_input(
+                                f'Separator for Cell {i+1}', 
+                                default_value=separator_default,
+                                key=f'separator_{i}'
+                            )
                             
                             # Formulation table
                             st.markdown("**Formulation:**")
@@ -712,6 +882,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             'formation_cycles': formation_cycles,
                             'electrolyte': electrolyte,
                             'substrate': substrate,
+                            'separator': separator,
                             'formulation': formulation
                         })
             else:
@@ -730,9 +901,10 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         except (ValueError, TypeError):
                             formation_cycles_default = 4
                     formation_default = st.session_state.get('formation_cycles_0', formation_cycles_default)
-                    # Prioritize project defaults for electrolyte and substrate
+                    # Prioritize project defaults for electrolyte, substrate, and separator
                     electrolyte_default = st.session_state.get('electrolyte_0', project_defaults.get('electrolyte', '1M LiPF6 1:1:1'))
                     substrate_default = st.session_state.get('substrate_0', project_defaults.get('substrate', 'Copper'))
+                    separator_default = st.session_state.get('separator_0', project_defaults.get('separator', '25um PP'))
                     with col1:
                         disc_loading = st.number_input(f'Disc loading (mg) for Cell 1', min_value=0.0, step=1.0, value=loading_default, key=f'loading_0')
                         formation_cycles = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
@@ -740,10 +912,10 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         active_material = st.number_input(f'% Active material for Cell 1', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_0')
                         test_number = st.text_input(f'Test Number for Cell 1', value='Cell 1', key=f'testnum_0')
                     
-                    # Electrolyte and Substrate selection
+                    # Electrolyte, Substrate, and Separator selection
                     substrate_options = get_substrate_options()
                     
-                    col3, col4 = st.columns(2)
+                    col3, col4, col5 = st.columns(3)
                     with col3:
                         electrolyte = render_hybrid_electrolyte_input(
                             f'Electrolyte for Cell 1', 
@@ -754,6 +926,12 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         substrate = st.selectbox(f'Substrate for Cell 1', substrate_options,
                                                index=substrate_options.index(substrate_default) if substrate_default in substrate_options else 0,
                                                key=f'substrate_0')
+                    with col5:
+                        separator = render_hybrid_separator_input(
+                            f'Separator for Cell 1', 
+                            default_value=separator_default,
+                            key=f'separator_0'
+                        )
                     
                     # Formulation table
                     st.markdown("**Formulation:**")
@@ -767,6 +945,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         'formation_cycles': formation_cycles,
                         'electrolyte': electrolyte,
                         'substrate': substrate,
+                        'separator': separator,
                         'formulation': formulation
                     })
     return datasets

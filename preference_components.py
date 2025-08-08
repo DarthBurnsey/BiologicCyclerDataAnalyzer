@@ -42,6 +42,15 @@ def render_preferences_sidebar(project_id):
             help="Default substrate for new experiments"
         )
         
+        # Separator preference
+        from ui_components import get_separator_options, render_hybrid_separator_input
+        current_separator = preferences.get('separator', '')
+        new_separator = render_hybrid_separator_input(
+            "Separator",
+            default_value=current_separator,
+            key="pref_separator"
+        )
+        
         # Formation cycles preference
         current_formation_cycles = preferences.get('formation_cycles', '4')
         try:
@@ -80,6 +89,7 @@ def render_preferences_sidebar(project_id):
             new_preferences = {
                 'electrolyte': new_electrolyte,
                 'substrate': new_substrate,
+                'separator': new_separator,
                 'formation_cycles': str(new_formation_cycles),
                 'formulation': current_formulation  # This will be updated when formulation is saved separately
             }
@@ -93,6 +103,7 @@ def render_preferences_sidebar(project_id):
             save_project_preferences(project_id, {
                 'electrolyte': '',
                 'substrate': '',
+                'separator': '',
                 'formation_cycles': '',
                 'formulation': ''
             })
@@ -164,6 +175,7 @@ def get_default_values_for_experiment(project_id):
     defaults = {
         'electrolyte': preferences.get('electrolyte', ''),
         'substrate': preferences.get('substrate', ''),
+        'separator': preferences.get('separator', ''),
         'formation_cycles': int(preferences.get('formation_cycles', 4)),
         'formulation': []
     }

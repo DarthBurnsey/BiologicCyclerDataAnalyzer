@@ -749,10 +749,10 @@ with tab_inputs:
                         key=f'edit_testnum_0'
                     )
                 
-                # Electrolyte and Substrate selection
+                # Electrolyte, Substrate, and Separator selection
                 substrate_options = get_substrate_options()
                 
-                col3, col4 = st.columns(2)
+                col3, col4, col5 = st.columns(3)
                 with col3:
                     from ui_components import render_hybrid_electrolyte_input
                     electrolyte_0 = render_hybrid_electrolyte_input(
@@ -766,6 +766,13 @@ with tab_inputs:
                         substrate_options,
                         index=substrate_options.index(datasets[0].get("substrate", "Copper")) if datasets[0].get("substrate") in substrate_options else 0,
                         key=f'edit_substrate_0'
+                    )
+                with col5:
+                    from ui_components import render_hybrid_separator_input
+                    separator_0 = render_hybrid_separator_input(
+                        f'Separator for Cell 1', 
+                        default_value=datasets[0].get("separator", "25um PP"),
+                        key=f'edit_separator_0'
                     )
                 
                 # Formulation table
@@ -791,6 +798,7 @@ with tab_inputs:
                         'formation_cycles': formation_cycles_0,
                         'electrolyte': electrolyte_0,
                         'substrate': substrate_0,
+                        'separator': separator_0,
                         'formulation': formulation_0
                     }
                 else:
@@ -802,6 +810,7 @@ with tab_inputs:
                             active_material = active_material_0
                             electrolyte = electrolyte_0
                             substrate = substrate_0
+                            separator = separator_0
                             formulation = formulation_0
                             # Test number should remain individual (not assigned to all)
                             test_number = dataset['testnum'] or f'Cell {i+1}'
@@ -836,10 +845,10 @@ with tab_inputs:
                                     key=f'edit_testnum_{i}'
                                 )
                             
-                            # Electrolyte and Substrate selection
+                            # Electrolyte, Substrate, and Separator selection
                             substrate_options = get_substrate_options()
                             
-                            col3, col4 = st.columns(2)
+                            col3, col4, col5 = st.columns(3)
                             with col3:
                                 electrolyte = render_hybrid_electrolyte_input(
                                     f'Electrolyte for Cell {i+1}', 
@@ -852,6 +861,12 @@ with tab_inputs:
                                     substrate_options,
                                     index=substrate_options.index(dataset.get('substrate', 'Copper')) if dataset.get('substrate') in substrate_options else 0,
                                     key=f'edit_substrate_{i}'
+                                )
+                            with col5:
+                                separator = render_hybrid_separator_input(
+                                    f'Separator for Cell {i+1}', 
+                                    default_value=dataset.get('separator', '25um PP'),
+                                    key=f'edit_separator_{i}'
                                 )
                             
                             # Formulation table
@@ -873,6 +888,7 @@ with tab_inputs:
                                 'formation_cycles': formation_cycles,
                                 'electrolyte': electrolyte,
                                 'substrate': substrate,
+                                'separator': separator,
                                 'formulation': formulation
                             }
                 edited_datasets.append(edited_dataset)
@@ -913,10 +929,10 @@ with tab_inputs:
                             key=f'edit_testnum_{i}'
                         )
                     
-                    # Electrolyte and Substrate selection
+                    # Electrolyte, Substrate, and Separator selection
                     substrate_options = get_substrate_options()
                     
-                    col3, col4 = st.columns(2)
+                    col3, col4, col5 = st.columns(3)
                     with col3:
                         electrolyte = render_hybrid_electrolyte_input(
                             f'Electrolyte for Cell {i+1}', 
@@ -929,6 +945,12 @@ with tab_inputs:
                             substrate_options,
                             index=substrate_options.index(dataset.get('substrate', 'Copper')) if dataset.get('substrate') in substrate_options else 0,
                             key=f'edit_single_substrate_{i}'
+                        )
+                    with col5:
+                        separator = render_hybrid_separator_input(
+                            f'Separator for Cell {i+1}', 
+                            default_value=dataset.get('separator', '25um PP'),
+                            key=f'edit_single_separator_{i}'
                         )
                     
                     # Formulation table
@@ -949,6 +971,7 @@ with tab_inputs:
                         'formation_cycles': formation_cycles,
                         'electrolyte': electrolyte,
                         'substrate': substrate,
+                        'separator': separator,
                         'formulation': formulation
                     }
                 dataset.update(edited_dataset)
@@ -1078,6 +1101,8 @@ with tab_inputs:
                         'test_number': dataset['testnum'],
                         'cell_name': dataset['testnum'],
                         'electrolyte': dataset.get('electrolyte', '1M LiPF6 1:1:1'),
+                        'substrate': dataset.get('substrate', 'Copper'),
+                        'separator': dataset.get('separator', '25um PP'),
                         'formulation': dataset.get('formulation', []),
                         'data_json': updated_data_json  # Updated with recalculated values
                     })
@@ -1162,6 +1187,8 @@ with tab_inputs:
                                 'formation_cycles': ds['formation_cycles'],
                                 'test_number': ds['testnum'],
                                 'electrolyte': ds.get('electrolyte', '1M LiPF6 1:1:1'),
+                                'substrate': ds.get('substrate', 'Copper'),
+                                'separator': ds.get('separator', '25um PP'),
                                 'formulation': ds.get('formulation', []),
                                 'data_json': df.to_json()
                             })
@@ -1935,7 +1962,7 @@ if tab_comparison and current_project_id:
             experiment_dict = {}
             
             for exp_data in all_experiments_data:
-                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
                 experiment_options.append(exp_name)
                 experiment_dict[exp_name] = exp_data
             
@@ -1959,7 +1986,7 @@ if tab_comparison and current_project_id:
                 
                 for exp_name in selected_experiments:
                     exp_data = experiment_dict[exp_name]
-                    exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                    exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
                     
                     try:
                         parsed_data = json.loads(data_json)
@@ -2243,7 +2270,11 @@ if tab_master and current_project_id:
             individual_cells = []
             
             for exp_data in all_experiments_data:
-                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                
+                # If substrate or separator are None from database, we'll extract them from JSON data
+                extracted_substrate = substrate
+                extracted_separator = separator
                 
                 try:
                     parsed_data = json.loads(data_json)
@@ -2275,6 +2306,10 @@ if tab_master and current_project_id:
                                 cell_summary['pressed_thickness'] = parsed_data.get('pressed_thickness')
                                 # Add disc diameter data from experiment
                                 cell_summary['disc_diameter_mm'] = disc_diameter
+                                # Add electrolyte, substrate, and separator data to cell summary
+                                cell_summary['electrolyte'] = cell_data.get('electrolyte', 'N/A')
+                                cell_summary['substrate'] = cell_data.get('substrate', 'N/A')
+                                cell_summary['separator'] = cell_data.get('separator', 'N/A')
                                 # Add formulation data to cell summary
                                 if 'formulation' in cell_data:
                                     cell_summary['formulation_json'] = json.dumps(cell_data['formulation'])
@@ -2320,6 +2355,11 @@ if tab_master and current_project_id:
                             exp_summary['pressed_thickness'] = parsed_data.get('pressed_thickness')
                             # Add disc diameter data to experiment summary
                             exp_summary['disc_diameter_mm'] = disc_diameter
+                            # Add electrolyte, substrate, and separator data to experiment summary (use first cell's values as representative)
+                            if experiment_cells:
+                                exp_summary['electrolyte'] = experiment_cells[0].get('electrolyte', 'N/A')
+                                exp_summary['substrate'] = experiment_cells[0].get('substrate', 'N/A')
+                                exp_summary['separator'] = experiment_cells[0].get('separator', 'N/A')
                             # Add experiment notes to experiment summary
                             exp_summary['experiment_notes'] = experiment_notes
                             experiment_summaries.append(exp_summary)
@@ -2345,6 +2385,10 @@ if tab_master and current_project_id:
                         }, np.pi * (15 / 2 / 10) ** 2, project_type)  # Default disc size
                         cell_summary['experiment_name'] = exp_name
                         cell_summary['experiment_date'] = created_date
+                        # Add electrolyte, substrate, and separator data to cell summary
+                        cell_summary['electrolyte'] = electrolyte if electrolyte else 'N/A'
+                        cell_summary['substrate'] = extracted_substrate if extracted_substrate else 'N/A'
+                        cell_summary['separator'] = extracted_separator if extracted_separator else 'N/A'
                         # Add formulation data to cell summary
                         if formulation_json:
                             cell_summary['formulation_json'] = formulation_json
@@ -2399,6 +2443,10 @@ if tab_master and current_project_id:
                         # Also add as experiment summary (since it's a single cell)
                         exp_summary = cell_summary.copy()
                         exp_summary['cell_name'] = f"{exp_name} (Single Cell)"
+                        # Add electrolyte, substrate, and separator data to experiment summary
+                        exp_summary['electrolyte'] = electrolyte if electrolyte else 'N/A'
+                        exp_summary['substrate'] = extracted_substrate if extracted_substrate else 'N/A'
+                        exp_summary['separator'] = extracted_separator if extracted_separator else 'N/A'
                         # Add porosity data from database if available, or recalculate if missing
                         if porosity is not None and porosity > 0:
                             exp_summary['porosity'] = porosity
