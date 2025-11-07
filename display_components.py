@@ -16,9 +16,10 @@ def extract_formulation_data(experiment_summaries, individual_cells):
         active_material_data[exp_name] = exp.get('active_material', np.nan)
         
         # Extract formulation components if available
-        if 'formulation_json' in exp:
+        formulation_json = exp.get('formulation_json')
+        if formulation_json and formulation_json not in (None, '', 'null'):
             try:
-                formulation = json.loads(exp['formulation_json'])
+                formulation = json.loads(formulation_json)
                 if isinstance(formulation, list):
                     for item in formulation:
                         if isinstance(item, dict) and item.get('Component'):
@@ -26,8 +27,8 @@ def extract_formulation_data(experiment_summaries, individual_cells):
                             all_components.add(component)
                             if exp_name not in component_data:
                                 component_data[exp_name] = {}
-                            component_data[exp_name][component] = item.get('Value', np.nan)
-            except (json.JSONDecodeError, AttributeError):
+                            component_data[exp_name][component] = item.get('Dry Mass Fraction (%)', np.nan)
+            except (json.JSONDecodeError, AttributeError, TypeError):
                 pass
     
     # Process individual cells (Section 2)
@@ -39,9 +40,10 @@ def extract_formulation_data(experiment_summaries, individual_cells):
         active_material_data[cell_name] = cell.get('active_material', np.nan)
         
         # Extract formulation components if available
-        if 'formulation_json' in cell:
+        formulation_json = cell.get('formulation_json')
+        if formulation_json and formulation_json not in (None, '', 'null'):
             try:
-                formulation = json.loads(cell['formulation_json'])
+                formulation = json.loads(formulation_json)
                 if isinstance(formulation, list):
                     for item in formulation:
                         if isinstance(item, dict) and item.get('Component'):
@@ -49,8 +51,8 @@ def extract_formulation_data(experiment_summaries, individual_cells):
                             all_components.add(component)
                             if cell_name not in component_data:
                                 component_data[cell_name] = {}
-                            component_data[cell_name][component] = item.get('Value', np.nan)
-            except (json.JSONDecodeError, AttributeError):
+                            component_data[cell_name][component] = item.get('Dry Mass Fraction (%)', np.nan)
+            except (json.JSONDecodeError, AttributeError, TypeError):
                 pass
     
     return sorted(list(all_components)), component_data, active_material_data
@@ -193,12 +195,12 @@ def display_experiment_summaries_table(experiment_summaries):
             'Loading (mg/cm²)': f"{loading_density:.2f}" if loading_density is not np.nan else np.nan,
             'Pressed Thickness (μm)': f"{exp.get('pressed_thickness', np.nan):.1f}" if exp.get('pressed_thickness') is not None and not np.isnan(exp.get('pressed_thickness')) else np.nan,
             'Date': exp.get('experiment_date', np.nan),
-            '1st Discharge (mAh/g)': f"{exp['first_discharge']:.1f}" if exp['first_discharge'] is not None else np.nan,
-            'First Efficiency (%)': f"{exp['first_efficiency']:.3f}%" if exp['first_efficiency'] is not None else np.nan,
-            'Cycle Life (80%)': f"{exp['cycle_life_80']:.1f}" if exp['cycle_life_80'] is not None else np.nan,
-            'Areal Capacity (mAh/cm²)': f"{exp['areal_capacity']:.2f}" if exp['areal_capacity'] is not None else np.nan,
-            'Reversible Capacity (mAh/g)': f"{exp['reversible_capacity']:.1f}" if exp['reversible_capacity'] is not None else np.nan,
-            'Coulombic Efficiency (%)': f"{exp['coulombic_efficiency']:.3f}%" if exp['coulombic_efficiency'] is not None else np.nan,
+            '1st Discharge (mAh/g)': exp['first_discharge'] if exp['first_discharge'] is not None else np.nan,
+            'First Efficiency (%)': exp['first_efficiency'] if exp['first_efficiency'] is not None else np.nan,
+            'Cycle Life (80%)': exp['cycle_life_80'] if exp['cycle_life_80'] is not None else np.nan,
+            'Areal Capacity (mAh/cm²)': exp['areal_capacity'] if exp['areal_capacity'] is not None else np.nan,
+            'Reversible Capacity (mAh/g)': exp['reversible_capacity'] if exp['reversible_capacity'] is not None else np.nan,
+            'Coulombic Efficiency (%)': exp['coulombic_efficiency'] if exp['coulombic_efficiency'] is not None else np.nan,
             'Porosity (%)': f"{exp['porosity']*100:.1f}%" if exp['porosity'] is not None and exp['porosity'] > 0 else "N/A",
             'Electrolyte': exp.get('electrolyte', 'N/A'),
             'Substrate': exp.get('substrate', 'N/A'),
@@ -223,11 +225,36 @@ def display_experiment_summaries_table(experiment_summaries):
     df = df[available_columns]
     
     # Display the dataframe with styling
-    # Only apply porosity styling if the column exists in the filtered dataframe
+    styled_df = df.style
+    
+    # Apply porosity styling if the column exists
     if 'Porosity (%)' in df.columns:
-        styled_df = df.style.map(style_porosity, subset=['Porosity (%)'])
-    else:
-        styled_df = df.style
+        styled_df = styled_df.map(style_porosity, subset=['Porosity (%)'])
+    
+    # Format numeric columns for display while preserving sortability
+    format_dict = {}
+    if 'Cycle Life (80%)' in df.columns:
+        format_dict['Cycle Life (80%)'] = '{:.1f}'
+    if 'Reversible Capacity (mAh/g)' in df.columns:
+        format_dict['Reversible Capacity (mAh/g)'] = '{:.1f}'
+    if 'Areal Capacity (mAh/cm²)' in df.columns:
+        format_dict['Areal Capacity (mAh/cm²)'] = '{:.2f}'
+    if '1st Discharge (mAh/g)' in df.columns:
+        format_dict['1st Discharge (mAh/g)'] = '{:.1f}'
+    if 'Coulombic Efficiency (%)' in df.columns:
+        format_dict['Coulombic Efficiency (%)'] = '{:.3f}%'
+    if 'First Efficiency (%)' in df.columns:
+        format_dict['First Efficiency (%)'] = '{:.3f}%'
+    
+    # Add formatters for component columns
+    for component in all_components:
+        component_col = f'{component} (%)'
+        if component_col in df.columns:
+            format_dict[component_col] = lambda x: 'N/A' if pd.isna(x) else f"{x:.1f}"
+    
+    if format_dict:
+        styled_df = styled_df.format(format_dict, na_rep='N/A')
+    
     st.dataframe(styled_df, use_container_width=True)
 
 def display_individual_cells_table(individual_cells):
@@ -355,12 +382,12 @@ def display_individual_cells_table(individual_cells):
             'Loading (mg/cm²)': f"{loading_density:.2f}" if loading_density is not np.nan else np.nan,
             'Pressed Thickness (μm)': f"{cell.get('pressed_thickness', np.nan):.1f}" if cell.get('pressed_thickness') is not None and not np.isnan(cell.get('pressed_thickness')) else np.nan,
             'Date': cell.get('experiment_date', np.nan),
-            '1st Discharge (mAh/g)': f"{cell['first_discharge']:.1f}" if cell['first_discharge'] is not None else np.nan,
-            'First Efficiency (%)': f"{cell['first_efficiency']:.3f}%" if cell['first_efficiency'] is not None else np.nan,
-            'Cycle Life (80%)': f"{cell['cycle_life_80']:.1f}" if cell['cycle_life_80'] is not None else np.nan,
-            'Areal Capacity (mAh/cm²)': f"{cell['areal_capacity']:.2f}" if cell['areal_capacity'] is not None else np.nan,
-            'Reversible Capacity (mAh/g)': f"{cell['reversible_capacity']:.1f}" if cell['reversible_capacity'] is not None else np.nan,
-            'Coulombic Efficiency (%)': f"{cell['coulombic_efficiency']:.3f}%" if cell['coulombic_efficiency'] is not None else np.nan,
+            '1st Discharge (mAh/g)': cell['first_discharge'] if cell['first_discharge'] is not None else np.nan,
+            'First Efficiency (%)': cell['first_efficiency'] if cell['first_efficiency'] is not None else np.nan,
+            'Cycle Life (80%)': cell['cycle_life_80'] if cell['cycle_life_80'] is not None else np.nan,
+            'Areal Capacity (mAh/cm²)': cell['areal_capacity'] if cell['areal_capacity'] is not None else np.nan,
+            'Reversible Capacity (mAh/g)': cell['reversible_capacity'] if cell['reversible_capacity'] is not None else np.nan,
+            'Coulombic Efficiency (%)': cell['coulombic_efficiency'] if cell['coulombic_efficiency'] is not None else np.nan,
             'Porosity (%)': f"{cell['porosity']*100:.1f}%" if cell['porosity'] is not None and cell['porosity'] > 0 else "N/A",
             'Electrolyte': cell.get('electrolyte', 'N/A'),
             'Substrate': cell.get('substrate', 'N/A'),
@@ -385,11 +412,36 @@ def display_individual_cells_table(individual_cells):
     df = df[available_columns]
     
     # Display the dataframe with styling
-    # Only apply porosity styling if the column exists in the filtered dataframe
+    styled_df = df.style
+    
+    # Apply porosity styling if the column exists
     if 'Porosity (%)' in df.columns:
-        styled_df = df.style.map(style_porosity, subset=['Porosity (%)'])
-    else:
-        styled_df = df.style
+        styled_df = styled_df.map(style_porosity, subset=['Porosity (%)'])
+    
+    # Format numeric columns for display while preserving sortability
+    format_dict = {}
+    if 'Cycle Life (80%)' in df.columns:
+        format_dict['Cycle Life (80%)'] = '{:.1f}'
+    if 'Reversible Capacity (mAh/g)' in df.columns:
+        format_dict['Reversible Capacity (mAh/g)'] = '{:.1f}'
+    if 'Areal Capacity (mAh/cm²)' in df.columns:
+        format_dict['Areal Capacity (mAh/cm²)'] = '{:.2f}'
+    if '1st Discharge (mAh/g)' in df.columns:
+        format_dict['1st Discharge (mAh/g)'] = '{:.1f}'
+    if 'Coulombic Efficiency (%)' in df.columns:
+        format_dict['Coulombic Efficiency (%)'] = '{:.3f}%'
+    if 'First Efficiency (%)' in df.columns:
+        format_dict['First Efficiency (%)'] = '{:.3f}%'
+    
+    # Add formatters for component columns
+    for component in all_components:
+        component_col = f'{component} (%)'
+        if component_col in df.columns:
+            format_dict[component_col] = lambda x: 'N/A' if pd.isna(x) else f"{x:.1f}"
+    
+    if format_dict:
+        styled_df = styled_df.format(format_dict, na_rep='N/A')
+    
     st.dataframe(styled_df, use_container_width=True)
 
 def display_best_performers_analysis(individual_cells):
@@ -398,11 +450,89 @@ def display_best_performers_analysis(individual_cells):
         st.info("No individual cell data available for analysis.")
         return
     
-    # Filter cells with valid data (excluding porosity from performance metrics)
-    valid_cells = [cell for cell in individual_cells if any([
-        cell['first_discharge'], cell['first_efficiency'], cell['cycle_life_80'], 
-        cell['areal_capacity'], cell['reversible_capacity'], cell['coulombic_efficiency']
-    ])]
+    # Import outlier detection
+    try:
+        from outlier_detection import filter_outliers, get_outlier_detection_ui_settings, BATTERY_DATA_BOUNDS
+        
+        # Get outlier detection settings from UI (including manual exclusions)
+        outlier_settings = get_outlier_detection_ui_settings(individual_cells)
+        
+        # Extract manual exclusions from settings
+        manual_exclusion_names = outlier_settings.get('manual_exclusions', [])
+        
+        # Apply outlier filtering
+        filtered_cells, outlier_summary = filter_outliers(individual_cells, outlier_settings, manual_exclusion_names)
+        
+        # Show filtering summary
+        total_cells = len(individual_cells)
+        filtered_count = len(filtered_cells)
+        excluded_count = total_cells - filtered_count
+        
+        if excluded_count > 0:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Cells", total_cells)
+            with col2:
+                st.metric("Included", filtered_count, delta=f"-{excluded_count}")
+            with col3:
+                st.metric("Excluded", excluded_count, delta_color="inverse")
+        
+        # Show outlier detection results
+        if outlier_summary:
+            total_outliers = sum(len(outliers) for outliers in outlier_summary.values())
+            st.info(f"🔧 Applied field-specific filtering: {total_outliers} outlier data points excluded from {len(outlier_summary)} metrics (cells with valid data in other fields are still included)")
+            
+            with st.expander("🔍 View Detected Outliers", expanded=False):
+                for field, outliers in outlier_summary.items():
+                    st.markdown(f"**{BATTERY_DATA_BOUNDS.get(field, {}).get('description', field)}:**")
+                    for outlier in outliers:
+                        reasons = "; ".join(outlier['outlier_reasons'])
+                        st.text(f"• {outlier['cell_name']} ({outlier['experiment_name']}): {outlier['value']:.3f} - {reasons}")
+                    st.markdown("---")
+                
+                # Debug: Show which cells contain "L8" for troubleshooting
+                l8_cells = [cell for cell in individual_cells if 'L8' in cell.get('cell_name', '')]
+                if l8_cells:
+                    st.markdown("**🔍 Debug: L8 Cells Analysis**")
+                    for cell in l8_cells:
+                        cell_name = cell.get('cell_name', 'Unknown')
+                        is_excluded = cell_name not in [c.get('cell_name', '') for c in filtered_cells]
+                        status = "EXCLUDED" if is_excluded else "INCLUDED"
+                        cycle_life = cell.get('cycle_life_80', 'N/A')
+                        st.text(f"• {cell_name}: Cycle Life = {cycle_life}, Status = {status}")
+                        
+                        # Check all fields for this cell
+                        if is_excluded:
+                            st.text(f"    Checking why {cell_name} is excluded:")
+                            for check_field in ['first_efficiency', 'coulombic_efficiency', 'first_discharge', 
+                                              'reversible_capacity', 'areal_capacity', 'cycle_life_80']:
+                                value = cell.get(check_field)
+                                if value is not None:
+                                    from outlier_detection import detect_outliers_hard_bounds
+                                    is_outlier, reason = detect_outliers_hard_bounds(cell, check_field)
+                                    if is_outlier:
+                                        st.text(f"      - {check_field}: {value} - OUTLIER ({reason})")
+                    st.markdown("---")
+        
+        if manual_exclusion_names:
+            st.info(f"📝 Manually excluded {len(manual_exclusion_names)} cells")
+        
+        if excluded_count == 0:
+            st.success("✅ No cells excluded from analysis")
+        
+        # Use filtered cells for analysis
+        valid_cells = [cell for cell in filtered_cells if any([
+            cell['first_discharge'], cell['first_efficiency'], cell['cycle_life_80'], 
+            cell['areal_capacity'], cell['reversible_capacity'], cell['coulombic_efficiency']
+        ])]
+        
+    except ImportError:
+        # Fallback to original behavior if outlier detection is not available
+        st.warning("Outlier detection module not available. Using all data.")
+        valid_cells = [cell for cell in individual_cells if any([
+            cell['first_discharge'], cell['first_efficiency'], cell['cycle_life_80'], 
+            cell['areal_capacity'], cell['reversible_capacity'], cell['coulombic_efficiency']
+        ])]
     
     if not valid_cells:
         st.info("No valid data for performance analysis.")
@@ -423,7 +553,22 @@ def display_best_performers_analysis(individual_cells):
     cols = st.columns(2)
     for i, (metric_name, (field, transform, unit)) in enumerate(metrics.items()):
         with cols[i % 2]:
-            valid_for_metric = [cell for cell in valid_cells if cell[field] is not None]
+            # Filter out cells that are outliers for THIS SPECIFIC field
+            valid_for_metric = []
+            for cell in valid_cells:
+                if cell[field] is not None:
+                    # Check if this cell is an outlier for this specific field
+                    is_outlier_for_field = False
+                    if field in outlier_summary:
+                        for outlier in outlier_summary[field]:
+                            if outlier['cell_name'] == cell['cell_name']:
+                                is_outlier_for_field = True
+                                break
+                    
+                    # Only include if not an outlier for this field
+                    if not is_outlier_for_field:
+                        valid_for_metric.append(cell)
+            
             if valid_for_metric:
                 best_cell = max(valid_for_metric, key=lambda x: transform(x[field]))
                 value = transform(best_cell[field])
@@ -457,14 +602,36 @@ def display_best_performers_analysis(individual_cells):
         # Normalize each metric (higher is better for all)
         for field, transform, unit in metrics.values():
             if cell[field] is not None:
-                all_values = [c[field] for c in valid_cells if c[field] is not None]
-                if all_values:
-                    min_val = min(all_values)
-                    max_val = max(all_values)
-                    if max_val > min_val:
-                        normalized = (transform(cell[field]) - min_val) / (max_val - min_val)
-                        score += normalized
-                        valid_metrics += 1
+                # Check if this cell is an outlier for this specific field
+                is_outlier_for_field = False
+                if field in outlier_summary:
+                    for outlier in outlier_summary[field]:
+                        if outlier['cell_name'] == cell['cell_name']:
+                            is_outlier_for_field = True
+                            break
+                
+                # Only include this metric in the score if it's not an outlier
+                if not is_outlier_for_field:
+                    # Get all non-outlier values for this field to calculate min/max
+                    all_values = []
+                    for c in valid_cells:
+                        if c[field] is not None:
+                            is_c_outlier = False
+                            if field in outlier_summary:
+                                for outlier in outlier_summary[field]:
+                                    if outlier['cell_name'] == c['cell_name']:
+                                        is_c_outlier = True
+                                        break
+                            if not is_c_outlier:
+                                all_values.append(c[field])
+                    
+                    if all_values:
+                        min_val = min(all_values)
+                        max_val = max(all_values)
+                        if max_val > min_val:
+                            normalized = (transform(cell[field]) - min_val) / (max_val - min_val)
+                            score += normalized
+                            valid_metrics += 1
         
         if valid_metrics > 0:
             avg_score = score / valid_metrics
@@ -495,18 +662,38 @@ def display_best_performers_analysis(individual_cells):
     # New subsection with detailed rankings tables
     with st.expander("📊 Detailed Rankings Tables", expanded=False):
         # Create DataFrame for analysis with numeric values for proper sorting
+        # Map field names to column names
+        field_to_column = {
+            'reversible_capacity': 'Reversible Capacity (mAh/g)',
+            'coulombic_efficiency': 'Coulombic Efficiency (%)',
+            'first_discharge': '1st Cycle Discharge (mAh/g)',
+            'first_efficiency': 'First Cycle Efficiency (%)',
+            'areal_capacity': 'Areal Capacity (mAh/cm²)',
+            'cycle_life_80': 'Cycle Life (80%)'
+        }
+        
         df_data = []
-        for cell in individual_cells:
+        for cell in valid_cells:
             row = {
                 'Cell': cell['cell_name'],
                 'Experiment': cell.get('experiment_name', 'Unknown'),
-                'Reversible Capacity (mAh/g)': cell['reversible_capacity'] if cell['reversible_capacity'] is not None else np.nan,
-                'Coulombic Efficiency (%)': cell['coulombic_efficiency'] if cell['coulombic_efficiency'] is not None else np.nan,
-                '1st Cycle Discharge (mAh/g)': cell['first_discharge'] if cell['first_discharge'] is not None else np.nan,
-                'First Cycle Efficiency (%)': cell['first_efficiency'] if cell['first_efficiency'] is not None else np.nan,
-                'Areal Capacity (mAh/cm²)': cell['areal_capacity'] if cell['areal_capacity'] is not None else np.nan,
-                'Cycle Life (80%)': cell['cycle_life_80'] if cell['cycle_life_80'] is not None else np.nan
             }
+            
+            # Add each metric, but set to NaN if it's an outlier for this field
+            for field, column in field_to_column.items():
+                value = cell[field] if cell[field] is not None else np.nan
+                
+                # Check if this cell is an outlier for this specific field
+                is_outlier_for_field = False
+                if field in outlier_summary:
+                    for outlier in outlier_summary[field]:
+                        if outlier['cell_name'] == cell['cell_name']:
+                            is_outlier_for_field = True
+                            break
+                
+                # Set to NaN if it's an outlier
+                row[column] = np.nan if is_outlier_for_field else value
+            
             df_data.append(row)
         
         df = pd.DataFrame(df_data)

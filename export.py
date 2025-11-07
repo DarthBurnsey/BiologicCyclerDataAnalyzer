@@ -1,6 +1,7 @@
 # export.py
 from typing import List, Dict, Any, Tuple, Optional
 import io
+import json
 import logging
 import tempfile
 import os
@@ -10,8 +11,9 @@ from openpyxl.chart import LineChart, Reference
 import pandas as pd
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import numpy as np
@@ -303,7 +305,10 @@ def save_figure_to_temp_file(fig: Figure, dpi: int = 300) -> str:
         # Save figure with high quality settings
         fig.savefig(temp_path, format='png', bbox_inches='tight', dpi=dpi, 
                    facecolor='white', edgecolor='none', pad_inches=0.1)
-        plt.close(fig)  # Close to free memory
+        
+        # Explicitly close all matplotlib resources to prevent memory issues
+        plt.close(fig)
+        plt.close('all')  # Close any remaining figures
         
         # Verify file was created and has content
         if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
@@ -360,6 +365,160 @@ def cleanup_temp_files(temp_files: List[str]):
         except Exception as e:
             logger.error(f"Error cleaning up temp file {temp_file}: {e}")
 
+def add_formatted_table_to_slide(slide, table_data, left, top, width, height, header_color=None, avg_row_color=None):
+    """
+    Add a formatted table to a slide with proper styling.
+    """
+    try:
+        rows = len(table_data)
+        cols = len(table_data[0]) if table_data else 0
+        if rows == 0 or cols == 0:
+            return None
+        
+        # Calculate dynamic height based on number of rows
+        row_height = max(0.3, min(0.5, height / rows))
+        table_height = max(height, row_height * rows)
+        
+        table_shape = slide.shapes.add_table(rows, cols, Inches(left), Inches(top), Inches(width), Inches(table_height))
+        table = table_shape.table
+        
+        # Set column widths
+        col_width = width / cols
+        for col_idx in range(cols):
+            table.columns[col_idx].width = Inches(col_width)
+        
+        # Populate table with data
+        for i, row_data in enumerate(table_data):
+            for j, cell_data in enumerate(row_data):
+                if j < cols:  # Safety check
+                    cell = table.cell(i, j)
+                    cell.text = str(cell_data)
+                    
+                    # Set vertical alignment
+                    cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+                    
+                    # Format paragraphs
+                    for para in cell.text_frame.paragraphs:
+                        para.alignment = PP_ALIGN.CENTER
+                        for run in para.runs:
+                            run.font.size = Pt(11)
+                            run.font.name = 'Calibri'
+                    
+                    # Header row styling
+                    if i == 0:
+                        cell.fill.solid()
+                        header_color_rgb = header_color if header_color else RGBColor(68, 114, 196)
+                        cell.fill.fore_color.rgb = header_color_rgb
+                        for para in cell.text_frame.paragraphs:
+                            for run in para.runs:
+                                run.font.color.rgb = RGBColor(255, 255, 255)
+                                run.font.bold = True
+                                run.font.size = Pt(12)
+                    
+                    # Average row styling (if exists and avg_row_color provided)
+                    elif avg_row_color and i == len(table_data) - 1 and "AVERAGE" in str(cell_data).upper():
+                        cell.fill.solid()
+                        cell.fill.fore_color.rgb = avg_row_color
+                        for para in cell.text_frame.paragraphs:
+                            for run in para.runs:
+                                run.font.bold = True
+                                run.font.size = Pt(11)
+        
+        return table
+    except Exception as e:
+        logger.error(f"Error adding formatted table: {e}")
+        return None
+
+def add_formulation_table_to_slide(slide, formulation_data, left, top, width, height):
+    """
+    Add a formulation component table to a slide.
+    Handles multiple key variations for legacy data compatibility.
+    """
+    try:
+        if not formulation_data or len(formulation_data) == 0:
+            logger.warning("No formulation data provided")
+            return None
+        
+        # Prepare table data
+        table_data = [["Component", "Dry Mass Fraction (%)"]]
+        
+        for item in formulation_data:
+            if not isinstance(item, dict):
+                logger.warning(f"Skipping non-dict item in formulation data: {item}")
+                continue
+            
+            # Try multiple key variations for component (handle legacy data)
+            component = (item.get('Component') or 
+                        item.get('component') or 
+                        item.get('Component Name') or
+                        item.get('component_name') or
+                        '')
+            
+            # Try multiple key variations for dry mass fraction (handle legacy data)
+            dry_mass_fraction = (item.get('Dry Mass Fraction (%)') or
+                                item.get('dry_mass_fraction') or
+                                item.get('Value') or
+                                item.get('value') or
+                                item.get('Dry Mass Fraction') or
+                                item.get('dry_mass_fraction_pct') or
+                                None)
+            
+            # Handle None, empty string, or invalid values
+            if dry_mass_fraction is None or dry_mass_fraction == '':
+                dry_mass_fraction_str = 'N/A'
+            elif isinstance(dry_mass_fraction, (int, float)):
+                # Ensure it's a valid number
+                if dry_mass_fraction < 0 or dry_mass_fraction > 100:
+                    logger.warning(f"Invalid dry mass fraction value: {dry_mass_fraction}, using as-is")
+                dry_mass_fraction_str = f"{dry_mass_fraction:.1f}"
+            elif isinstance(dry_mass_fraction, str):
+                # Try to parse string values (e.g., "50.0", "50.0%", "None")
+                dry_mass_fraction_clean = dry_mass_fraction.strip().rstrip('%')
+                if dry_mass_fraction_clean.lower() in ('none', 'null', '', 'n/a'):
+                    dry_mass_fraction_str = 'N/A'
+                else:
+                    try:
+                        # Try to convert to float and format
+                        fraction_float = float(dry_mass_fraction_clean)
+                        dry_mass_fraction_str = f"{fraction_float:.1f}"
+                    except (ValueError, TypeError):
+                        # If conversion fails, use the string as-is
+                        logger.warning(f"Could not convert dry mass fraction '{dry_mass_fraction}' to number, using as string")
+                        dry_mass_fraction_str = dry_mass_fraction_clean
+            else:
+                # Fallback for any other type
+                dry_mass_fraction_str = str(dry_mass_fraction) if dry_mass_fraction else 'N/A'
+            
+            # Only add row if component is not empty
+            if component:
+                table_data.append([component, dry_mass_fraction_str])
+                logger.debug(f"Added formulation row: {component} = {dry_mass_fraction_str}")
+            else:
+                logger.warning(f"Skipping row with empty component: {item}")
+        
+        if len(table_data) <= 1:
+            logger.warning("No valid formulation components found after processing")
+            return None
+        
+        # Calculate table height
+        rows = len(table_data)
+        row_height = 0.4
+        table_height = max(height, row_height * rows)
+        
+        # Add table
+        table = add_formatted_table_to_slide(
+            slide, table_data, left, top, width, table_height,
+            header_color=RGBColor(68, 114, 196)
+        )
+        
+        logger.info(f"Formulation table added with {rows} rows (including header)")
+        return table
+        
+    except Exception as e:
+        logger.error(f"Error adding formulation table: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return None
+
 def validate_powerpoint_structure(prs: Presentation) -> bool:
     """
     Validate that the PowerPoint presentation has the expected structure.
@@ -394,8 +553,10 @@ def export_powerpoint(
     include_retention_plot: bool = True,
     include_notes: bool = False,
     include_electrode_data: bool = False,
-    include_porosity: bool = False,
-    include_thickness: bool = False,
+    include_porosity: bool = False,  # Shows single experiment-level porosity value
+    include_thickness: bool = False,  # Shows single experiment-level thickness value
+    include_solids_content: bool = False,  # Shows single experiment-level solids content value
+    include_formulation: bool = False,  # Shows formulation component table
     experiment_notes: str = "",
     # Parameters for retention plot
     retention_threshold: float = 80.0,
@@ -418,6 +579,9 @@ def export_powerpoint(
 ) -> Tuple[io.BytesIO, str]:
     """
     Enhanced PowerPoint export with comprehensive error handling, logging, and session state consistency.
+    
+    Note: Electrode data (porosity, thickness, and solids content) are displayed as single experiment-level values
+    since all cells in an experiment are typically duplicates from the same electrode batch.
     """
     temp_files = []
     
@@ -425,6 +589,9 @@ def export_powerpoint(
         logger.info("=== Starting PowerPoint Export ===")
         logger.info(f"Export parameters: include_main_plot={include_main_plot}, include_retention_plot={include_retention_plot}")
         logger.info(f"Data: {len(dfs)} dataframes, formation_cycles={formation_cycles}")
+        logger.info(f"Show lines: {show_lines}")
+        logger.info(f"Show efficiency lines: {show_efficiency_lines}")
+        logger.info(f"Retention parameters: threshold={retention_threshold}, reference_cycle={reference_cycle}, y_axis=({y_axis_min}, {y_axis_max})")
         
         # Validate input data
         if not dfs:
@@ -439,76 +606,88 @@ def export_powerpoint(
         # Create presentation
         logger.info("Creating PowerPoint presentation...")
         prs = Presentation()
-        slide = prs.slides.add_slide(prs.slide_layouts[5])  # Blank layout
         
-        # Set title with sanitization
-        title_box = slide.shapes.add_textbox(Inches(0.5), Inches(0.1), Inches(9), Inches(0.8))
-        title_tf = title_box.text_frame
-        title_tf.clear()
-        title_p = title_tf.add_paragraph()
-        
+        # Determine slide title
         if len(dfs) == 1:
             testnum = dfs[0].get('testnum', 'Cell 1') or 'Cell 1'
             if experiment_name:
-                title_p.text = f"{experiment_name} - {testnum} Summary"
+                slide_title = f"{experiment_name} - {testnum} Summary"
             else:
-                title_p.text = f"{testnum} Summary"
+                slide_title = f"{testnum} Summary"
         else:
             if experiment_name:
-                title_p.text = f"{experiment_name} - Cell Comparison Summary"
+                slide_title = f"{experiment_name} - Cell Comparison Summary"
             else:
-                title_p.text = "Cell Comparison Summary"
+                slide_title = "Cell Comparison Summary"
         
-        title_p.font.size = Pt(30)
-        title_p.font.bold = True
-        title_p.alignment = PP_ALIGN.CENTER
-        
-        # Add Echem header
-        echem_header_box = slide.shapes.add_textbox(Inches(0.5), Inches(1.0), Inches(3.5), Inches(0.5))
-        echem_header_tf = echem_header_box.text_frame
-        echem_header_tf.clear()
-        echem_header_p = echem_header_tf.add_paragraph()
-        echem_header_p.text = "Echem"
-        echem_header_p.font.size = Pt(24)
-        echem_header_p.font.bold = True
-        echem_header_p.font.color.rgb = RGBColor(0, 0, 0)
-        
-        # Calculate layout positions
-        current_y = 1.6
-        left_width = 4.5
-        right_x = 5.0
-        right_width = 4.5
-        
-        # Content sections based on toggles
-        sections_to_add = []
-        
-        # Plan layout based on enabled toggles
-        plot_count = 0
-        if include_main_plot:
-            plot_count += 1
-        if include_retention_plot:
-            plot_count += 1
-        
-        logger.info(f"Plot count: {plot_count} (main: {include_main_plot}, retention: {include_retention_plot})")
-        
-        # Summary Table Section
+        # Count content items to determine if we need multiple slides
+        content_items_count = 0
         if include_summary_table:
-            sections_to_add.append("summary")
-        
-        # Notes Section
+            content_items_count += 1
         if include_notes and experiment_notes.strip():
-            sections_to_add.append("notes")
+            content_items_count += 1
+        if include_electrode_data and (include_porosity or include_thickness or include_solids_content):
+            content_items_count += 1
+        if include_formulation:
+            content_items_count += 1
+        if include_main_plot:
+            content_items_count += 1
+        if include_retention_plot:
+            content_items_count += 1
         
-        # Electrode Data Section
-        if include_electrode_data and (include_porosity or include_thickness):
-            sections_to_add.append("electrode")
+        # Determine if we need a second slide (split if charts, formulation, or content overflow)
+        # Always create second slide if main plot is included (moved to slide 2 for better visibility)
+        need_second_slide = include_main_plot or include_retention_plot or include_formulation or content_items_count > 5
         
-        # Add summary table/bullets
-        if "summary" in sections_to_add:
+        # Create first slide - use blank layout (6) to avoid default placeholders
+        slide1 = prs.slides.add_slide(prs.slide_layouts[6])  # Blank layout
+        
+        # Manually add title textbox (no default placeholders)
+        title_left, title_top, title_width, title_height = Inches(1), Inches(0.5), Inches(8), Inches(1)
+        title_box = slide1.shapes.add_textbox(title_left, title_top, title_width, title_height)
+        title_tf = title_box.text_frame
+        title_tf.clear()
+        title_p = title_tf.add_paragraph()
+        title_p.text = slide_title
+        title_p.font.size = Pt(24)
+        title_p.font.bold = True
+        title_p.alignment = PP_ALIGN.LEFT
+        title_p.font.name = 'Calibri'
+        
+        # Initialize position tracking - start below title
+        current_y = 1.5  # Start below title (no Echem header)
+        left_margin = 1.0
+        right_margin = 5.0
+        content_width = 4.5
+        slide_height_limit = 6.5  # Maximum Y position before needing new slide
+        
+        # Create second slide if needed - use blank layout (6) to avoid default placeholders
+        slide2 = None
+        if need_second_slide:
+            slide2 = prs.slides.add_slide(prs.slide_layouts[6])
+            # Manually add title to second slide (no default placeholders)
+            title_box2 = slide2.shapes.add_textbox(title_left, title_top, title_width, title_height)
+            title_tf2 = title_box2.text_frame
+            title_tf2.clear()
+            title_p2 = title_tf2.add_paragraph()
+            title_p2.text = f"{slide_title} (Continued)"
+            title_p2.font.size = Pt(24)
+            title_p2.font.bold = True
+            title_p2.alignment = PP_ALIGN.LEFT
+            title_p2.font.name = 'Calibri'
+        
+        # Determine which slide to use for each section
+        # Slide 1: Summary, Notes, Electrode Data
+        # Slide 2: Formulation, Main Plot, Retention Plot (charts moved to slide 2 for better visibility)
+        current_slide = slide1
+        slide2_y = 1.5  # Start below title on slide 2 (no Echem header)
+        
+        # Add summary table/bullets to slide 1
+        if include_summary_table:
             logger.info("Adding summary table...")
             if len(dfs) == 1:
                 # Single cell - bullet points
-                summary_box = slide.shapes.add_textbox(Inches(0.5), current_y, left_width, Inches(2.0))
+                summary_box = slide1.shapes.add_textbox(Inches(left_margin), Inches(current_y), Inches(content_width), Inches(2.0))
                 summary_tf = summary_box.text_frame
                 summary_tf.clear()
                 
@@ -517,6 +696,7 @@ def export_powerpoint(
                 header_p.text = "Summary Metrics"
                 header_p.font.size = Pt(16)
                 header_p.font.bold = True
+                header_p.font.name = 'Calibri'
                 
                 # Calculate metrics using the same logic as the app
                 df_cell = dfs[0]['df']
@@ -533,6 +713,7 @@ def export_powerpoint(
                     p = summary_tf.add_paragraph()
                     p.text = f"• {metric}"
                     p.font.size = Pt(14)
+                    p.font.name = 'Calibri'
                     p.level = 1
                 
                 current_y += 2.2
@@ -592,57 +773,44 @@ def export_powerpoint(
                     
                     table_data.append(avg_row)
                 
-                # Create table
-                rows, cols = len(table_data), len(table_data[0])
-                table = slide.shapes.add_table(rows, cols, Inches(0.5), current_y, Inches(8.5), Inches(1.5 + 0.3 * rows)).table
+                # Use helper function to create formatted table
+                rows = len(table_data)
+                table_height = 1.5 + 0.3 * rows
+                add_formatted_table_to_slide(
+                    slide1, table_data, left_margin, current_y, 8.5, table_height,
+                    header_color=RGBColor(68, 114, 196),
+                    avg_row_color=RGBColor(146, 208, 80) if show_averages and len(dfs) > 1 else None
+                )
                 
-                for i, row_data in enumerate(table_data):
-                    for j, cell_data in enumerate(row_data):
-                        cell = table.cell(i, j)
-                        cell.text = str(cell_data)
-                        if i == 0:  # Header
-                            cell.fill.solid()
-                            cell.fill.fore_color.rgb = RGBColor(68, 114, 196)
-                            for paragraph in cell.text_frame.paragraphs:
-                                paragraph.font.color.rgb = RGBColor(255, 255, 255)
-                                paragraph.font.bold = True
-                                paragraph.font.size = Pt(11)
-                        elif show_averages and i == len(table_data) - 1:  # Average row
-                            cell.fill.solid()
-                            cell.fill.fore_color.rgb = RGBColor(146, 208, 80)
-                            for paragraph in cell.text_frame.paragraphs:
-                                paragraph.font.bold = True
-                                paragraph.font.size = Pt(11)
-                        else:
-                            for paragraph in cell.text_frame.paragraphs:
-                                paragraph.font.size = Pt(10)
-                
-                current_y += 2.0 + 0.3 * rows
+                current_y += table_height + 0.2
         
-        # Add notes section
-        if "notes" in sections_to_add:
+        # Add notes section to slide 1
+        if include_notes and experiment_notes.strip():
             logger.info("Adding notes section...")
-            notes_box = slide.shapes.add_textbox(Inches(0.5), current_y, left_width, Inches(1.0))
+            notes_box = slide1.shapes.add_textbox(Inches(left_margin), Inches(current_y), Inches(content_width), Inches(1.5))
             notes_tf = notes_box.text_frame
             notes_tf.clear()
+            notes_tf.word_wrap = True
             
             # Notes header
             header_p = notes_tf.add_paragraph()
             header_p.text = "Experiment Notes"
             header_p.font.size = Pt(16)
             header_p.font.bold = True
+            header_p.font.name = 'Calibri'
             
             # Notes content
             notes_p = notes_tf.add_paragraph()
             notes_p.text = experiment_notes
             notes_p.font.size = Pt(12)
+            notes_p.font.name = 'Calibri'
             
-            current_y += 1.2
+            current_y += 1.7
         
-        # Add electrode data section
-        if "electrode" in sections_to_add:
+        # Add electrode data section to slide 1
+        if include_electrode_data and (include_porosity or include_thickness or include_solids_content):
             logger.info("Adding electrode data section...")
-            electrode_box = slide.shapes.add_textbox(Inches(0.5), current_y, left_width, Inches(1.5))
+            electrode_box = slide1.shapes.add_textbox(Inches(left_margin), Inches(current_y), Inches(content_width), Inches(1.5))
             electrode_tf = electrode_box.text_frame
             electrode_tf.clear()
             
@@ -651,37 +819,189 @@ def export_powerpoint(
             header_p.text = "Electrode Data"
             header_p.font.size = Pt(16)
             header_p.font.bold = True
+            header_p.font.name = 'Calibri'
             
-            # Add electrode data points
+            # Add electrode data points with experiment-level values
             electrode_data = []
-            if include_porosity:
-                electrode_data.append("• Porosity: Available (see data)")
-            if include_thickness:
-                electrode_data.append("• Pressed Electrode Thickness: Available (see data)")
             
+            # Extract experiment-level porosity value
+            if include_porosity and dfs:
+                porosity = dfs[0].get('porosity', None)
+                if porosity is None:
+                    for key in ['Porosity', 'porosity_pct', 'porosity_percent']:
+                        if key in dfs[0] and dfs[0][key] is not None:
+                            porosity = dfs[0][key]
+                            break
+                if porosity is not None and porosity > 0:
+                    porosity_pct = porosity * 100 if porosity <= 1.0 else porosity
+                    electrode_data.append(f"• Porosity: {porosity_pct:.1f}%")
+                else:
+                    electrode_data.append("• Porosity: No data available")
+            
+            # Extract experiment-level pressed thickness value
+            if include_thickness and dfs:
+                thickness = dfs[0].get('pressed_thickness', None)
+                if thickness is None:
+                    for key in ['thickness', 'electrode_thickness', 'pressed_electrode_thickness']:
+                        if key in dfs[0] and dfs[0][key] is not None:
+                            thickness = dfs[0][key]
+                            break
+                if thickness is not None and thickness > 0:
+                    electrode_data.append(f"• Pressed Electrode Thickness: {thickness:.1f} μm")
+                else:
+                    electrode_data.append("• Pressed Electrode Thickness: No data available")
+            
+            # Extract experiment-level solids content value
+            if include_solids_content and dfs:
+                solids_content = dfs[0].get('solids_content', None)
+                if solids_content is None:
+                    for key in ['solids', 'solid_content', 'solids_percent']:
+                        if key in dfs[0] and dfs[0][key] is not None:
+                            solids_content = dfs[0][key]
+                            break
+                if solids_content is not None and solids_content >= 0:
+                    electrode_data.append(f"• Solids Content: {solids_content:.1f}%")
+                else:
+                    electrode_data.append("• Solids Content: No data available")
+            
+            # Add the electrode data points to the text frame
             for data_point in electrode_data:
                 p = electrode_tf.add_paragraph()
                 p.text = data_point
                 p.font.size = Pt(12)
+                p.font.name = 'Calibri'
                 p.level = 1
+            
+            current_y += 1.7
         
-        # Add plots
-        plot_y = 1.6 if not sections_to_add else current_y + 0.3
-        plot_width = 4.0
-        plot_height = 2.8
+        # Add formulation table (to slide 2 if exists, otherwise slide 1)
+        if include_formulation:
+            logger.info("Adding formulation table...")
+            # Get formulation data from multiple sources
+            formulation_data = None
+            
+            # Try to get from dfs first
+            if dfs and len(dfs) > 0:
+                formulation_data = dfs[0].get('formulation', [])
+            
+            # If not in dfs, try to get from session state loaded_experiment
+            if not formulation_data or len(formulation_data) == 0:
+                try:
+                    import streamlit as st
+                    loaded_experiment = st.session_state.get('loaded_experiment')
+                    if loaded_experiment:
+                        experiment_data = loaded_experiment.get('experiment_data', {})
+                        cells_data = experiment_data.get('cells', [])
+                        if cells_data and len(cells_data) > 0:
+                            # Get formulation from first cell
+                            formulation_data = cells_data[0].get('formulation', [])
+                            
+                            # If formulation_data is a string (JSON), parse it
+                            if isinstance(formulation_data, str):
+                                try:
+                                    formulation_data = json.loads(formulation_data)
+                                except (json.JSONDecodeError, TypeError):
+                                    logger.warning(f"Could not parse formulation JSON string: {formulation_data}")
+                                    formulation_data = []
+                except ImportError:
+                    # streamlit not available (e.g., in testing)
+                    pass
+            
+            # Normalize formulation_data - ensure it's a list
+            if formulation_data and not isinstance(formulation_data, list):
+                logger.warning(f"Formulation data is not a list: {type(formulation_data)}, converting")
+                formulation_data = [formulation_data] if formulation_data else []
+            
+            # Debug logging - show full data structure
+            logger.info(f"Formulation data length: {len(formulation_data) if formulation_data else 0}")
+            if formulation_data:
+                logger.info(f"Formulation data type: {type(formulation_data)}")
+                logger.info(f"Formulation data sample (first 2 items): {formulation_data[:2] if len(formulation_data) > 2 else formulation_data}")
+                # Log each item's structure
+                for i, item in enumerate(formulation_data[:3]):  # Log first 3 items
+                    logger.info(f"  Item {i}: type={type(item)}, keys={list(item.keys()) if isinstance(item, dict) else 'N/A'}, value={item}")
+            
+            if formulation_data and len(formulation_data) > 0:
+                # Determine which slide to use
+                target_slide = slide2 if slide2 else slide1
+                target_y = slide2_y if slide2 else current_y
+                
+                # Add header
+                if slide2:
+                    header_box = slide2.shapes.add_textbox(Inches(left_margin), Inches(target_y - 0.3), Inches(content_width), Inches(0.4))
+                    header_tf = header_box.text_frame
+                    header_tf.clear()
+                    header_p = header_tf.add_paragraph()
+                    header_p.text = "Formulation"
+                    header_p.font.size = Pt(16)
+                    header_p.font.bold = True
+                    header_p.font.name = 'Calibri'
+                
+                # Add formulation table
+                table_height = min(3.0, 0.4 * (len(formulation_data) + 2))
+                add_formulation_table_to_slide(
+                    target_slide, formulation_data, 
+                    left_margin, target_y, 4.0, table_height
+                )
+                
+                if slide2:
+                    slide2_y += table_height + 0.5
+                else:
+                    current_y += table_height + 0.5
+            else:
+                logger.warning("Formulation data not available or empty")
+                # Add placeholder text if no data
+                target_slide = slide2 if slide2 else slide1
+                target_y = slide2_y if slide2 else current_y
+                placeholder_box = target_slide.shapes.add_textbox(Inches(left_margin), Inches(target_y), Inches(8), Inches(0.5))
+                placeholder_tf = placeholder_box.text_frame
+                placeholder_tf.clear()
+                placeholder_p = placeholder_tf.add_paragraph()
+                placeholder_p.text = "No formulation data available for this experiment."
+                placeholder_p.font.size = Pt(12)
+                placeholder_p.font.name = 'Calibri'
+                placeholder_p.font.italic = True
+                if slide2:
+                    slide2_y += 0.7
+                else:
+                    current_y += 0.7
         
-        if plot_count == 2:
-            # Both plots - side by side
-            main_plot_x = 0.5
-            retention_plot_x = 5.0
-        elif plot_count == 1:
-            # Single plot - centered
-            main_plot_x = 2.75
-            retention_plot_x = 2.75
+        # Add plots to slide 2 (moved from slide 1 for better visibility and cleanliness)
+        # Ensure slide 2 exists if plots are included
+        if (include_main_plot or include_retention_plot) and not slide2:
+            slide2 = prs.slides.add_slide(prs.slide_layouts[6])
+            # Add title to second slide
+            title_box2 = slide2.shapes.add_textbox(title_left, title_top, title_width, title_height)
+            title_tf2 = title_box2.text_frame
+            title_tf2.clear()
+            title_p2 = title_tf2.add_paragraph()
+            title_p2.text = f"{slide_title} (Continued)"
+            title_p2.font.size = Pt(24)
+            title_p2.font.bold = True
+            title_p2.alignment = PP_ALIGN.LEFT
+            title_p2.font.name = 'Calibri'
+            slide2_y = 1.5
         
-        # Generate and add main plot
+        plot_count = 0
         if include_main_plot:
-            logger.info("=== Generating Main Capacity Plot ===")
+            plot_count += 1
+        if include_retention_plot:
+            plot_count += 1
+        
+        # Fixed dimensions for side-by-side plots
+        plot_width = 4.0  # Width for each plot (side by side)
+        plot_height = 3.0  # Height for each plot
+        
+        # Calculate plot positions on slide 2
+        if slide2:
+            # Start plots below formulation table if it exists, otherwise below title
+            plot_start_y = slide2_y if slide2_y > 1.5 else 1.5
+        else:
+            plot_start_y = current_y
+        
+        # Generate and add main plot (Capacity vs Cycle Number) to slide 2
+        if include_main_plot and slide2:
+            logger.info("=== Generating Main Capacity Plot (Capacity vs Cycle Number) ===")
             try:
                 main_fig = create_main_plot_from_session_state(
                     dfs, show_lines, show_efficiency_lines, remove_last_cycle,
@@ -696,8 +1016,11 @@ def export_powerpoint(
                 main_img_path = save_figure_to_temp_file(main_fig)
                 temp_files.append(main_img_path)
                 
-                if add_picture_to_slide_safely(slide, main_img_path, main_plot_x, plot_y, plot_width, plot_height):
-                    logger.info("Main plot added successfully to slide")
+                # Position first plot on the left
+                plot1_left = 1.0
+                logger.info(f"Adding main plot to slide 2 at position ({plot1_left}, {plot_start_y})...")
+                if add_picture_to_slide_safely(slide2, main_img_path, plot1_left, plot_start_y, plot_width, plot_height):
+                    logger.info("Main plot (Capacity vs Cycle Number) added successfully to slide 2")
                 else:
                     logger.error("Failed to add main plot to slide")
                     
@@ -705,9 +1028,10 @@ def export_powerpoint(
                 logger.error(f"Error generating main plot: {e}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
         
-        # Generate and add retention plot
-        if include_retention_plot:
+        # Generate and add retention plot to slide 2
+        if include_retention_plot and slide2:
             logger.info("=== Generating Capacity Retention Plot ===")
+            logger.info(f"Retention plot parameters: show_lines={retention_show_lines}, reference_cycle={reference_cycle}, threshold={retention_threshold}")
             try:
                 retention_fig = create_retention_plot_from_session_state(
                     dfs, retention_show_lines, reference_cycle, formation_cycles, remove_last_cycle,
@@ -719,17 +1043,29 @@ def export_powerpoint(
                     logger.error("Retention plot figure is None")
                     raise ValueError("Retention plot generation returned None")
                 
+                logger.info("Retention plot figure created successfully, saving to temp file...")
                 retention_img_path = save_figure_to_temp_file(retention_fig)
                 temp_files.append(retention_img_path)
                 
-                if add_picture_to_slide_safely(slide, retention_img_path, retention_plot_x, plot_y, plot_width, plot_height):
-                    logger.info("Retention plot added successfully to slide")
+                # Position second plot on the right (side by side with first plot)
+                plot2_left = 5.5  # Position to the right of first plot
+                plot2_y = plot_start_y  # Same Y position as first plot (side by side)
+                logger.info(f"Adding retention plot to slide 2 at position ({plot2_left}, {plot2_y})...")
+                if add_picture_to_slide_safely(slide2, retention_img_path, plot2_left, plot2_y, plot_width, plot_height):
+                    logger.info("Retention plot added successfully to slide 2")
                 else:
                     logger.error("Failed to add retention plot to slide")
+                
+                # Update slide2_y after both plots (use max height + spacing)
+                slide2_y = plot_start_y + plot_height + 0.5
                     
             except Exception as e:
                 logger.error(f"Error generating retention plot: {e}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
+                # Don't raise - continue with export without retention plot
+                # If only main plot was added, update position
+                if include_main_plot:
+                    slide2_y = plot_start_y + plot_height + 0.5
         
         # Validate PowerPoint structure
         if not validate_powerpoint_structure(prs):

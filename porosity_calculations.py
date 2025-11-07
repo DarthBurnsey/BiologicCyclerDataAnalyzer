@@ -10,6 +10,11 @@ COMMON_THEORETICAL_DENSITIES = {
     'LFP': 3.6,  # Lithium Iron Phosphate
     'Lithium Iron Phosphate (LFP)': 3.6,  # Alternative naming
     'Lithium Nickel Manganese Cobalt Oxide (NMC)': 4.7,
+    'NMC': 4.7,  # Generic NMC
+    'NMC811': 4.75,  # Li[Ni0.8Mn0.1Co0.1]O2
+    'NMC622': 4.65,  # Li[Ni0.6Mn0.2Co0.2]O2
+    'NMC532': 4.6,   # Li[Ni0.5Mn0.3Co0.2]O2
+    'NMC111': 4.7,   # Li[Ni0.33Mn0.33Co0.33]O2
     'Lithium Nickel Cobalt Aluminum Oxide (NCA)': 4.8,
     'Lithium Manganese Oxide (LiMn2O4)': 4.2,
     'Carbon Black': 1.8,
@@ -19,7 +24,9 @@ COMMON_THEORETICAL_DENSITIES = {
     'Cx(B)': 1.8,  # Carbon black variant
     'Cx(e)': 1.8,  # Carbon black variant
     'Polyvinylidene Fluoride (PVDF)': 1.78,
+    'PVDF': 1.78,  # Generic PVDF
     'PVDF HSV900': 1.78,  # PVDF variant
+    'PVDF HSV1810': 1.78,  # PVDF variant
     'Carboxymethyl Cellulose (CMC)': 1.6,
     'Styrene Butadiene Rubber (SBR)': 0.95,
     'Polyacrylic Acid (PAA)': 1.4,

@@ -52,7 +52,22 @@ def detect_file_type(file_obj) -> str:
 def parse_biologic_csv(file_obj, dataset: Dict[str, Any], project_type: str = "Full Cell") -> pd.DataFrame:
     """Parse Biologic CSV file format."""
     try:
-        df = pd.read_csv(file_obj, delimiter=';')
+        # Try to detect the delimiter automatically by trying common delimiters
+        file_obj.seek(0)
+        first_line = file_obj.readline()
+        file_obj.seek(0)
+        
+        # Determine delimiter based on which one appears more in the header
+        if isinstance(first_line, bytes):
+            first_line = first_line.decode('utf-8', errors='ignore')
+        
+        semicolon_count = first_line.count(';')
+        comma_count = first_line.count(',')
+        
+        # Use the delimiter that appears more frequently
+        delimiter = ';' if semicolon_count > comma_count else ','
+        
+        df = pd.read_csv(file_obj, delimiter=delimiter)
         
         # Check if required columns exist
         required_columns = ['Q charge (mA.h)', 'Q discharge (mA.h)']
@@ -80,6 +95,13 @@ def parse_biologic_csv(file_obj, dataset: Dict[str, Any], project_type: str = "F
         df['Q Chg (mAh/g)'] = df['Q charge (mA.h)'] / active_mass
         df['Q Dis (mAh/g)'] = df['Q discharge (mA.h)'] / active_mass
         df['Test Number'] = dataset['testnum']
+        
+        # Calculate efficiency based on project type (was missing for Biologic CSV!)
+        df['Efficiency (-)'] = calculate_efficiency_based_on_project_type(
+            df['Q charge (mA.h)'], 
+            df['Q discharge (mA.h)'], 
+            project_type
+        ) / 100  # Convert back to decimal for consistency with existing code
         
         return df
         
@@ -184,13 +206,48 @@ def load_and_preprocess_data(datasets: List[Dict[str, Any]], project_type: str =
         else:
             raise ValueError(f"Unsupported file type: {file_type}")
         
+        # Add electrode data if available in session state
+        pressed_thickness = None
+        solids_content = None
+        porosity = None
+        
+        # Try to get electrode data from session state (for new experiments)
+        try:
+            import streamlit as st
+            pressed_thickness = st.session_state.get('pressed_thickness', None)
+            solids_content = st.session_state.get('solids_content', None)
+            
+            # Calculate porosity if we have the required data
+            if (pressed_thickness and pressed_thickness > 0 and 
+                ds.get('formulation') and 
+                st.session_state.get('current_disc_diameter_mm')):
+                
+                try:
+                    from porosity_calculations import calculate_porosity_from_experiment_data
+                    porosity_data = calculate_porosity_from_experiment_data(
+                        disc_mass_mg=ds['loading'],
+                        disc_diameter_mm=st.session_state.get('current_disc_diameter_mm', 15),
+                        pressed_thickness_um=pressed_thickness,
+                        formulation=ds['formulation']
+                    )
+                    porosity = porosity_data['porosity']
+                except Exception as e:
+                    print(f"Error calculating porosity for {ds['testnum']}: {e}")
+                    porosity = None
+        except ImportError:
+            # streamlit not available (e.g., in testing)
+            pass
+        
         dfs.append({
             'df': df,
             'testnum': ds['testnum'],
             'loading': ds['loading'],
             'active': ds['active'],
             'file_type': file_type,
-            'project_type': project_type
+            'project_type': project_type,
+            'pressed_thickness': pressed_thickness,
+            'solids_content': solids_content,
+            'porosity': porosity
         })
     return dfs
 

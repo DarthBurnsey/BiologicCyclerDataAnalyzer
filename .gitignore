@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database (optional - uncomment if you don't want to track database)
+# *.db
+# *.sqlite
+# *.sqlite3
+
+# Streamlit
+.streamlit/
+
+# Logs
+*.log
+

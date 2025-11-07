@@ -20,7 +20,7 @@ from database import (
     get_experiment_data, delete_cell_experiment, delete_project, rename_project,
     rename_experiment, save_experiment, update_experiment, check_experiment_name_exists,
     get_experiment_by_name, get_all_project_experiments_data, TEST_USER_ID,
-    update_project_type, get_project_by_id
+    update_project_type, get_project_by_id, duplicate_experiment
 )
 from data_analysis import (
     calculate_cell_summary, calculate_experiment_average,
@@ -37,8 +37,8 @@ from dialogs import confirm_delete_project, confirm_delete_experiment, show_dele
 # Initialize database
 init_database()
 migrate_database()
-from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs, get_initial_areal_capacity, render_formulation_table, render_retention_display_options, get_substrate_options, render_hybrid_electrolyte_input, render_hybrid_separator_input
-from plotting import plot_capacity_graph, plot_capacity_retention_graph
+from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs, get_initial_areal_capacity, render_formulation_table, get_substrate_options, render_hybrid_electrolyte_input, render_hybrid_separator_input, render_comparison_plot_options, render_experiment_color_customization, render_comparison_color_customization
+from plotting import plot_capacity_graph, plot_capacity_retention_graph, plot_comparison_capacity_graph
 from preference_components import render_preferences_sidebar, render_formulation_editor_modal, get_default_values_for_experiment, render_default_indicator
 
 # =============================
@@ -80,16 +80,155 @@ with st.container():
                     except:
                         current_experiment_date = date.today()
                 
-                # Update the experiment with current data
+                # Get updated cells data from session state (includes exclude changes)
+                current_datasets = st.session_state.get('datasets', [])
+                updated_cells_data = []
+                recalculated_cells = []
+                
+                for i, dataset in enumerate(current_datasets):
+                    # Get original cell data
+                    original_cell = experiment_data['cells'][i] if i < len(experiment_data['cells']) else {}
+                    
+                    # Read current input values from session state widgets
+                    # These might be more recent than the dataset values
+                    widget_loading = st.session_state.get(f'edit_loading_{i}')
+                    widget_active = st.session_state.get(f'edit_active_{i}')
+                    widget_formation = st.session_state.get(f'edit_formation_{i}')
+                    widget_testnum = st.session_state.get(f'edit_testnum_{i}')
+                    
+                    # Use widget values if available, otherwise use dataset values
+                    new_loading = widget_loading if widget_loading is not None else dataset.get('loading', 0)
+                    new_active = widget_active if widget_active is not None else dataset.get('active', 0)
+                    new_formation = widget_formation if widget_formation is not None else dataset.get('formation_cycles', 4)
+                    new_testnum = widget_testnum if widget_testnum is not None else dataset.get('testnum', f'Cell {i+1}')
+                    
+                    # Check if loading or active material has changed
+                    original_loading = original_cell.get('loading', 0)
+                    original_active = original_cell.get('active_material', 0)
+                    
+                    # Recalculate gravimetric capacities if loading or active material changed
+                    updated_data_json = original_cell.get('data_json', '{}')
+                    if (new_loading != original_loading or new_active != original_active) and updated_data_json:
+                        try:
+                            # Parse the original DataFrame
+                            original_df = pd.read_json(StringIO(updated_data_json))
+                            
+                            # Recalculate gravimetric capacities
+                            updated_df = recalculate_gravimetric_capacities(original_df, new_loading, new_active)
+                            
+                            # Update the data JSON with recalculated values
+                            updated_data_json = updated_df.to_json()
+                            recalculated_cells.append(new_testnum)
+                        except Exception as e:
+                            # If recalculation fails, keep original data
+                            pass
+                    
+                    # Recalculate porosity if loading changed and we have the required data
+                    porosity = original_cell.get('porosity')
+                    if (new_loading != original_loading and 
+                        pressed_thickness and pressed_thickness > 0 and 
+                        dataset.get('formulation') and 
+                        current_disc_diameter):
+                        try:
+                            from porosity_calculations import calculate_porosity_from_experiment_data
+                            porosity_data = calculate_porosity_from_experiment_data(
+                                disc_mass_mg=new_loading,
+                                disc_diameter_mm=current_disc_diameter,
+                                pressed_thickness_um=pressed_thickness,
+                                formulation=dataset['formulation']
+                            )
+                            porosity = porosity_data['porosity']
+                        except Exception:
+                            pass
+                    
+                    # Read other widget values too
+                    widget_electrolyte = st.session_state.get(f'edit_electrolyte_{i}') or st.session_state.get(f'edit_single_electrolyte_{i}')
+                    widget_substrate = st.session_state.get(f'edit_substrate_{i}') or st.session_state.get(f'edit_single_substrate_{i}')
+                    widget_separator = st.session_state.get(f'edit_separator_{i}') or st.session_state.get(f'edit_single_separator_{i}')
+                    
+                    # Convert session state dataset back to cells data format
+                    updated_cell = {
+                        'loading': new_loading,
+                        'active_material': new_active,
+                        'formation_cycles': new_formation,
+                        'test_number': new_testnum,
+                        'cell_name': new_testnum,
+                        'electrolyte': widget_electrolyte if widget_electrolyte is not None else dataset.get('electrolyte', '1M LiPF6 1:1:1'),
+                        'substrate': widget_substrate if widget_substrate is not None else dataset.get('substrate', 'Copper'),
+                        'separator': widget_separator if widget_separator is not None else dataset.get('separator', '25um PP'),
+                        'formulation': dataset.get('formulation', []),
+                        'excluded': dataset.get('excluded', False),
+                        'data_json': updated_data_json,
+                        'porosity': porosity
+                    }
+                    updated_cells_data.append(updated_cell)
+
+                # Get additional experiment data
+                solids_content = st.session_state.get('solids_content', experiment_data.get('solids_content'))
+                pressed_thickness = st.session_state.get('pressed_thickness', experiment_data.get('pressed_thickness'))
+                experiment_notes = st.session_state.get('experiment_notes', experiment_data.get('experiment_notes'))
+                
+                # Prepare cell format data if it's a Full Cell project
+                project_type = "Full Cell"  # Default
+                if project_id:
+                    project_info = get_project_by_id(project_id)
+                    if project_info:
+                        project_type = project_info[3]
+                
+                cell_format_data = {}
+                if project_type == "Full Cell":
+                    cell_format = st.session_state.get('current_cell_format', experiment_data.get('cell_format', 'Coin'))
+                    cell_format_data['cell_format'] = cell_format
+                    if cell_format == "Pouch":
+                        cell_format_data['cathode_length'] = st.session_state.get('current_cathode_length', experiment_data.get('cathode_length', 50.0))
+                        cell_format_data['cathode_width'] = st.session_state.get('current_cathode_width', experiment_data.get('cathode_width', 50.0))
+                        cell_format_data['num_stacked_cells'] = st.session_state.get('current_num_stacked_cells', experiment_data.get('num_stacked_cells', 1))
+
+                # Update the experiment with current data including exclude changes
                 update_experiment(
                     experiment_id=experiment_id,
                     project_id=project_id,
-# Show delete confirmation dialogs when triggered
+                    experiment_name=loaded_experiment['experiment_name'],
+                    experiment_date=current_experiment_date,
+                    disc_diameter_mm=current_disc_diameter,
                     group_assignments=current_group_assignments,
                     group_names=current_group_names,
-                    cells_data=experiment_data['cells']  # Keep original cell data
+                    cells_data=updated_cells_data,  # Use updated data with exclude changes
+                    solids_content=solids_content,
+                    pressed_thickness=pressed_thickness,
+                    experiment_notes=experiment_notes,
+                    cell_format_data=cell_format_data
                 )
+                
+                # Update the loaded experiment in session state with all current changes
+                st.session_state['loaded_experiment']['experiment_data'].update({
+                    'experiment_date': current_experiment_date.isoformat(),
+                    'disc_diameter_mm': current_disc_diameter,
+                    'group_assignments': current_group_assignments,
+                    'group_names': current_group_names,
+                    'cells': updated_cells_data,
+                    'solids_content': solids_content,
+                    'pressed_thickness': pressed_thickness,
+                    'experiment_notes': experiment_notes
+                })
+                
+                # Add cell format data if applicable
+                if cell_format_data:
+                    st.session_state['loaded_experiment']['experiment_data'].update(cell_format_data)
+                
+                # Clear any cached processed data to force recalculation
+                if 'processed_data_cache' in st.session_state:
+                    del st.session_state['processed_data_cache']
+                if 'cache_key' in st.session_state:
+                    del st.session_state['cache_key']
+                
+                # Set flag to indicate calculations have been updated
+                st.session_state['calculations_updated'] = True
+                st.session_state['update_timestamp'] = datetime.now()
+                
                 st.success("✅ Changes saved!")
+                if recalculated_cells:
+                    st.info(f"🔄 Recalculated specific capacity values for {len(recalculated_cells)} cell(s): {', '.join(recalculated_cells)}")
                 st.rerun()
 
 st.markdown("---")
@@ -105,25 +244,61 @@ with st.sidebar:
         st.image("https://placehold.co/150x80?text=Logo", width=150)
     st.markdown("---")
     st.markdown("#### 📁 Projects")
+    
+    # Add improved CSS for sidebar
+    st.markdown("""
+        <style>
+        .sidebar-project {
+            margin-bottom: 12px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 6px;
+            background-color: #fafafa;
+        }
+        .sidebar-project-selected {
+            background-color: #e3f2fd !important;
+            border-color: #1976d2 !important;
+        }
+        .sidebar-experiment {
+            margin: 3px 0px 3px 20px;
+            padding: 4px 6px;
+            border-left: 3px solid #e0e0e0;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+        .sidebar-experiment-selected {
+            border-left-color: #1976d2 !important;
+            background-color: #e8f4f8 !important;
+        }
+        div[data-testid="stButton"] > button {
+            margin: 0px !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
     user_projects = get_user_projects(TEST_USER_ID)
     if user_projects:
         for p in user_projects:
             project_id, project_name, project_desc, project_type, created_date, last_modified = p
             project_expanded = st.session_state.get(f'project_expanded_{project_id}', False)
             
-            # Project row with dropdown arrow and three dots
-            project_cols = st.columns([0.1, 0.7, 0.2])
+            # Project row with better spacing
+            project_cols = st.columns([0.08, 0.74, 0.18])
             with project_cols[0]:
-                # Dropdown arrow
+                # Dropdown arrow with better styling
                 arrow = "▼" if project_expanded else "▶"
-                if st.button(arrow, key=f'project_toggle_{project_id}', help="Expand/Collapse"):
+                button_type = "primary" if project_expanded else "secondary"
+                if st.button(arrow, key=f'project_toggle_{project_id}', 
+                           help="Show/Hide experiments", type=button_type):
                     st.session_state[f'project_expanded_{project_id}'] = not project_expanded
                     st.rerun()
             
             with project_cols[1]:
                 # Project name button with type indicator
                 project_display_name = f"{project_name} ({project_type})"
-                if st.button(project_display_name, key=f'project_select_{project_id}', use_container_width=True):
+                is_current_project = st.session_state.get('current_project_id') == project_id
+                button_type = "primary" if is_current_project else "secondary"
+                if st.button(project_display_name, key=f'project_select_{project_id}', 
+                           use_container_width=True, type=button_type):
                     # Clear any existing experiment data when switching projects
                     if 'loaded_experiment' in st.session_state:
                         del st.session_state['loaded_experiment']
@@ -166,21 +341,24 @@ with st.sidebar:
                     
                     st.session_state['current_project_id'] = project_id
                     st.session_state['current_project_name'] = project_name
+                    # Auto-expand when selecting project
                     st.session_state[f'project_expanded_{project_id}'] = True
                     st.rerun()
             
             with project_cols[2]:
                 menu_open = st.session_state.get(f'project_menu_open_{project_id}', False)
-                if st.button('⋯', key=f'project_menu_btn_{project_id}', help="Project options"):
+                if st.button('⋯', key=f'project_menu_btn_{project_id}', 
+                           help="Project options", type="secondary"):
                     # Close all other menus
                     for p2 in user_projects:
                         st.session_state[f'project_menu_open_{p2[0]}'] = False
                     st.session_state[f'project_menu_open_{project_id}'] = not menu_open
                     st.rerun()
-                # Simple vertical dropdown menu
+                # Project menu with better styling
                 if menu_open:
                     with st.container():
-                        if st.button('New Experiment', key=f'project_new_exp_{project_id}_menu', use_container_width=True):
+                        st.markdown("---")
+                        if st.button('🆕 New Experiment', key=f'project_new_exp_{project_id}_menu', use_container_width=True):
                             st.session_state['current_project_id'] = project_id
                             st.session_state['current_project_name'] = project_name
                             st.session_state['start_new_experiment'] = True
@@ -226,18 +404,19 @@ with st.sidebar:
                             st.session_state[f'project_menu_open_{project_id}'] = False
                             st.session_state['show_cell_inputs_prompt'] = True
                             st.rerun()
-                        if st.button('Rename', key=f'project_rename_{project_id}_menu', use_container_width=True):
+                        if st.button('✏️ Rename', key=f'project_rename_{project_id}_menu', use_container_width=True):
                             st.session_state[f'renaming_project_{project_id}'] = True
                             st.session_state[f'project_menu_open_{project_id}'] = False
                             st.rerun()
-                        if st.button('Change Type', key=f'project_change_type_{project_id}_menu', use_container_width=True):
+                        if st.button('🔄 Change Type', key=f'project_change_type_{project_id}_menu', use_container_width=True):
                             st.session_state[f'changing_project_type_{project_id}'] = True
                             st.session_state[f'project_menu_open_{project_id}'] = False
                             st.rerun()
-                        if st.button('Delete', key=f'project_delete_{project_id}_menu', use_container_width=True):
+                        if st.button('🗑️ Delete', key=f'project_delete_{project_id}_menu', use_container_width=True, type="secondary"):
                             st.session_state['confirm_delete_project'] = project_id
                             st.session_state[f'project_menu_open_{project_id}'] = False
                             st.rerun()
+                        st.markdown("---")
             
             # Inline rename for project
             if st.session_state.get(f'renaming_project_{project_id}', False):
@@ -297,66 +476,82 @@ with st.sidebar:
                             st.session_state[f'changing_project_type_{project_id}'] = False
                             st.rerun()
             
-            # Show experiments if project is expanded and selected
-            if (project_expanded and st.session_state.get('current_project_id') == project_id):
+            # Show experiments if project is expanded (removed requirement for current project)
+            if project_expanded:
                 existing_experiments = get_project_experiments(project_id)
                 if existing_experiments:
-                    st.markdown("##### 🧪 Experiments")
+                    st.markdown("&nbsp;&nbsp;&nbsp;**🧪 Experiments:**", unsafe_allow_html=True)
                     for experiment in existing_experiments:
                         experiment_id, experiment_name, file_name, data_json, created_date = experiment
+                        loaded_exp = st.session_state.get('loaded_experiment')
+                        is_current_experiment = (loaded_exp and loaded_exp.get('experiment_id') == experiment_id)
                         
-                        # Experiment row with indentation and three dots
-                        exp_cols = st.columns([0.1, 0.7, 0.2])
-                        with exp_cols[0]:
-                            st.markdown("&nbsp;&nbsp;📊", unsafe_allow_html=True)
-                        
-                        with exp_cols[1]:
-                            if st.button(experiment_name, key=f'exp_select_{experiment_id}', use_container_width=True):
-                                # Clear all formulation-related session state keys before loading new experiment
-                                keys_to_clear = []
-                                for key in st.session_state.keys():
-                                    if (key.startswith('formulation_data_') or 
-                                        key.startswith('formulation_saved_') or
-                                        key.startswith('component_dropdown_') or
-                                        key.startswith('component_text_') or
-                                        key.startswith('fraction_') or
-                                        key.startswith('add_row_') or
-                                        key.startswith('delete_row_')):
-                                        keys_to_clear.append(key)
+                        # Experiment row with better spacing
+                        with st.container():
+                            exp_cols = st.columns([0.12, 0.68, 0.20])
+                            
+                            with exp_cols[0]:
+                                st.markdown("&nbsp;&nbsp;📊", unsafe_allow_html=True)
+                            
+                            with exp_cols[1]:
+                                button_type = "primary" if is_current_experiment else "secondary"
+                                if st.button(experiment_name, key=f'exp_select_{experiment_id}', 
+                                           use_container_width=True, type=button_type):
+                                    # Clear all formulation-related session state keys before loading new experiment
+                                    keys_to_clear = []
+                                    for key in st.session_state.keys():
+                                        if (key.startswith('formulation_data_') or 
+                                            key.startswith('formulation_saved_') or
+                                            key.startswith('component_dropdown_') or
+                                            key.startswith('component_text_') or
+                                            key.startswith('fraction_') or
+                                            key.startswith('add_row_') or
+                                            key.startswith('delete_row_')):
+                                            keys_to_clear.append(key)
+                                    
+                                    # Remove the formulation keys
+                                    for key in keys_to_clear:
+                                        del st.session_state[key]
+                                    
+                                    # Set current project if switching
+                                    st.session_state['current_project_id'] = project_id
+                                    st.session_state['current_project_name'] = project_name
+                                    
+                                    st.session_state['loaded_experiment'] = {
+                                        'experiment_id': experiment_id,
+                                        'experiment_name': experiment_name,
+                                        'project_id': project_id,
+                                        'experiment_data': json.loads(data_json)
+                                    }
+                                    st.rerun()
+                            
+                            with exp_cols[2]:
+                                exp_menu_open = st.session_state.get(f'exp_menu_open_{experiment_id}', False)
+                                if st.button('⋯', key=f'exp_menu_btn_{experiment_id}', 
+                                           help="Experiment options", type="secondary"):
+                                    for e2 in existing_experiments:
+                                        st.session_state[f'exp_menu_open_{e2[0]}'] = False
+                                    st.session_state[f'exp_menu_open_{experiment_id}'] = not exp_menu_open
+                                    st.rerun()
                                 
-                                # Remove the formulation keys
-                                for key in keys_to_clear:
-                                    del st.session_state[key]
-                                
-                                st.session_state['loaded_experiment'] = {
-                                    'experiment_id': experiment_id,
-                                    'experiment_name': experiment_name,
-                                    'project_id': project_id,
-                                    'experiment_data': json.loads(data_json)
-                                }
-                                st.rerun()
+                                if exp_menu_open:
+                                    with st.container():
+                                        if st.button('✏️ Rename', key=f'exp_rename_{experiment_id}_menu', use_container_width=True):
+                                            st.session_state[f'renaming_experiment_{experiment_id}'] = True
+                                            st.session_state[f'exp_menu_open_{experiment_id}'] = False
+                                            st.rerun()
+                                        if st.button('📋 Duplicate', key=f'exp_duplicate_{experiment_id}_menu', use_container_width=True):
+                                            st.session_state['duplicate_experiment'] = (experiment_id, experiment_name)
+                                            st.session_state[f'exp_menu_open_{experiment_id}'] = False
+                                            st.rerun()
+                                        if st.button('🗑️ Delete', key=f'exp_delete_{experiment_id}_menu', use_container_width=True, type="secondary"):
+                                            st.session_state['confirm_delete_experiment'] = (experiment_id, experiment_name)
+                                            st.session_state[f'exp_menu_open_{experiment_id}'] = False
+                                            st.rerun()
                         
-                        with exp_cols[2]:
-                            exp_menu_open = st.session_state.get(f'exp_menu_open_{experiment_id}', False)
-                            if st.button('⋯', key=f'exp_menu_btn_{experiment_id}', help="Experiment options"):
-                                for e2 in existing_experiments:
-                                    st.session_state[f'exp_menu_open_{e2[0]}'] = False
-                                st.session_state[f'exp_menu_open_{experiment_id}'] = not exp_menu_open
-                                st.rerun()
-                            if exp_menu_open:
-                                with st.container():
-                                    if st.button('Rename', key=f'exp_rename_{experiment_id}_menu', use_container_width=True):
-                                        st.session_state[f'renaming_experiment_{experiment_id}'] = True
-                                        st.session_state[f'exp_menu_open_{experiment_id}'] = False
-                                        st.rerun()
-                                    if st.button('Delete', key=f'exp_delete_{experiment_id}_menu', use_container_width=True):
-                                        st.session_state['confirm_delete_experiment'] = (experiment_id, experiment_name)
-                                        st.session_state[f'exp_menu_open_{experiment_id}'] = False
-                                        st.rerun()
-                        
-                        # Inline rename for experiment
+                        # Inline rename for experiment with better layout
                         if st.session_state.get(f'renaming_experiment_{experiment_id}', False):
-                            exp_rename_cols = st.columns([0.1, 0.7, 0.2])
+                            exp_rename_cols = st.columns([0.12, 0.68, 0.20])
                             with exp_rename_cols[1]:
                                 new_exp_name = st.text_input("New name:", value=experiment_name, key=f'rename_input_experiment_{experiment_id}', label_visibility="collapsed")
                             with exp_rename_cols[2]:
@@ -383,6 +578,9 @@ with st.sidebar:
                                         st.rerun()
                 else:
                     st.markdown("&nbsp;&nbsp;&nbsp;&nbsp;*No experiments in this project*", unsafe_allow_html=True)
+            
+            # Add spacing between projects
+            st.markdown("<br>", unsafe_allow_html=True)
     else:
         st.info("No projects found. Create your first project below.")
 
@@ -538,6 +736,20 @@ if st.session_state.get("confirm_delete_experiment"):
     confirm_delete_experiment()
 else:
     pass
+
+# Handle experiment duplication
+if st.session_state.get("duplicate_experiment"):
+    experiment_id, experiment_name = st.session_state["duplicate_experiment"]
+    try:
+        new_experiment_id, new_experiment_name = duplicate_experiment(experiment_id)
+        st.success(f"✅ Successfully duplicated '{experiment_name}' as '{new_experiment_name}'! You can now upload new data to this experiment.")
+        # Clear the duplication state
+        del st.session_state["duplicate_experiment"]
+        st.rerun()
+    except Exception as e:
+        st.error(f"❌ Error duplicating experiment: {str(e)}")
+        del st.session_state["duplicate_experiment"]
+
 if 'datasets' not in st.session_state:
     st.session_state['datasets'] = []
 datasets = st.session_state.get('datasets', [])
@@ -619,8 +831,14 @@ with tab_inputs:
     is_new_experiment = not loaded_experiment and st.session_state.get('current_project_id')
     
     if loaded_experiment:
-        st.info(f"📊 Editing experiment: **{loaded_experiment['experiment_name']}**")
         experiment_data = loaded_experiment['experiment_data']
+        cells_data = experiment_data.get('cells', [])
+        
+        # Show different message for experiments with no cells (e.g., duplicates)
+        if len(cells_data) == 0:
+            st.info(f"📝 Setting up experiment: **{loaded_experiment['experiment_name']}** (ready for data upload)")
+        else:
+            st.info(f"📊 Editing experiment: **{loaded_experiment['experiment_name']}**")
         
         # Load existing values from the experiment
         current_experiment_name = loaded_experiment['experiment_name']
@@ -639,6 +857,15 @@ with tab_inputs:
         st.session_state['solids_content'] = experiment_data.get('solids_content', 0.0)
         st.session_state['pressed_thickness'] = experiment_data.get('pressed_thickness', 0.0)
         st.session_state['experiment_notes'] = experiment_data.get('experiment_notes', '')
+        
+        # --- Load cell format data from experiment ---
+        st.session_state['current_cell_format'] = experiment_data.get('cell_format', 'Coin')
+        if experiment_data.get('cathode_length'):
+            st.session_state['current_cathode_length'] = experiment_data.get('cathode_length', 50.0)
+        if experiment_data.get('cathode_width'):
+            st.session_state['current_cathode_width'] = experiment_data.get('cathode_width', 50.0)
+        if experiment_data.get('num_stacked_cells'):
+            st.session_state['current_num_stacked_cells'] = experiment_data.get('num_stacked_cells', 1)
         # Convert loaded cells data back to datasets format for editing
         cells_data = experiment_data.get('cells', [])
         loaded_datasets = []
@@ -656,7 +883,10 @@ with tab_inputs:
                 'testnum': cell_data.get('test_number', cell_data.get('cell_name', '')),
                 'formation_cycles': cell_data.get('formation_cycles', 4),
                 'electrolyte': cell_data.get('electrolyte', '1M LiPF6 1:1:1'),
-                'formulation': cell_data.get('formulation', [])
+                'substrate': cell_data.get('substrate', 'Copper'),
+                'separator': cell_data.get('separator', '25um PP'),
+                'formulation': cell_data.get('formulation', []),
+                'excluded': cell_data.get('excluded', False)  # Add this line
             })
         
         # Use loaded datasets as starting point
@@ -703,18 +933,125 @@ with tab_inputs:
             help="Date associated with this experiment"
         )
     
-    disc_diameter_input = st.number_input(
-        'Disc Diameter (mm) for Areal Capacity Calculation', 
-        min_value=1, 
-        max_value=50, 
-        value=current_disc_diameter, 
-        step=1
-    )
+    # Get current project type to determine input fields
+    current_project_id = st.session_state.get('current_project_id')
+    project_type = "Full Cell"  # Default
+    if current_project_id:
+        project_info = get_project_by_id(current_project_id)
+        if project_info:
+            project_type = project_info[3]  # project_type is the 4th field
+    
+    # Enhanced Full Cell format selection
+    if project_type == "Full Cell":
+        st.markdown("#### 🔋 Cell Configuration")
+        
+        # Cell format dropdown
+        format_options = ["Coin", "Pouch", "Cylindrical", "Prismatic"]
+        current_format = st.session_state.get('current_cell_format', 'Coin')
+        
+        cell_format = st.selectbox(
+            'Cell Format',
+            options=format_options,
+            index=format_options.index(current_format) if current_format in format_options else 0,
+            key='cell_format_input',
+            help="Select the physical format of the battery cell"
+        )
+        
+        # Store format in session state
+        st.session_state['current_cell_format'] = cell_format
+        
+        if cell_format == "Coin":
+            # Show traditional disc diameter input
+            disc_diameter_input = st.number_input(
+                'Disc Diameter (mm) for Areal Capacity Calculation', 
+                min_value=1, 
+                max_value=50, 
+                value=current_disc_diameter, 
+                step=1,
+                help="Diameter of the coin cell disc for areal capacity calculations"
+            )
+            
+        elif cell_format == "Pouch":
+            # Show pouch-specific inputs
+            st.markdown("##### Pouch Cell Dimensions")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                cathode_length = st.number_input(
+                    'Cathode Length (mm)',
+                    min_value=1.0,
+                    max_value=500.0,
+                    value=st.session_state.get('current_cathode_length', 50.0),
+                    step=0.1,
+                    key='cathode_length_input',
+                    help="Length of the cathode active area"
+                )
+                
+                cathode_width = st.number_input(
+                    'Cathode Width (mm)',
+                    min_value=1.0,
+                    max_value=500.0,
+                    value=st.session_state.get('current_cathode_width', 50.0),
+                    step=0.1,
+                    key='cathode_width_input',
+                    help="Width of the cathode active area"
+                )
+            
+            with col2:
+                num_stacked_cells = st.number_input(
+                    'Number of Stacked Cells',
+                    min_value=1,
+                    max_value=100,
+                    value=st.session_state.get('current_num_stacked_cells', 1),
+                    step=1,
+                    key='num_stacked_cells_input',
+                    help="Number of cells stacked in the pouch configuration"
+                )
+                
+                # Calculate and display total area
+                total_area_cm2 = (cathode_length * cathode_width * num_stacked_cells) / 100  # Convert mm² to cm²
+                st.metric(
+                    label="Total Active Area", 
+                    value=f"{total_area_cm2:.2f} cm²",
+                    help="Total cathode active area for all stacked cells"
+                )
+            
+            # Store pouch values in session state
+            st.session_state['current_cathode_length'] = cathode_length
+            st.session_state['current_cathode_width'] = cathode_width
+            st.session_state['current_num_stacked_cells'] = num_stacked_cells
+            
+            # Set disc_diameter_input to None since we're using area calculations instead
+            disc_diameter_input = None
+            
+        elif cell_format in ["Cylindrical", "Prismatic"]:
+            # Under construction message
+            st.info(f"🚧 **{cell_format} Cell Format - Under Construction**")
+            st.markdown(
+                f"The {cell_format.lower()} cell format configuration is currently being developed. "
+                "Please select 'Coin' or 'Pouch' format for now, or check back in a future update!"
+            )
+            # Use default disc diameter for now
+            disc_diameter_input = current_disc_diameter
+            
+    else:
+        # For non-Full Cell projects (Cathode/Anode), show traditional disc diameter input
+        disc_diameter_input = st.number_input(
+            'Disc Diameter (mm) for Areal Capacity Calculation', 
+            min_value=1, 
+            max_value=50, 
+            value=current_disc_diameter, 
+            step=1,
+            help="Diameter of the electrode disc for areal capacity calculations"
+        )
     
     st.markdown("---")
     
     # Cell inputs section
-    if loaded_experiment:
+    # Show file upload for new experiments OR loaded experiments with no cells (e.g., duplicates)
+    has_cells = loaded_experiment and len(datasets) > 0
+    
+    if loaded_experiment and has_cells:
         # For loaded experiments, show the cell input fields for editing
         if len(datasets) > 1:
             with st.expander(f'Cell 1: {datasets[0]["testnum"] or "Cell 1"}', expanded=False):
@@ -784,10 +1121,48 @@ with tab_inputs:
                     st.session_state[formulation_key] = datasets[0]["formulation"] if datasets[0]["formulation"] else [{'Component': '', 'Dry Mass Fraction (%)': 0.0}]
                 formulation_0 = render_formulation_table(f'edit_0_loaded', project_id, get_project_components)
                 
+                # Add two buttons: Exclude and Remove
+                col_btn1, col_btn2 = st.columns(2)
+                
+                with col_btn1:
+                    exclude_button_disabled = datasets[0].get('excluded', False)
+                    if st.button("🚫 Exclude Cell", key=f'exclude_cell_loaded_0', disabled=exclude_button_disabled):
+                        datasets[0]['excluded'] = True
+                        st.session_state['datasets'] = datasets  # Save to session state
+                        st.rerun()
+                
+                with col_btn2:
+                    if st.button("🗑️ Remove Cell", key=f'remove_cell_loaded_0'):
+                        st.session_state[f'confirm_remove_cell_loaded_0'] = True
+
+                # Show excluded status
+                if datasets[0].get('excluded', False):
+                    st.warning("⚠️ This cell is excluded from analysis")
+                    if st.button("✅ Include Cell", key=f'include_cell_loaded_0'):
+                        datasets[0]['excluded'] = False
+                        st.session_state['datasets'] = datasets  # Save to session state
+                        st.rerun()
+
+                if st.session_state.get(f'confirm_remove_cell_loaded_0', False):
+                    st.error("⚠️ **PERMANENT DELETION** - This will permanently delete the cell data and cannot be undone!")
+                    col_confirm1, col_confirm2 = st.columns(2)
+                    with col_confirm1:
+                        if st.button("🗑️ Delete Permanently", key=f'confirm_yes_loaded_0', type="primary"):
+                            # Actually remove the cell from the datasets
+                            datasets.pop(0)
+                            st.session_state[f'confirm_remove_cell_loaded_0'] = False
+                            st.rerun()
+                    with col_confirm2:
+                        if st.button("Cancel", key=f'confirm_no_loaded_0'):
+                            st.session_state[f'confirm_remove_cell_loaded_0'] = False
+                            st.rerun()
+
                 assign_all = st.checkbox('Assign values to all cells', key='assign_all_cells_loaded')
             # Update all datasets with new values
             edited_datasets = []
             for i, dataset in enumerate(datasets):
+                # Don't skip excluded cells - still render them but with visual indication
+                
                 if i == 0:
                     # First cell: preserve original file object and update other fields
                     edited_dataset = {
@@ -799,10 +1174,16 @@ with tab_inputs:
                         'electrolyte': electrolyte_0,
                         'substrate': substrate_0,
                         'separator': separator_0,
-                        'formulation': formulation_0
+                        'formulation': formulation_0,
+                        'excluded': dataset.get('excluded', False)  # Add this line
                     }
                 else:
-                    with st.expander(f'Cell {i+1}: {dataset["testnum"] or f"Cell {i+1}"}', expanded=False):
+                    is_excluded = dataset.get('excluded', False)
+                    cell_title = f'Cell {i+1}: {dataset["testnum"] or f"Cell {i+1}"}'
+                    if is_excluded:
+                        cell_title += " ⚠️ EXCLUDED"
+                    
+                    with st.expander(cell_title, expanded=False):
                         col1, col2 = st.columns(2)
                         if assign_all:
                             loading = loading_0
@@ -878,26 +1259,70 @@ with tab_inputs:
                                 st.session_state[formulation_key] = dataset['formulation'] if dataset['formulation'] else [{'Component': '', 'Dry Mass Fraction (%)': 0.0}]
                             formulation = render_formulation_table(f'edit_{i}_loaded', project_id, get_project_components)
                             
-                        with col2:
-                            # Always preserve original file object, only update other fields
-                            edited_dataset = {
-                                'file': dataset['file'],  # Always preserve original file object
-                                'loading': loading,
-                                'active': active_material,
-                                'testnum': test_number,
-                                'formation_cycles': formation_cycles,
-                                'electrolyte': electrolyte,
-                                'substrate': substrate,
-                                'separator': separator,
-                                'formulation': formulation
-                            }
+                            # Add two buttons: Exclude and Remove
+                            col_btn1, col_btn2 = st.columns(2)
+                            
+                            with col_btn1:
+                                exclude_button_disabled = dataset.get('excluded', False)
+                                if st.button("🚫 Exclude Cell", key=f'exclude_cell_loaded_{i}', disabled=exclude_button_disabled):
+                                    datasets[i]['excluded'] = True
+                                    st.session_state['datasets'] = datasets  # Save to session state
+                                    st.rerun()
+                            
+                            with col_btn2:
+                                if st.button("🗑️ Remove Cell", key=f'remove_cell_loaded_{i}'):
+                                    st.session_state[f'confirm_remove_cell_loaded_{i}'] = True
+
+                            # Show excluded status
+                            if dataset.get('excluded', False):
+                                st.warning("⚠️ This cell is excluded from analysis")
+                                if st.button("✅ Include Cell", key=f'include_cell_loaded_{i}'):
+                                    datasets[i]['excluded'] = False
+                                    st.session_state['datasets'] = datasets  # Save to session state
+                                    st.rerun()
+
+                            if st.session_state.get(f'confirm_remove_cell_loaded_{i}', False):
+                                st.error("⚠️ **PERMANENT DELETION** - This will permanently delete the cell data and cannot be undone!")
+                                col_confirm1, col_confirm2 = st.columns(2)
+                                with col_confirm1:
+                                    if st.button("🗑️ Delete Permanently", key=f'confirm_yes_loaded_{i}', type="primary"):
+                                        # Actually remove the cell from the datasets
+                                        datasets.pop(i)
+                                        st.session_state[f'confirm_remove_cell_loaded_{i}'] = False
+                                        st.rerun()
+                                with col_confirm2:
+                                    if st.button("Cancel", key=f'confirm_no_loaded_{i}'):
+                                        st.session_state[f'confirm_remove_cell_loaded_{i}'] = False
+                                        st.rerun()
+                        
+                        # Always preserve original file object, only update other fields
+                        edited_dataset = {
+                            'file': dataset['file'],  # Always preserve original file object
+                            'loading': loading,
+                            'active': active_material,
+                            'testnum': test_number,
+                            'formation_cycles': formation_cycles,
+                            'electrolyte': electrolyte,
+                            'substrate': substrate,
+                            'separator': separator,
+                            'formulation': formulation,
+                            'excluded': dataset.get('excluded', False)
+                        }
+
                 edited_datasets.append(edited_dataset)
             datasets = edited_datasets
             st.session_state['datasets'] = datasets
         else:
             # Only one cell
             for i, dataset in enumerate(datasets):
-                with st.expander(f'Cell {i+1}: {dataset["testnum"] or f"Cell {i+1}"}', expanded=False):
+                # Don't skip excluded cells - still render them but with visual indication
+                
+                is_excluded = dataset.get('excluded', False)
+                cell_title = f'Cell {i+1}: {dataset["testnum"] or f"Cell {i+1}"}'
+                if is_excluded:
+                    cell_title += " ⚠️ EXCLUDED"
+                
+                with st.expander(cell_title, expanded=False):
                     col1, col2 = st.columns(2)
                     with col1:
                         loading = st.number_input(
@@ -962,6 +1387,42 @@ with tab_inputs:
                         st.session_state[formulation_key] = dataset['formulation'] if dataset['formulation'] else [{'Component': '', 'Dry Mass Fraction (%)': 0.0}]
                     formulation = render_formulation_table(f'edit_single_{i}_loaded', project_id, get_project_components)
                     
+                    # Add two buttons: Exclude and Remove
+                    col_btn1, col_btn2 = st.columns(2)
+                    
+                    with col_btn1:
+                        exclude_button_disabled = dataset.get('excluded', False)
+                        if st.button("🚫 Exclude Cell", key=f'exclude_cell_single_{i}', disabled=exclude_button_disabled):
+                            datasets[i]['excluded'] = True
+                            st.session_state['datasets'] = datasets  # Save to session state
+                            st.rerun()
+                    
+                    with col_btn2:
+                        if st.button("🗑️ Remove Cell", key=f'remove_cell_single_{i}'):
+                            st.session_state[f'confirm_remove_cell_single_{i}'] = True
+
+                    # Show excluded status
+                    if dataset.get('excluded', False):
+                        st.warning("⚠️ This cell is excluded from analysis")
+                        if st.button("✅ Include Cell", key=f'include_cell_single_{i}'):
+                            datasets[i]['excluded'] = False
+                            st.session_state['datasets'] = datasets  # Save to session state
+                            st.rerun()
+
+                    if st.session_state.get(f'confirm_remove_cell_single_{i}', False):
+                        st.error("⚠️ **PERMANENT DELETION** - This will permanently delete the cell data and cannot be undone!")
+                        col_confirm1, col_confirm2 = st.columns(2)
+                        with col_confirm1:
+                            if st.button("🗑️ Delete Permanently", key=f'confirm_yes_single_{i}', type="primary"):
+                                # Actually remove the cell from the datasets  
+                                datasets.pop(i)
+                                st.session_state[f'confirm_remove_cell_single_{i}'] = False
+                                st.rerun()
+                        with col_confirm2:
+                            if st.button("Cancel", key=f'confirm_no_single_{i}'):
+                                st.session_state[f'confirm_remove_cell_single_{i}'] = False
+                                st.rerun()
+
                     # Always preserve original file object, only update other fields
                     edited_dataset = {
                         'file': dataset['file'],  # Always preserve original file object
@@ -972,12 +1433,40 @@ with tab_inputs:
                         'electrolyte': electrolyte,
                         'substrate': substrate,
                         'separator': separator,
-                        'formulation': formulation
+                        'formulation': formulation,
+                        'excluded': dataset.get('excluded', False)
                     }
-                dataset.update(edited_dataset)
+                    dataset.update(edited_dataset)
     else:
         # New experiment flow - use unified render_cell_inputs
         st.markdown("#### 📁 Upload Cell Data Files")
+        
+        # For duplicated experiments, pre-populate defaults from original experiment
+        if loaded_experiment:
+            experiment_data = loaded_experiment['experiment_data']
+            default_cell_values = experiment_data.get('default_cell_values', {})
+            
+            if default_cell_values:
+                st.info("ℹ️ Using default values from the original experiment. You can modify these as needed.")
+                # Pre-populate session state with default values from the original experiment
+                if 'loading_0' not in st.session_state:
+                    st.session_state['loading_0'] = default_cell_values.get('loading', 20.0)
+                if 'active_0' not in st.session_state:
+                    st.session_state['active_0'] = default_cell_values.get('active_material', 90.0)
+                if 'formation_cycles_0' not in st.session_state:
+                    st.session_state['formation_cycles_0'] = default_cell_values.get('formation_cycles', 4)
+                if 'electrolyte_0' not in st.session_state:
+                    st.session_state['electrolyte_0'] = default_cell_values.get('electrolyte', '1M LiPF6 1:1:1')
+                if 'substrate_0' not in st.session_state:
+                    st.session_state['substrate_0'] = default_cell_values.get('substrate', 'Copper')
+                if 'separator_0' not in st.session_state:
+                    st.session_state['separator_0'] = default_cell_values.get('separator', '25um PP')
+                # Pre-populate formulation data
+                if 'formulation_data_0_main_cell_inputs' not in st.session_state:
+                    formulation = default_cell_values.get('formulation', [])
+                    if formulation:
+                        st.session_state['formulation_data_0_main_cell_inputs'] = formulation
+        
         current_project_id = st.session_state.get('current_project_id')
         datasets = render_cell_inputs(context_key='main_cell_inputs', project_id=current_project_id, get_components_func=get_project_components)
         st.session_state['datasets'] = datasets
@@ -1049,7 +1538,28 @@ with tab_inputs:
     # Update session state with current values
     st.session_state['current_experiment_name'] = experiment_name_input
     st.session_state['current_experiment_date'] = experiment_date_input
-    st.session_state['current_disc_diameter_mm'] = disc_diameter_input
+    
+    # Handle different cell formats for Full Cell projects
+    if project_type == "Full Cell":
+        cell_format = st.session_state.get('current_cell_format', 'Coin')
+        if cell_format == "Coin":
+            st.session_state['current_disc_diameter_mm'] = disc_diameter_input
+        elif cell_format == "Pouch":
+            # For pouch cells, we'll store area instead of diameter
+            cathode_length = st.session_state.get('current_cathode_length', 50.0)
+            cathode_width = st.session_state.get('current_cathode_width', 50.0)
+            num_stacked_cells = st.session_state.get('current_num_stacked_cells', 1)
+            # Calculate equivalent diameter for backwards compatibility
+            total_area_cm2 = (cathode_length * cathode_width * num_stacked_cells) / 100
+            equivalent_diameter = 2 * (total_area_cm2 / np.pi) ** 0.5 * 10  # Convert back to mm
+            st.session_state['current_disc_diameter_mm'] = equivalent_diameter
+        else:
+            # For other formats, use current or default value
+            st.session_state['current_disc_diameter_mm'] = disc_diameter_input or current_disc_diameter
+    else:
+        # For non-Full Cell projects, use traditional disc diameter
+        st.session_state['current_disc_diameter_mm'] = disc_diameter_input
+    
     st.session_state['current_group_assignments'] = group_assignments
     st.session_state['current_group_names'] = group_names
     
@@ -1064,17 +1574,38 @@ with tab_inputs:
             experiment_id = loaded_experiment['experiment_id']
             project_id = loaded_experiment['project_id']
             
+            # Get project type for efficiency calculation
+            project_type = "Full Cell"  # Default
+            if project_id:
+                project_info = get_project_by_id(project_id)
+                if project_info:
+                    project_type = project_info[3]  # project_type is the 4th field
+            
             # Prepare updated cells data with recalculated gravimetric capacities
             updated_cells_data = []
+            existing_cells = experiment_data.get('cells', [])
+            
             for i, dataset in enumerate(datasets):
-                if i < len(experiment_data.get('cells', [])):
-                    original_cell = experiment_data['cells'][i]
+                # Check if this is an existing cell or a new one
+                if i < len(existing_cells):
+                    # Update existing cell
+                    original_cell = existing_cells[i]
+                    
+                    # Read current input values from session state widgets (they have the latest values)
+                    widget_loading = st.session_state.get(f'edit_loading_{i}') or st.session_state.get(f'edit_single_loading_{i}')
+                    widget_active = st.session_state.get(f'edit_active_{i}') or st.session_state.get(f'edit_single_active_{i}')
+                    widget_formation = st.session_state.get(f'edit_formation_{i}') or st.session_state.get(f'edit_single_formation_{i}')
+                    widget_testnum = st.session_state.get(f'edit_testnum_{i}') or st.session_state.get(f'edit_single_testnum_{i}')
+                    
+                    # Use widget values if available, otherwise use dataset values
+                    new_loading = widget_loading if widget_loading is not None else dataset.get('loading', 0)
+                    new_active = widget_active if widget_active is not None else dataset.get('active', 0)
+                    new_formation = widget_formation if widget_formation is not None else dataset.get('formation_cycles', 4)
+                    new_testnum = widget_testnum if widget_testnum is not None else dataset.get('testnum', f'Cell {i+1}')
                     
                     # Check if loading or active material has changed
                     original_loading = original_cell.get('loading', 0)
                     original_active = original_cell.get('active_material', 0)
-                    new_loading = dataset['loading']
-                    new_active = dataset['active']
                     
                     # Recalculate gravimetric capacities if loading or active material changed
                     updated_data_json = original_cell.get('data_json', '{}')
@@ -1089,38 +1620,136 @@ with tab_inputs:
                             # Update the data JSON with recalculated values
                             updated_data_json = updated_df.to_json()
                             
-                            st.info(f"🔄 Recalculated gravimetric capacities for {dataset['testnum']} (Loading: {original_loading}→{new_loading}mg, Active: {original_active}→{new_active}%)")
+                            # Show before/after comparison of first few values
+                            if len(updated_df) > 0:
+                                try:
+                                    first_qdis_old = original_df['Q Dis (mAh/g)'].iloc[0] if 'Q Dis (mAh/g)' in original_df.columns else 'N/A'
+                                    first_qdis_new = updated_df['Q Dis (mAh/g)'].iloc[0] if 'Q Dis (mAh/g)' in updated_df.columns else 'N/A'
+                                    st.info(f"🔄 Recalculated gravimetric capacities for {new_testnum}")
+                                    st.info(f"   📊 Changes: Loading: {original_loading}→{new_loading}mg, Active: {original_active}→{new_active}%")
+                                    if isinstance(first_qdis_old, (int, float)) and isinstance(first_qdis_new, (int, float)):
+                                        st.info(f"   📈 First Cycle Q Dis: {first_qdis_old:.2f}→{first_qdis_new:.2f} mAh/g")
+                                    else:
+                                        st.info(f"   📈 First Cycle Q Dis: {first_qdis_old}→{first_qdis_new} mAh/g")
+                                except Exception:
+                                    st.info(f"🔄 Recalculated gravimetric capacities for {new_testnum}")
                         except Exception as e:
-                            st.warning(f"⚠️ Could not recalculate capacities for {dataset['testnum']}: {str(e)}")
+                            st.warning(f"⚠️ Could not recalculate capacities for {new_testnum}: {str(e)}")
                     
                     updated_cell = original_cell.copy()
+                    
+                    # Recalculate porosity if loading changed and we have the required data
+                    if (new_loading != original_loading and 
+                        pressed_thickness and pressed_thickness > 0 and 
+                        dataset.get('formulation') and 
+                        disc_diameter_input):
+                        try:
+                            from porosity_calculations import calculate_porosity_from_experiment_data
+                            porosity_data = calculate_porosity_from_experiment_data(
+                                disc_mass_mg=new_loading,
+                                disc_diameter_mm=disc_diameter_input,
+                                pressed_thickness_um=pressed_thickness,
+                                formulation=dataset['formulation']
+                            )
+                            updated_cell['porosity'] = porosity_data['porosity']
+                            st.info(f"   🔬 Recalculated porosity: {porosity_data['porosity']*100:.1f}%")
+                        except Exception as e:
+                            st.warning(f"   ⚠️ Could not recalculate porosity for {new_testnum}: {str(e)}")
+                    
+                    # Read other widget values too
+                    widget_electrolyte = st.session_state.get(f'edit_electrolyte_{i}') or st.session_state.get(f'edit_single_electrolyte_{i}')
+                    widget_substrate = st.session_state.get(f'edit_substrate_{i}') or st.session_state.get(f'edit_single_substrate_{i}')
+                    widget_separator = st.session_state.get(f'edit_separator_{i}') or st.session_state.get(f'edit_single_separator_{i}')
+                    
                     updated_cell.update({
                         'loading': new_loading,
                         'active_material': new_active,
-                        'formation_cycles': dataset['formation_cycles'],
-                        'test_number': dataset['testnum'],
-                        'cell_name': dataset['testnum'],
-                        'electrolyte': dataset.get('electrolyte', '1M LiPF6 1:1:1'),
-                        'substrate': dataset.get('substrate', 'Copper'),
-                        'separator': dataset.get('separator', '25um PP'),
+                        'formation_cycles': new_formation,
+                        'test_number': new_testnum,
+                        'cell_name': new_testnum,
+                        'electrolyte': widget_electrolyte if widget_electrolyte is not None else dataset.get('electrolyte', '1M LiPF6 1:1:1'),
+                        'substrate': widget_substrate if widget_substrate is not None else dataset.get('substrate', 'Copper'),
+                        'separator': widget_separator if widget_separator is not None else dataset.get('separator', '25um PP'),
                         'formulation': dataset.get('formulation', []),
-                        'data_json': updated_data_json  # Updated with recalculated values
+                        'data_json': updated_data_json,  # Updated with recalculated values
+                        'excluded': dataset.get('excluded', False)  # Add this line
                     })
                     updated_cells_data.append(updated_cell)
+                else:
+                    # This is a new cell being added to the experiment (e.g., uploading to a duplicate)
+                    cell_name = dataset['testnum'] if dataset['testnum'] else f'Cell {i+1}'
+                    file_name = dataset['file'].name if dataset.get('file') else f'cell_{i+1}.csv'
+                    
+                    try:
+                        # Process the data to get DataFrame
+                        temp_dfs = load_and_preprocess_data([dataset], project_type)
+                        if temp_dfs and len(temp_dfs) > 0:
+                            df = temp_dfs[0]['df']
+                            
+                            new_cell = {
+                                'cell_name': cell_name,
+                                'file_name': file_name,
+                                'loading': dataset['loading'],
+                                'active_material': dataset['active'],
+                                'formation_cycles': dataset['formation_cycles'],
+                                'test_number': dataset['testnum'],
+                                'electrolyte': dataset.get('electrolyte', '1M LiPF6 1:1:1'),
+                                'substrate': dataset.get('substrate', 'Copper'),
+                                'separator': dataset.get('separator', '25um PP'),
+                                'formulation': dataset.get('formulation', []),
+                                'data_json': df.to_json(),
+                                'excluded': dataset.get('excluded', False)
+                            }
+                            
+                            # Calculate porosity if we have the required data
+                            if (pressed_thickness and pressed_thickness > 0 and 
+                                dataset.get('formulation') and 
+                                disc_diameter_input):
+                                try:
+                                    from porosity_calculations import calculate_porosity_from_experiment_data
+                                    porosity_data = calculate_porosity_from_experiment_data(
+                                        disc_mass_mg=dataset['loading'],
+                                        disc_diameter_mm=disc_diameter_input,
+                                        pressed_thickness_um=pressed_thickness,
+                                        formulation=dataset['formulation']
+                                    )
+                                    new_cell['porosity'] = porosity_data['porosity']
+                                    st.info(f"   🔬 Calculated porosity for {cell_name}: {porosity_data['porosity']*100:.1f}%")
+                                except Exception as e:
+                                    st.warning(f"   ⚠️ Could not calculate porosity for {cell_name}: {str(e)}")
+                            
+                            updated_cells_data.append(new_cell)
+                            st.info(f"✅ Processed new cell: {cell_name}")
+                        else:
+                            st.warning(f"⚠️ Failed to process data for {cell_name}. Skipping this cell.")
+                    except Exception as e:
+                        st.error(f"❌ Error processing {cell_name}: {str(e)}")
+                        continue
             
             try:
+                # Prepare cell format data for Full Cell projects
+                cell_format_data = {}
+                if project_type == "Full Cell":
+                    cell_format = st.session_state.get('current_cell_format', 'Coin')
+                    cell_format_data['cell_format'] = cell_format
+                    if cell_format == "Pouch":
+                        cell_format_data['cathode_length'] = st.session_state.get('current_cathode_length', 50.0)
+                        cell_format_data['cathode_width'] = st.session_state.get('current_cathode_width', 50.0)
+                        cell_format_data['num_stacked_cells'] = st.session_state.get('current_num_stacked_cells', 1)
+                
                 update_experiment(
                     experiment_id=experiment_id,
                     project_id=project_id,
                     experiment_name=experiment_name_input,
                     experiment_date=experiment_date_input,
-                    disc_diameter_mm=disc_diameter_input,
+                    disc_diameter_mm=st.session_state.get('current_disc_diameter_mm', current_disc_diameter),
                     group_assignments=group_assignments,
                     group_names=group_names,
                     cells_data=updated_cells_data,
                     solids_content=solids_content,
                     pressed_thickness=pressed_thickness,
-                    experiment_notes=experiment_notes
+                    experiment_notes=experiment_notes,
+                    cell_format_data=cell_format_data
                 )
                 
                 # Update the loaded experiment in session state
@@ -1142,14 +1771,37 @@ with tab_inputs:
                 if 'cache_key' in st.session_state:
                     del st.session_state['cache_key']
                 
-                st.success("✅ Experiment updated successfully!")
+                # Reload the experiment from database to get the updated data
+                try:
+                    updated_experiment_data = get_experiment_data(experiment_id)
+                    if updated_experiment_data:
+                        # get_experiment_data returns: id, project_id, cell_name, file_name, loading, active_material, 
+                        # formation_cycles, test_number, electrolyte, substrate, separator, data_json, created_date
+                        # data_json is at index 11
+                        st.session_state['loaded_experiment'] = {
+                            'experiment_id': experiment_id,
+                            'project_id': project_id,
+                            'experiment_name': experiment_name_input,
+                            'experiment_data': json.loads(updated_experiment_data[11])  # data_json is at index 11
+                        }
+                        # Set a flag to indicate that calculations have been updated
+                        st.session_state['calculations_updated'] = True
+                        st.session_state['update_timestamp'] = datetime.now()
+                        st.success("✅ Experiment updated successfully! All calculated values have been refreshed.")
+                        st.info("🔄 Summary tables, plots, and Master Table will reflect the updated values.")
+                    else:
+                        st.success("✅ Experiment updated successfully!")
+                except Exception as reload_error:
+                    st.warning(f"⚠️ Experiment updated but failed to reload data: {str(reload_error)}")
+                    st.success("✅ Experiment updated successfully!")
+                
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Error updating experiment: {str(e)}")
     
     elif is_new_experiment:
         # Save new experiment (only if we have valid data and a selected project)
-        valid_datasets = [ds for ds in datasets if ds.get('file') and ds.get('loading', 0) > 0 and 0 < ds.get('active', 0) <= 100]
+        valid_datasets = [ds for ds in datasets if not ds.get('excluded', False) and ds.get('file') and ds.get('loading', 0) > 0 and 0 < ds.get('active', 0) <= 100]
         
         if valid_datasets and st.session_state.get('current_project_id'):
             if st.button("💾 Save New Experiment", type="primary", use_container_width=True):
@@ -1190,7 +1842,8 @@ with tab_inputs:
                                 'substrate': ds.get('substrate', 'Copper'),
                                 'separator': ds.get('separator', '25um PP'),
                                 'formulation': ds.get('formulation', []),
-                                'data_json': df.to_json()
+                                'data_json': df.to_json(),
+                                'excluded': ds.get('excluded', False)  # Add this line
                             })
                         else:
                             st.warning(f"⚠️ Failed to process data for {cell_name}. Skipping this cell.")
@@ -1203,32 +1856,54 @@ with tab_inputs:
                     try:
                         if check_experiment_name_exists(current_project_id, exp_name):
                             experiment_id = get_experiment_by_name(current_project_id, exp_name)
+                            # Prepare cell format data for Full Cell projects
+                            cell_format_data = {}
+                            if project_type == "Full Cell":
+                                cell_format = st.session_state.get('current_cell_format', 'Coin')
+                                cell_format_data['cell_format'] = cell_format
+                                if cell_format == "Pouch":
+                                    cell_format_data['cathode_length'] = st.session_state.get('current_cathode_length', 50.0)
+                                    cell_format_data['cathode_width'] = st.session_state.get('current_cathode_width', 50.0)
+                                    cell_format_data['num_stacked_cells'] = st.session_state.get('current_num_stacked_cells', 1)
+                            
                             update_experiment(
                                 experiment_id=experiment_id,
                                 project_id=current_project_id,
                                 experiment_name=exp_name,
                                 experiment_date=experiment_date_input,
-                                disc_diameter_mm=disc_diameter_input,
+                                disc_diameter_mm=st.session_state.get('current_disc_diameter_mm', 15),
                                 group_assignments=group_assignments,
                                 group_names=group_names,
                                 cells_data=cells_data,
                                 solids_content=solids_content,
                                 pressed_thickness=pressed_thickness,
-                                experiment_notes=experiment_notes
+                                experiment_notes=experiment_notes,
+                                cell_format_data=cell_format_data
                             )
                             st.success(f"🔄 Updated experiment '{exp_name}' in project '{current_project_name}'!")
                         else:
+                            # Prepare cell format data for Full Cell projects
+                            cell_format_data = {}
+                            if project_type == "Full Cell":
+                                cell_format = st.session_state.get('current_cell_format', 'Coin')
+                                cell_format_data['cell_format'] = cell_format
+                                if cell_format == "Pouch":
+                                    cell_format_data['cathode_length'] = st.session_state.get('current_cathode_length', 50.0)
+                                    cell_format_data['cathode_width'] = st.session_state.get('current_cathode_width', 50.0)
+                                    cell_format_data['num_stacked_cells'] = st.session_state.get('current_num_stacked_cells', 1)
+                            
                             save_experiment(
                                 project_id=current_project_id,
                                 experiment_name=exp_name,
                                 experiment_date=experiment_date_input,
-                                disc_diameter_mm=disc_diameter_input,
+                                disc_diameter_mm=st.session_state.get('current_disc_diameter_mm', 15),
                                 group_assignments=group_assignments,
                                 group_names=group_names,
                                 cells_data=cells_data,
                                 solids_content=solids_content,
                                 pressed_thickness=pressed_thickness,
-                                experiment_notes=experiment_notes
+                                experiment_notes=experiment_notes,
+                                cell_format_data=cell_format_data
                             )
                             st.success(f"✅ Saved experiment '{exp_name}' with {len(cells_data)} cells in project '{current_project_name}'!")
                         
@@ -1258,7 +1933,7 @@ if loaded_experiment:
     experiment_data = loaded_experiment['experiment_data']
     cells_data = experiment_data.get('cells', [])
     
-    for cell_data in cells_data:
+    for i, cell_data in enumerate(cells_data):
         cell_name = cell_data.get('cell_name', 'Unknown')
         try:
             # Fix the deprecation warning by using StringIO
@@ -1272,23 +1947,84 @@ if loaded_experiment:
                 if project_info:
                     project_type = project_info[3]  # project_type is the 4th field
             
-            # Recalculate efficiency based on project type if this is an anode project
-            if project_type == "Anode" and 'Q charge (mA.h)' in df.columns and 'Q discharge (mA.h)' in df.columns:
-                # Recalculate efficiency for anode projects
+            # Check if loading or active material have been changed in session state
+            # Check both multi-cell and single-cell widget keys
+            widget_loading = st.session_state.get(f'edit_loading_{i}') or st.session_state.get(f'edit_single_loading_{i}')
+            widget_active = st.session_state.get(f'edit_active_{i}') or st.session_state.get(f'edit_single_active_{i}')
+            
+            db_loading = cell_data.get('loading', 0)
+            db_active = cell_data.get('active_material', 0)
+            
+            # Use widget values if available, otherwise use database values
+            current_loading = widget_loading if widget_loading is not None else db_loading
+            current_active = widget_active if widget_active is not None else db_active
+            
+            # Recalculate gravimetric capacities if loading or active material changed
+            if (current_loading != db_loading or current_active != db_active):
+                try:
+                    df = recalculate_gravimetric_capacities(df, current_loading, current_active)
+                except Exception as e:
+                    print(f"Error recalculating gravimetric capacities for {cell_name}: {e}")
+            
+            # Recalculate efficiency based on project type for all projects (was previously only for Anode)
+            if 'Q charge (mA.h)' in df.columns and 'Q discharge (mA.h)' in df.columns:
+                # Recalculate efficiency for all project types to ensure correctness
                 df['Efficiency (-)'] = calculate_efficiency_based_on_project_type(
                     df['Q charge (mA.h)'], 
                     df['Q discharge (mA.h)'], 
                     project_type
                 ) / 100  # Convert to decimal for consistency
             
+            # Extract electrode data from experiment
+            pressed_thickness = experiment_data.get('pressed_thickness', None)
+            solids_content = experiment_data.get('solids_content', None)
+            porosity = cell_data.get('porosity', None)
+            
+            # If porosity is not available in cell data, try to calculate it
+            if porosity is None or porosity <= 0:
+                try:
+                    from porosity_calculations import calculate_porosity_from_experiment_data
+                    if (cell_data.get('loading') and 
+                        experiment_data.get('disc_diameter_mm') and 
+                        pressed_thickness and 
+                        cell_data.get('formulation')):
+                        
+                        porosity_data = calculate_porosity_from_experiment_data(
+                            disc_mass_mg=cell_data['loading'],
+                            disc_diameter_mm=experiment_data['disc_diameter_mm'],
+                            pressed_thickness_um=pressed_thickness,
+                            formulation=cell_data['formulation']
+                        )
+                        porosity = porosity_data['porosity']
+                except Exception as e:
+                    print(f"Error calculating porosity for {cell_name}: {e}")
+                    porosity = None
+            
+            # Get formulation data from cell_data
+            formulation = cell_data.get('formulation', [])
+            
             loaded_dfs.append({
                 'df': df,
-                'testnum': cell_data.get('test_number'),
-                'loading': cell_data.get('loading'),
-                'active': cell_data.get('active_material'),
+                'testnum': cell_data.get('test_number', cell_data.get('cell_name', 'Unknown')),
+                'loading': current_loading,  # Use current loading (may be updated from widget)
+                'active': current_active,  # Use current active material (may be updated from widget)
                 'formation_cycles': cell_data.get('formation_cycles'),
-                'project_type': project_type
+                'project_type': project_type,
+                'excluded': cell_data.get('excluded', False),
+                # Add electrode data for export functionality
+                'pressed_thickness': pressed_thickness,
+                'solids_content': solids_content,
+                'porosity': porosity,
+                # Add formulation data for export functionality
+                'formulation': formulation
             })
+            
+            # Debug info for electrode data loading (can be removed after testing)
+            if pressed_thickness or porosity or solids_content:
+                print(f"DEBUG: Loaded electrode data for {cell_name}:")
+                print(f"  - Pressed thickness: {pressed_thickness}")
+                print(f"  - Solids content: {solids_content}")
+                print(f"  - Porosity: {porosity}")
         except Exception as e:
             st.error(f"Error loading data for {cell_name}: {str(e)}")
     
@@ -1297,6 +2033,13 @@ if loaded_experiment:
         dfs = loaded_dfs
         ready = True
         st.success(f"✅ Loaded {len(loaded_dfs)} cell(s) from saved experiment")
+        
+        # Update datasets in session state to reflect any widget changes
+        # This ensures Summary tables and other components also show updated values
+        for i, df_data in enumerate(loaded_dfs):
+            if i < len(st.session_state.get('datasets', [])):
+                st.session_state['datasets'][i]['loading'] = df_data['loading']
+                st.session_state['datasets'][i]['active'] = df_data['active']
         
         # Display experiment metadata
         if experiment_data.get('experiment_date'):
@@ -1414,6 +2157,29 @@ if ready:
     datasets = st.session_state.get('datasets', [])
     disc_area_cm2 = np.pi * (disc_diameter_mm / 2 / 10) ** 2
     
+    # Filter out excluded cells from dfs
+    if loaded_experiment:
+        dfs = [d for d in loaded_dfs if not d.get('excluded', False)]
+    else:
+        # For new experiments, we need to filter the processed dfs, not the raw valid_datasets
+        # The processed dfs are already cached in st.session_state['processed_data_cache']
+        processed_dfs = st.session_state.get('processed_data_cache', [])
+        valid_datasets = st.session_state.get('datasets', [])
+        
+        # Create a mapping of file names to excluded status
+        excluded_files = {}
+        for ds in valid_datasets:
+            if ds.get('file') and hasattr(ds['file'], 'name'):
+                excluded_files[ds['file'].name] = ds.get('excluded', False)
+        
+        # Filter processed dfs based on excluded status
+        dfs = []
+        for d in processed_dfs:
+            # Check if this processed data corresponds to an excluded file
+            file_name = d.get('file_name', '')
+            if not excluded_files.get(file_name, False):
+                dfs.append(d)
+
     # --- Group Average Curve Calculation for Plotting ---
     group_curves = []
     if enable_grouping and group_assignments is not None:
@@ -1455,6 +2221,16 @@ if ready:
     # --- Main Tabs Content ---
     with tab1:
         st.header("📊 Summary Tables")
+        
+        # Show update notification if calculations were recently updated
+        if st.session_state.get('calculations_updated', False):
+            update_time = st.session_state.get('update_timestamp')
+            if update_time:
+                time_str = update_time.strftime("%H:%M:%S")
+                st.success(f"✅ Values updated at {time_str} - All calculations have been refreshed!")
+                # Clear the flag after showing it once in Summary tab
+                st.session_state['calculations_updated'] = False
+        
         st.markdown("---")
         # Add toggle for showing average column
         show_average_col = False
@@ -1474,59 +2250,26 @@ if ready:
             if 'formation_cycles' in datasets[0]:
                 formation_cycles = datasets[0]['formation_cycles']
         
-        # Shared Data Series Controls (affects both plots)
-        st.subheader("🎛️ Data Series Selection")
-        st.markdown("*These controls apply to both the Main Capacity Plot and Capacity Retention Plot below*")
-        show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles = render_toggle_section(dfs, enable_grouping=enable_grouping)
+        # Unified Plot Controls (applies to all plots)
+        st.subheader("🎛️ Plot Controls")
+        st.markdown("*Configure what data to show and how plots should look*")
+        show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles, cycle_filter, y_axis_limits = render_toggle_section(dfs, enable_grouping=enable_grouping)
+        
+        # Color customization UI
+        custom_colors = render_experiment_color_customization(
+            dfs, experiment_name, show_average_performance, 
+            enable_grouping, group_names
+        )
         
         st.markdown("---")
         
         # Main Capacity Plot Section
         st.subheader("📊 Main Capacity Plot")
         
-        # Main plot specific display options
-        with st.expander("🎨 Main Plot Display Options", expanded=False):
-            st.markdown("### Main Plot Customization")
-            
-            main_display_col1, main_display_col2, main_display_col3 = st.columns(3)
-            
-            with main_display_col1:
-                st.markdown("**Data Display**")
-                main_remove_markers = st.checkbox(
-                    '🔘 Remove markers', 
-                    value=remove_markers,
-                    key='main_remove_markers',
-                    help="Hide data point markers on the main plot for cleaner lines"
-                )
-                main_show_title = st.checkbox(
-                    '📝 Show graph title', 
-                    value=show_graph_title,
-                    key='main_show_title',
-                    help="Display the main plot title"
-                )
-            
-            with main_display_col2:
-                st.markdown("**Legend & Labels**")
-                main_hide_legend = st.checkbox(
-                    '🏷️ Hide legend', 
-                    value=hide_legend,
-                    key='main_hide_legend',
-                    help="Remove the plot legend (useful for single-cell data or cleaner visuals)"
-                )
-                
-            with main_display_col3:
-                st.markdown("**Data Processing**")
-                main_remove_last = st.checkbox(
-                    '🔄 Remove last cycle', 
-                    value=remove_last_cycle,
-                    key='main_remove_last',
-                    help="Exclude the last cycle from the main plot (useful for incomplete data)"
-                )
-        
-        # Generate main capacity plot
+        # Generate main capacity plot using unified settings
         fig = plot_capacity_graph(
-            dfs, show_lines, show_efficiency_lines, main_remove_last, main_show_title, experiment_name,
-            show_average_performance, avg_line_toggles, main_remove_markers, main_hide_legend,
+            dfs, show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name,
+            show_average_performance, avg_line_toggles, remove_markers, hide_legend,
             group_a_curve=(group_curves[0][0], group_curves[0][1]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][1] and group_plot_toggles.get("Group Q Dis", False) else None,
             group_b_curve=(group_curves[1][0], group_curves[1][1]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][1] and group_plot_toggles.get("Group Q Dis", False) else None,
             group_c_curve=(group_curves[2][0], group_curves[2][1]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][1] and group_plot_toggles.get("Group Q Dis", False) else None,
@@ -1536,7 +2279,10 @@ if ready:
             group_a_eff=(group_curves[0][0], group_curves[0][3]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][3] and group_plot_toggles.get("Group Efficiency", False) else None,
             group_b_eff=(group_curves[1][0], group_curves[1][3]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][3] and group_plot_toggles.get("Group Efficiency", False) else None,
             group_c_eff=(group_curves[2][0], group_curves[2][3]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][3] and group_plot_toggles.get("Group Efficiency", False) else None,
-            group_names=group_names
+            group_names=group_names,
+            cycle_filter=cycle_filter,
+            custom_colors=custom_colors,
+            y_axis_limits=y_axis_limits
         )
         st.pyplot(fig)
         
@@ -1578,6 +2324,7 @@ if ready:
                         max_value=int(max_cycle),
                         value=int(default_ref_cycle),
                         step=1,
+                        key="reference_cycle",
                         help=f"Select which cycle to use as the 100% reference point. Default is cycle {formation_cycles + 1} (first cycle after {formation_cycles} formation cycles)."
                     )
                 
@@ -1600,6 +2347,7 @@ if ready:
                         max_value=100.0,
                         value=80.0,
                         step=5.0,
+                        key="retention_threshold",
                         help="Set the threshold line for capacity retention analysis. Common values: 80% (standard), 70% (aggressive)."
                     )
                 
@@ -1609,6 +2357,7 @@ if ready:
                         "📊 Y-Axis Range",
                         options=["Full Range (0-110%)", "Focused View (70-110%)", "Standard View (50-110%)", "Custom Range"],
                         index=0,
+                        key="y_axis_preset",
                         help="Choose the Y-axis range for better visualization of retention data."
                     )
                 
@@ -1619,16 +2368,18 @@ if ready:
                             "Min Y (%)", 
                             min_value=0.0, 
                             max_value=100.0, 
-                            value=0.0,
+                            value=st.session_state.get('retention_y_axis_min', 0.0),
                             step=5.0,
+                            key="retention_y_axis_min",
                             help="Set custom minimum Y-axis value"
                         )
                         custom_max = st.number_input(
                             "Max Y (%)", 
                             min_value=50.0, 
                             max_value=200.0, 
-                            value=110.0,
+                            value=st.session_state.get('retention_y_axis_max', 110.0),
                             step=5.0,
+                            key="retention_y_axis_max",
                             help="Set custom maximum Y-axis value"
                         )
                         y_axis_min, y_axis_max = custom_min, custom_max
@@ -1644,18 +2395,38 @@ if ready:
                         # Show current range as metric
                         st.metric("Y-Axis Range", f"{y_axis_min:.0f}% - {y_axis_max:.0f}%")
                 
-                # Retention plot display options
-                retention_remove_markers, retention_hide_legend, retention_show_title, show_baseline_line, show_threshold_line = render_retention_display_options()
+                # Retention plot specific options (only unique settings, reuse unified settings for common ones)
+                with st.expander("🎨 Retention Plot Specific Options", expanded=False):
+                    st.markdown("### Retention Plot Customization")
+                    
+                    retention_col1, retention_col2 = st.columns(2)
+                    
+                    with retention_col1:
+                        st.markdown("**Reference Lines**")
+                        show_baseline_line = st.checkbox(
+                            '📏 Show baseline (100%)', 
+                            value=True,
+                            key='retention_baseline',
+                            help="Show the 100% baseline reference line"
+                        )
+                        
+                    with retention_col2:
+                        show_threshold_line = st.checkbox(
+                            f'📉 Show threshold ({retention_threshold:.0f}%)', 
+                            value=True,
+                            key='retention_threshold_line',
+                            help=f"Show the {retention_threshold:.0f}% retention threshold line"
+                        )
                 
                 # Info box explaining the reference cycle and synchronization
                 st.info(f"ℹ️ **Current Reference:** Cycle {reference_cycle} is set as 100% capacity. All other cycles show retention relative to this reference.")
                 st.info("🔗 **Synchronized Data:** This plot uses the same data series selection as the main plot above. Only the selected discharge and charge capacity lines are shown.")
                 
-                # Generate capacity retention plot with shared filter settings
+                # Generate capacity retention plot using unified settings
                 retention_fig = plot_capacity_retention_graph(
-                    dfs, show_lines, reference_cycle, formation_cycles, main_remove_last, 
-                    retention_show_title, experiment_name, show_average_performance, 
-                    avg_line_toggles, retention_remove_markers, retention_hide_legend,
+                    dfs, show_lines, reference_cycle, formation_cycles, remove_last_cycle, 
+                    show_graph_title, experiment_name, show_average_performance, 
+                    avg_line_toggles, remove_markers, hide_legend,
                     group_a_curve=None,  # Can be extended later for group retention
                     group_b_curve=None,
                     group_c_curve=None,
@@ -1664,7 +2435,9 @@ if ready:
                     y_axis_min=y_axis_min,
                     y_axis_max=y_axis_max,
                     show_baseline_line=show_baseline_line,
-                    show_threshold_line=show_threshold_line
+                    show_threshold_line=show_threshold_line,
+                    cycle_filter=cycle_filter,
+                    custom_colors=custom_colors
                 )
                 st.pyplot(retention_fig)
                 
@@ -1700,9 +2473,9 @@ if ready:
                     - **Threshold at {retention_threshold}%:** {"Standard degradation benchmark" if retention_threshold == 80 else "Custom degradation benchmark"} {"(Hidden)" if not show_threshold_line else "(Visible)"}
                     - **Y-Axis Range:** {"Full view - good for complete retention analysis" if y_axis_preset == "Full Range (0-110%)" else "Focused view - better for detailed capacity changes analysis"}
                     - **Reference Cycle {reference_cycle}:** {"First cycle after formation" if reference_cycle == formation_cycles + 1 else "Custom baseline cycle"}
-                    - **Display Options:** {"Markers hidden" if retention_remove_markers else "Markers shown"}, {"Legend hidden" if retention_hide_legend else "Legend shown"}, {"Title hidden" if not retention_show_title else "Title shown"}
+                    - **Display Options:** {"Markers hidden" if remove_markers else "Markers shown"}, {"Legend hidden" if hide_legend else "Legend shown"}, {"Title hidden" if not show_graph_title else "Title shown"}
                     - **Reference Lines:** {"100% baseline hidden" if not show_baseline_line else "100% baseline shown"}, {"Threshold line hidden" if not show_threshold_line else "Threshold line shown"}
-                    - **Remove Last Cycle:** {"Applied to both plots" if main_remove_last else "Not applied"}
+                    - **Remove Last Cycle:** {"Applied to both plots" if remove_last_cycle else "Not applied"}
                     """)
             else:
                 st.warning("⚠️ No cycle data available for capacity retention analysis. Please upload data files first.")
@@ -1757,21 +2530,27 @@ if ready:
                     st.markdown("**📝 Additional Data**")
                     include_notes = st.checkbox(
                         "Experiment notes",
-                        value=False,
+                        value=True,
                         key="export_notes",
                         help="Include experiment notes from the Cell Input page"
                     )
                     include_electrode_data = st.checkbox(
                         "Electrode data group",
-                        value=False,
+                        value=True,
                         key="export_electrode_group",
                         help="Include electrode-related data"
+                    )
+                    include_formulation = st.checkbox(
+                        "Formulation table",
+                        value=True,
+                        key="export_formulation",
+                        help="Include formulation component table"
                     )
             
             # Electrode Data Sub-toggles
             if include_electrode_data:
                 with st.expander("🔬 Electrode Data Details", expanded=True):
-                    electrode_col1, electrode_col2 = st.columns(2)
+                    electrode_col1, electrode_col2, electrode_col3 = st.columns(3)
                     
                     with electrode_col1:
                         include_porosity = st.checkbox(
@@ -1788,9 +2567,18 @@ if ready:
                             key="export_thickness",
                             help="Include electrode thickness data"
                         )
+                    
+                    with electrode_col3:
+                        include_solids_content = st.checkbox(
+                            "Solids content",
+                            value=True,
+                            key="export_solids_content",
+                            help="Include solids content percentage"
+                        )
             else:
                 include_porosity = False
                 include_thickness = False
+                include_solids_content = False
             
             # Get stored experiment notes from the current experiment
             stored_experiment_notes = ""
@@ -1832,8 +2620,36 @@ if ready:
                     electrode_items.append("Porosity")
                 if include_thickness:
                     electrode_items.append("Thickness")
+                if include_solids_content:
+                    electrode_items.append("Solids Content")
                 if electrode_items:
                     content_items.append(f"✅ Electrode data: {', '.join(electrode_items)}")
+            if include_formulation:
+                content_items.append("✅ Formulation table")
+                # Debug: Check formulation data availability
+                formulation_data = None
+                if dfs and len(dfs) > 0:
+                    formulation_data = dfs[0].get('formulation', [])
+                if not formulation_data or len(formulation_data) == 0:
+                    loaded_experiment = st.session_state.get('loaded_experiment')
+                    if loaded_experiment:
+                        experiment_data = loaded_experiment.get('experiment_data', {})
+                        cells_data = experiment_data.get('cells', [])
+                        if cells_data and len(cells_data) > 0:
+                            formulation_data = cells_data[0].get('formulation', [])
+                
+                # Enhanced debug output
+                with st.expander("🔍 Debug: Formulation Data", expanded=False):
+                    st.write(f"**Formulation data length:** {len(formulation_data) if formulation_data else 0}")
+                    if formulation_data:
+                        st.write(f"**Data type:** {type(formulation_data)}")
+                        st.write(f"**First item:** {formulation_data[0] if len(formulation_data) > 0 else 'N/A'}")
+                        st.write(f"**Full data:** {formulation_data}")
+                        # Show keys if it's a dict
+                        if formulation_data and len(formulation_data) > 0 and isinstance(formulation_data[0], dict):
+                            st.write(f"**Keys in first item:** {list(formulation_data[0].keys())}")
+                    else:
+                        st.warning("⚠️ No formulation data found in dfs or loaded_experiment")
             
             if content_items:
                 for item in content_items:
@@ -1866,15 +2682,17 @@ if ready:
                         include_electrode_data=include_electrode_data,
                         include_porosity=include_porosity,
                         include_thickness=include_thickness,
+                        include_solids_content=include_solids_content,
+                        include_formulation=include_formulation,
                         experiment_notes=stored_experiment_notes,
                         # Retention plot parameters (use session state from Plots tab)
                         retention_threshold=st.session_state.get('retention_threshold', 80.0),
                         reference_cycle=st.session_state.get('reference_cycle', 5),
                         formation_cycles=dfs[0].get('formation_cycles', 4) if dfs and len(dfs) > 0 else st.session_state.get('current_formation_cycles', 4),
                         retention_show_lines=show_lines,  # Use same lines as main plot
-                        retention_remove_markers=st.session_state.get('retention_remove_markers', False),
-                        retention_hide_legend=st.session_state.get('retention_hide_legend', False),
-                        retention_show_title=st.session_state.get('retention_show_title', True),
+                        retention_remove_markers=remove_markers,
+                        retention_hide_legend=hide_legend,
+                        retention_show_title=show_graph_title,
                         show_baseline_line=st.session_state.get('retention_show_baseline', True),
                         show_threshold_line=st.session_state.get('retention_show_threshold', True),
                         y_axis_min=st.session_state.get('y_axis_min', 0.0),
@@ -2000,6 +2818,10 @@ if tab_comparison and current_project_id:
                             
                             experiment_cells = []
                             for cell_data in cells_data:
+                                # Skip excluded cells
+                                if cell_data.get('excluded', False):
+                                    continue
+                                    
                                 try:
                                     df = pd.read_json(StringIO(cell_data['data_json']))
                                     
@@ -2163,6 +2985,109 @@ if tab_comparison and current_project_id:
                                 help=f"Experiment: {best_exp}"
                             )
                     
+                    # Add the new capacity comparison plot section
+                    st.markdown("---")
+                    st.subheader("📈 Capacity Data Comparison")
+                    st.markdown("*Compare capacity curves from multiple experiments on the same plot*")
+                    
+                    # Prepare experiment data for plotting
+                    experiments_plot_data = []
+                    for exp_name in selected_experiments:
+                        exp_data = experiment_dict[exp_name]
+                        exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                        
+                        try:
+                            parsed_data = json.loads(data_json)
+                            dfs = []
+                            
+                            # Check if this is a multi-cell experiment or single cell
+                            if 'cells' in parsed_data:
+                                # Multi-cell experiment - cells_data is a list
+                                cells_data = parsed_data['cells']
+                                
+                                # Process each cell in the experiment
+                                for cell_data in cells_data:
+                                    if cell_data.get('excluded', False):
+                                        continue  # Skip excluded cells
+                                    
+                                    if 'data_json' in cell_data:
+                                        df = pd.read_json(StringIO(cell_data['data_json']))
+                                        test_num = cell_data.get('test_number', cell_data.get('testnum', f'Cell {len(dfs)+1}'))
+                                        dfs.append({
+                                            'df': df,
+                                            'testnum': test_num,
+                                            'loading': cell_data.get('loading', loading),
+                                            'active_material': cell_data.get('active_material', active_material)
+                                        })
+                            else:
+                                # Single cell experiment - data_json is at the top level
+                                df = pd.read_json(StringIO(data_json))
+                                test_num = test_number or f'Cell 1'
+                                dfs.append({
+                                    'df': df,
+                                    'testnum': test_num,
+                                    'loading': loading,
+                                    'active_material': active_material
+                                })
+                            
+                            if dfs:  # Only add if we have valid data
+                                experiments_plot_data.append({
+                                    'experiment_name': exp_name,
+                                    'dfs': dfs
+                                })
+                        except Exception as e:
+                            st.warning(f"Could not load plotting data for {exp_name}: {str(e)}")
+                            # Add debug info
+                            st.info(f"Debug info for {exp_name}: data_json type = {type(data_json)}, length = {len(str(data_json)) if data_json else 'None'}")
+                            continue
+                    
+                    if len(experiments_plot_data) >= 1:
+                        # Render plot options
+                        show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, cycle_filter, y_axis_limits = render_comparison_plot_options(experiments_plot_data)
+                        
+                        # Render color customization UI
+                        custom_colors = render_comparison_color_customization(
+                            experiments_plot_data, 
+                            show_average_performance
+                        )
+                        
+                        # Generate the comparison plot
+                        try:
+                            comparison_fig = plot_comparison_capacity_graph(
+                                experiments_plot_data,
+                                show_lines,
+                                show_efficiency_lines,
+                                remove_last_cycle,
+                                show_graph_title,
+                                show_average_performance,
+                                avg_line_toggles,
+                                remove_markers,
+                                hide_legend,
+                                cycle_filter,
+                                custom_colors,
+                                y_axis_limits
+                            )
+                            
+                            # Display the plot
+                            st.pyplot(comparison_fig)
+                            
+                            # Export option for the comparison plot
+                            buf = io.BytesIO()
+                            comparison_fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                            buf.seek(0)
+                            st.download_button(
+                                label="📥 Download Capacity Comparison Plot",
+                                data=buf,
+                                file_name="capacity_comparison_plot.png",
+                                mime="image/png"
+                            )
+                            
+                        except Exception as e:
+                            st.error(f"Error generating comparison plot: {str(e)}")
+                            st.info("This may happen if the selected experiments have incompatible data formats.")
+                    else:
+                        st.warning("No valid experiment data available for capacity plotting. Please ensure experiments contain proper cycling data.")
+                    
                     # Summary comparison table
                     st.subheader("📊 Comparison Summary Table")
                     
@@ -2257,6 +3182,14 @@ if tab_master and current_project_id:
         st.header("📋 Master Table")
         current_project_name = st.session_state.get('current_project_name', 'Selected Project')
         st.markdown(f"**Project:** {current_project_name}")
+        
+        # Show update notification if calculations were recently updated
+        if st.session_state.get('calculations_updated', False):
+            update_time = st.session_state.get('update_timestamp')
+            if update_time:
+                time_str = update_time.strftime("%H:%M:%S")
+                st.info(f"🔄 Data refreshed at {time_str} - Master table shows updated calculations!")
+        
         st.markdown("---")
         
         # Get all experiments data for this project
@@ -2288,6 +3221,8 @@ if tab_master and current_project_id:
                         
                         experiment_cells = []
                         for cell_data in cells_data:
+                            if cell_data.get('excluded', False):
+                                continue
                             try:
                                 df = pd.read_json(StringIO(cell_data['data_json']))
                                 

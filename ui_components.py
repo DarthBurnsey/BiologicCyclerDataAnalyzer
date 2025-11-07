@@ -574,8 +574,8 @@ def calculate_cell_metrics(df_cell, formation_cycles, disc_area_cm2):
     
     return metrics
 
-def render_toggle_section(dfs: List[Dict[str, Any]], enable_grouping: bool = False) -> Tuple[Dict[str, bool], Dict[str, bool], bool, bool, bool, Dict[str, bool], bool, bool, Dict[str, bool]]:
-    """Render all toggles and return their states: show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles."""
+def render_toggle_section(dfs: List[Dict[str, Any]], enable_grouping: bool = False) -> Tuple[Dict[str, bool], Dict[str, bool], bool, bool, bool, Dict[str, bool], bool, bool, Dict[str, bool], str, Tuple[float, float]]:
+    """Render all toggles and return their states: show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles, cycle_filter, y_axis_limits."""
     with st.expander("⚙️ Graph Display Options", expanded=True):
         st.markdown("### Graph Display Options")
         dis_col, chg_col, eff_col = st.columns(3)
@@ -645,18 +645,96 @@ def render_toggle_section(dfs: List[Dict[str, Any]], enable_grouping: bool = Fal
         avg_line_toggles = {"Average Q Dis": True, "Average Q Chg": True, "Average Efficiency": True}
         group_plot_toggles = {"Group Q Dis": False, "Group Q Chg": False, "Group Efficiency": False}
         st.markdown("---")
-        with st.expander("📊 Graphing Options", expanded=False):
+        
+        # Cycle filter section
+        with st.expander("🔄 Cycle Data Filter", expanded=False):
+            st.markdown("### Filter Cycles to Display")
+            st.markdown("**Examples:** `1-120` (cycles 1-120), `2;5;10` (cycles 2,5,10), `3-*` (cycles 3 to end)")
+            
+            cycle_filter = st.text_input(
+                "Cycle Range",
+                value="1-*",
+                key="cycle_filter",
+                help="Enter cycle range (e.g., '1-120', '2;5;10', '3-*'). Use '*' for 'to end'."
+            )
+        
+        with st.expander("📊 Plot Display Settings", expanded=False):
+            st.markdown("### Plot Styling Options")
+            
             col1, col2, col3 = st.columns(3)
             with col1:
-                remove_last_cycle = st.checkbox('Remove last cycle', value=False)
+                st.markdown("**Data Processing**")
+                remove_last_cycle = st.checkbox(
+                    '🔄 Remove last cycle', 
+                    value=False,
+                    help="Exclude the last cycle from plots"
+                )
+                
             with col2:
-                remove_markers = st.checkbox('Remove markers', value=False)
-                show_graph_title = st.checkbox('Show graph title', value=False)
+                st.markdown("**Visual Display**")
+                remove_markers = st.checkbox(
+                    '🔘 Remove markers', 
+                    value=False,
+                    help="Hide data point markers for cleaner lines"
+                )
+                show_graph_title = st.checkbox(
+                    '📝 Show graph title', 
+                    value=True,
+                    help="Display the plot title"
+                )
+                
             with col3:
-                hide_legend = st.checkbox('Hide Legend', value=False)
+                st.markdown("**Legend & Performance**")
+                hide_legend = st.checkbox(
+                    '🏷️ Hide legend', 
+                    value=False,
+                    help="Remove the plot legend"
+                )
                 show_average_performance = False
                 if len(dfs) > 1:
-                    show_average_performance = st.checkbox('Average Cell Performance', value=False)
+                    show_average_performance = st.checkbox(
+                        '📊 Show averages', 
+                        value=False,
+                        help="Display average performance lines"
+                    )
+            
+            # Y-Axis Controls Section
+            st.markdown("---")
+            st.markdown("### 📏 Y-Axis Range Control")
+            st.markdown("*Adjust the upper and lower bounds of the y-axis for capacity plots*")
+            
+            y_axis_col1, y_axis_col2, y_axis_col3 = st.columns([1, 1, 1])
+            
+            with y_axis_col1:
+                use_auto_ylim = st.checkbox(
+                    '🔄 Auto Y-Axis', 
+                    value=True,
+                    key='use_auto_ylim',
+                    help="Automatically set y-axis limits based on data"
+                )
+            
+            with y_axis_col2:
+                y_min = st.number_input(
+                    "Y-Axis Min (mAh/g)",
+                    value=0.0,
+                    step=10.0,
+                    key='y_axis_min',
+                    disabled=use_auto_ylim,
+                    help="Set the minimum value for the y-axis"
+                )
+            
+            with y_axis_col3:
+                y_max = st.number_input(
+                    "Y-Axis Max (mAh/g)",
+                    value=400.0,
+                    step=10.0,
+                    key='y_axis_max',
+                    disabled=use_auto_ylim,
+                    help="Set the maximum value for the y-axis"
+                )
+            
+            # Store y-axis limits as tuple (None, None) if auto, otherwise (y_min, y_max)
+            y_axis_limits = (None, None) if use_auto_ylim else (y_min, y_max)
         # Place average toggles in the same columns as the main toggles, if Average Cell Performance is checked
         if show_average_performance:
             with dis_col:
@@ -671,58 +749,256 @@ def render_toggle_section(dfs: List[Dict[str, Any]], enable_grouping: bool = Fal
                 group_plot_toggles["Group Q Dis"] = st.checkbox('Plot Group Q Dis', value=True, key='plot_group_qdis')
                 group_plot_toggles["Group Q Chg"] = st.checkbox('Plot Group Q Chg (Charge Capacity)', value=False, key='plot_group_qchg')
                 group_plot_toggles["Group Efficiency"] = st.checkbox('Plot Group Efficiency', value=False, key='plot_group_eff')
-        return show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles
+        return show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles, cycle_filter, y_axis_limits
 
-def render_retention_display_options() -> Tuple[bool, bool, bool, bool, bool]:
-    """Render capacity retention plot display options and return their states: 
-    remove_markers, hide_legend, show_graph_title, show_baseline_line, show_threshold_line."""
+# render_retention_display_options function removed - now using unified plot settings
+
+def parse_cycle_filter(cycle_filter: str, max_cycle: int) -> List[int]:
+    """
+    Parse cycle filter string and return list of cycles to include.
     
-    with st.expander("🎨 Retention Plot Display Options", expanded=False):
-        st.markdown("### Capacity Retention Plot Customization")
+    Args:
+        cycle_filter: String like "1-120", "2;5;10", "3-*", etc.
+        max_cycle: Maximum cycle number in the dataset
         
-        # Main display controls
-        display_col1, display_col2, display_col3 = st.columns(3)
-        
-        with display_col1:
-            st.markdown("**Data Display**")
-            remove_markers = st.checkbox(
-                '🔘 Remove markers', 
-                value=False,
-                key='retention_remove_markers',
-                help="Hide data point markers on the retention plot for cleaner lines"
-            )
-            show_graph_title = st.checkbox(
-                '📝 Show graph title', 
-                value=True,
-                key='retention_show_title',
-                help="Display the capacity retention plot title"
-            )
-        
-        with display_col2:
-            st.markdown("**Legend & Labels**")
-            hide_legend = st.checkbox(
-                '🏷️ Hide legend', 
-                value=False,
-                key='retention_hide_legend',
-                help="Remove the plot legend (useful for single-cell data or cleaner visuals)"
-            )
+    Returns:
+        List of cycle numbers to include
+    """
+    if not cycle_filter or cycle_filter.strip() == "":
+        return list(range(1, max_cycle + 1))
+    
+    cycles = set()
+    parts = [part.strip() for part in cycle_filter.split(';')]
+    
+    for part in parts:
+        if '-' in part:
+            # Handle range like "1-120" or "3-*"
+            start, end = part.split('-', 1)
+            start = int(start.strip())
             
-        with display_col3:
-            st.markdown("**Reference Lines**")
-            show_baseline_line = st.checkbox(
-                '📏 Show 100% baseline', 
-                value=True,
-                key='retention_show_baseline',
-                help="Display the horizontal reference line at 100% capacity"
-            )
-            show_threshold_line = st.checkbox(
-                '🚨 Show threshold line', 
-                value=True,
-                key='retention_show_threshold',
-                help="Display the horizontal threshold line at the selected retention percentage"
-            )
+            if end.strip() == '*':
+                # Handle wildcard - include from start to max_cycle
+                cycles.update(range(start, max_cycle + 1))
+            else:
+                # Handle specific end
+                end = int(end.strip())
+                cycles.update(range(start, end + 1))
+        else:
+            # Handle individual cycle like "5"
+            cycles.add(int(part))
     
-    return remove_markers, hide_legend, show_graph_title, show_baseline_line, show_threshold_line
+    return sorted(list(cycles))
+
+def render_comparison_plot_options(experiments_data: List[Dict[str, Any]]) -> Tuple[Dict[str, bool], Dict[str, bool], bool, bool, bool, Dict[str, bool], bool, bool, str, Tuple[float, float]]:
+    """
+    Render plotting options for the comparison plot and return their states.
+    
+    This is now a wrapper around the unified plot controls system.
+    
+    Args:
+        experiments_data: List of experiment data dictionaries
+        
+    Returns:
+        Tuple containing: show_lines, show_efficiency_lines, remove_last_cycle, 
+        show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, cycle_filter, y_axis_limits
+    """
+    with st.expander("⚙️ Comparison Plot Options", expanded=True):
+        st.markdown("### Select Data Series to Compare")
+        
+        # Create columns for different data types
+        dis_col, chg_col, eff_col = st.columns(3)
+        
+        # Collect all available labels from all experiments
+        all_discharge_labels = []
+        all_charge_labels = []
+        all_efficiency_labels = []
+        
+        for exp_data in experiments_data:
+            exp_name = exp_data['experiment_name']
+            dfs = exp_data['dfs']
+            
+            for i, d in enumerate(dfs):
+                cell_name = d['testnum'] if d['testnum'] else f'Cell {i+1}'
+                all_discharge_labels.append(f"{exp_name} - {cell_name} Q Dis")
+                all_charge_labels.append(f"{exp_name} - {cell_name} Q Chg")
+                all_efficiency_labels.append(f"{exp_name} - {cell_name} Efficiency")
+        
+        # Helper functions for toggling all within each category
+        def set_all_discharge(val):
+            for label in all_discharge_labels:
+                st.session_state[f'comp_show_{label}'] = val
+        def set_all_charge(val):
+            for label in all_charge_labels:
+                st.session_state[f'comp_show_{label}'] = val
+        def set_all_efficiency(val):
+            for label in all_efficiency_labels:
+                st.session_state[f'comp_show_{label}'] = val
+
+        # Discharge toggles
+        with dis_col:
+            st.markdown("**Discharge Capacity**")
+            if len(all_discharge_labels) > 1:
+                toggle_all_discharge = st.checkbox('Toggle All Discharge', value=True, key='comp_toggle_all_discharge', on_change=set_all_discharge, args=(not st.session_state.get('comp_toggle_all_discharge', True),))
+            else:
+                toggle_all_discharge = True
+
+            show_lines = {}
+            for i, label in enumerate(all_discharge_labels):
+                show_lines[label] = st.checkbox(f"Show {label}", value=toggle_all_discharge, key=f'comp_show_{label}')
+
+        # Charge toggles
+        with chg_col:
+            st.markdown("**Charge Capacity**")
+            if len(all_charge_labels) > 1:
+                toggle_all_charge = st.checkbox('Toggle All Charge', value=False, key='comp_toggle_all_charge', on_change=set_all_charge, args=(not st.session_state.get('comp_toggle_all_charge', False),))
+            else:
+                toggle_all_charge = False
+
+            for i, label in enumerate(all_charge_labels):
+                show_lines[label] = st.checkbox(f"Show {label}", value=toggle_all_charge, key=f'comp_show_charge_{label}')
+
+        # Efficiency toggles
+        with eff_col:
+            st.markdown("**Efficiency**")
+            if len(all_efficiency_labels) > 1:
+                toggle_all_efficiency = st.checkbox('Toggle All Efficiency', value=False, key='comp_toggle_all_efficiency', on_change=set_all_efficiency, args=(not st.session_state.get('comp_toggle_all_efficiency', False),))
+            else:
+                toggle_all_efficiency = False
+
+            show_efficiency_lines = {}
+            for i, label in enumerate(all_efficiency_labels):
+                show_efficiency_lines[label] = st.checkbox(f"Show {label}", value=toggle_all_efficiency, key=f'comp_show_eff_{label}')
+
+        # Cycle filter section for comparison plots
+        st.markdown("---")
+        with st.expander("🔄 Cycle Data Filter", expanded=False):
+            st.markdown("### Filter Cycles to Display")
+            st.markdown("**Examples:** `1-120` (cycles 1-120), `2;5;10` (cycles 2,5,10), `3-*` (cycles 3 to end)")
+            
+            cycle_filter = st.text_input(
+                "Cycle Range",
+                value="1-*",
+                key="comp_cycle_filter",
+                help="Enter cycle range (e.g., '1-120', '2;5;10', '3-*'). Use '*' for 'to end'."
+            )
+
+        # Unified display options for comparison plots
+        with st.expander("📊 Comparison Plot Display Settings", expanded=False):
+            st.markdown("### Plot Styling Options")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown("**Data Processing**")
+                remove_last_cycle = st.checkbox(
+                    '🔄 Remove last cycle', 
+                    value=False,
+                    key='comp_remove_last',
+                    help="Exclude the last cycle from comparison plots"
+                )
+                
+            with col2:
+                st.markdown("**Visual Display**")
+                remove_markers = st.checkbox(
+                    '🔘 Remove markers', 
+                    value=False,
+                    key='comp_remove_markers',
+                    help="Hide data point markers for cleaner lines"
+                )
+                show_graph_title = st.checkbox(
+                    '📝 Show graph title', 
+                    value=True,
+                    key='comp_show_title',
+                    help="Display the plot title"
+                )
+                
+            with col3:
+                st.markdown("**Legend & Performance**")
+                hide_legend = st.checkbox(
+                    '🏷️ Hide legend', 
+                    value=False,
+                    key='comp_hide_legend',
+                    help="Remove the plot legend"
+                )
+                show_average_performance = st.checkbox(
+                    '📊 Show averages', 
+                    value=False,
+                    key='comp_show_averages',
+                    help="Display average performance lines (hides individual cell traces when enabled)"
+                )
+            
+            # Y-Axis Controls Section
+            st.markdown("---")
+            st.markdown("### 📏 Y-Axis Range Control")
+            st.markdown("*Adjust the upper and lower bounds of the y-axis for capacity plots*")
+            
+            y_axis_col1, y_axis_col2, y_axis_col3 = st.columns([1, 1, 1])
+            
+            with y_axis_col1:
+                use_auto_ylim_comp = st.checkbox(
+                    '🔄 Auto Y-Axis', 
+                    value=True,
+                    key='comp_use_auto_ylim',
+                    help="Automatically set y-axis limits based on data"
+                )
+            
+            with y_axis_col2:
+                y_min_comp = st.number_input(
+                    "Y-Axis Min (mAh/g)",
+                    value=0.0,
+                    step=10.0,
+                    key='comp_y_axis_min',
+                    disabled=use_auto_ylim_comp,
+                    help="Set the minimum value for the y-axis"
+                )
+            
+            with y_axis_col3:
+                y_max_comp = st.number_input(
+                    "Y-Axis Max (mAh/g)",
+                    value=400.0,
+                    step=10.0,
+                    key='comp_y_axis_max',
+                    disabled=use_auto_ylim_comp,
+                    help="Set the maximum value for the y-axis"
+                )
+            
+            # Store y-axis limits as tuple (None, None) if auto, otherwise (y_min, y_max)
+            y_axis_limits = (None, None) if use_auto_ylim_comp else (y_min_comp, y_max_comp)
+
+        # Average Line Filter Controls
+        avg_line_toggles = {"Average Q Dis": True, "Average Q Chg": True, "Average Efficiency": True}
+        
+        if show_average_performance:
+            st.markdown("---")
+            st.markdown("### 📈 Average Line Filters")
+            st.info("ℹ️ With 'Show Averages' enabled, individual cell traces are hidden. Use the toggles below to filter which average lines to display.")
+            
+            avg_col1, avg_col2, avg_col3 = st.columns(3)
+            
+            with avg_col1:
+                avg_line_toggles["Average Q Dis"] = st.checkbox(
+                    '📊 Average Q Dis',
+                    value=True,
+                    key='comp_avg_qdis',
+                    help="Show/hide average discharge capacity line"
+                )
+            
+            with avg_col2:
+                avg_line_toggles["Average Q Chg"] = st.checkbox(
+                    '⚡ Average Q Chg',
+                    value=True,
+                    key='comp_avg_qchg',
+                    help="Show/hide average charge capacity line"
+                )
+            
+            with avg_col3:
+                avg_line_toggles["Average Efficiency"] = st.checkbox(
+                    '🎯 Average Efficiency',
+                    value=True,
+                    key='comp_avg_eff',
+                    help="Show/hide average efficiency line"
+                )
+    
+    return show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, cycle_filter, y_axis_limits
 
 def render_cell_inputs(context_key=None, project_id=None, get_components_func=None):
     """Render multi-file upload and per-file inputs for each cell. Returns datasets list."""
@@ -1292,4 +1568,269 @@ def display_averages(dfs: List[Dict[str, Any]], show_averages: bool, disc_area_c
             if avg_ceff is not None:
                 st.info(f"Coulombic Efficiency (post-formation): {avg_ceff:.2f}%")
             else:
-                st.warning('No data for average Coulombic Efficiency (post-formation).') 
+                st.warning('No data for average Coulombic Efficiency (post-formation).')
+
+
+def get_default_color_palette():
+    """Get the default color palette matching the plotting module."""
+    return ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+
+
+def render_comparison_color_customization(experiments_data: List[Dict[str, Any]], show_average_performance: bool = False) -> Dict[str, str]:
+    """
+    Render color customization UI for comparison plots.
+    
+    Args:
+        experiments_data: List of experiment data dictionaries
+        show_average_performance: Whether average performance lines are being shown
+        
+    Returns:
+        Dictionary mapping dataset labels to custom colors
+    """
+    default_colors = get_default_color_palette()
+    
+    # Initialize session state for custom colors if not exists
+    if 'comp_custom_colors' not in st.session_state:
+        st.session_state.comp_custom_colors = {}
+    
+    # Collect all datasets that will be shown
+    all_datasets = []
+    
+    for exp_idx, exp_data in enumerate(experiments_data):
+        exp_name = exp_data['experiment_name']
+        dfs = exp_data['dfs']
+        default_color = default_colors[exp_idx % len(default_colors)]
+        
+        # Individual cell datasets (only if not showing averages)
+        if not show_average_performance:
+            for cell_idx, d in enumerate(dfs):
+                cell_name = d['testnum'] if d['testnum'] else f'Cell {cell_idx+1}'
+                all_datasets.append({
+                    'label': f"{exp_name} - {cell_name}",
+                    'exp_name': exp_name,
+                    'cell_name': cell_name,
+                    'default_color': default_color,
+                    'is_average': False
+                })
+        
+        # Average datasets (if showing averages and multiple cells)
+        if show_average_performance and len(dfs) > 1:
+            all_datasets.append({
+                'label': f"{exp_name} - Average",
+                'exp_name': exp_name,
+                'cell_name': 'Average',
+                'default_color': default_color,
+                'is_average': True
+            })
+    
+    # Render color customization UI
+    with st.expander("🎨 Dataset Color Customization", expanded=False):
+        st.markdown("### Customize Dataset Colors")
+        st.info("💡 Select custom colors for each dataset. Colors persist during the session and apply to all plot types.")
+        
+        # Reset button
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.button("🔄 Reset All Colors", key="comp_reset_colors", use_container_width=True):
+                st.session_state.comp_custom_colors = {}
+                st.rerun()
+        
+        # Color pickers for each dataset
+        if all_datasets:
+            # Group by experiment for better organization
+            experiments_groups = {}
+            for dataset in all_datasets:
+                exp_name = dataset['exp_name']
+                if exp_name not in experiments_groups:
+                    experiments_groups[exp_name] = []
+                experiments_groups[exp_name].append(dataset)
+            
+            for exp_name, datasets in experiments_groups.items():
+                st.markdown(f"#### 📊 {exp_name}")
+                
+                # Create columns for color pickers
+                cols_per_row = 3
+                for i in range(0, len(datasets), cols_per_row):
+                    cols = st.columns(cols_per_row)
+                    for col_idx, dataset in enumerate(datasets[i:i+cols_per_row]):
+                        with cols[col_idx]:
+                            label = dataset['label']
+                            default_color = dataset['default_color']
+                            
+                            # Get current custom color or use default
+                            current_color = st.session_state.comp_custom_colors.get(label, default_color)
+                            
+                            # Color picker
+                            new_color = st.color_picker(
+                                f"{dataset['cell_name']}",
+                                value=current_color,
+                                key=f"comp_color_{label}",
+                                help=f"Choose color for {label}"
+                            )
+                            
+                            # Update session state if color changed
+                            if new_color != default_color:
+                                st.session_state.comp_custom_colors[label] = new_color
+                            elif label in st.session_state.comp_custom_colors and new_color == default_color:
+                                # User reset to default
+                                del st.session_state.comp_custom_colors[label]
+                
+                st.markdown("---")
+        else:
+            st.info("No datasets available for color customization.")
+    
+    return st.session_state.comp_custom_colors
+
+
+def render_experiment_color_customization(dfs: List[Dict[str, Any]], experiment_name: str, show_average_performance: bool = False, enable_grouping: bool = False, group_names: List[str] = None) -> Dict[str, str]:
+    """
+    Render color customization UI for individual experiment plots.
+    
+    Args:
+        dfs: List of cell dataframes
+        experiment_name: Name of the experiment
+        show_average_performance: Whether average performance lines are being shown
+        enable_grouping: Whether cell grouping is enabled
+        group_names: List of group names if grouping is enabled
+        
+    Returns:
+        Dictionary mapping dataset labels to custom colors
+    """
+    if group_names is None:
+        group_names = ["Group A", "Group B", "Group C"]
+    
+    # Initialize session state for custom colors if not exists
+    session_key = f'exp_custom_colors_{experiment_name}'
+    if session_key not in st.session_state:
+        st.session_state[session_key] = {}
+    
+    # Collect all datasets
+    all_datasets = []
+    
+    # Get matplotlib default color cycle
+    import matplotlib.pyplot as plt
+    default_colors_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    
+    # Individual cell datasets
+    if not show_average_performance:
+        for i, d in enumerate(dfs):
+            cell_name = d['testnum'] if d['testnum'] else f'Cell {i+1}'
+            default_color = default_colors_cycle[i % len(default_colors_cycle)]
+            all_datasets.append({
+                'label': cell_name,
+                'default_color': default_color,
+                'type': 'cell'
+            })
+    
+    # Average datasets
+    if show_average_performance and len(dfs) > 1:
+        all_datasets.append({
+            'label': 'Average',
+            'default_color': '#000000',  # Black for average
+            'type': 'average'
+        })
+    
+    # Group datasets
+    if enable_grouping:
+        group_colors = ['#0000FF', '#FF0000', '#00FF00']  # Blue, Red, Green
+        for i, group_name in enumerate(group_names[:3]):
+            all_datasets.append({
+                'label': group_name,
+                'default_color': group_colors[i],
+                'type': 'group'
+            })
+    
+    # Render color customization UI
+    with st.expander("🎨 Dataset Color Customization", expanded=False):
+        st.markdown("### Customize Dataset Colors")
+        st.info("💡 Select custom colors for each dataset. Colors persist during the session.")
+        
+        # Reset button
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.button("🔄 Reset All Colors", key=f"exp_reset_colors_{experiment_name}", use_container_width=True):
+                st.session_state[session_key] = {}
+                st.rerun()
+        
+        # Color pickers for each dataset
+        if all_datasets:
+            # Group by type
+            cell_datasets = [d for d in all_datasets if d['type'] == 'cell']
+            average_datasets = [d for d in all_datasets if d['type'] == 'average']
+            group_datasets = [d for d in all_datasets if d['type'] == 'group']
+            
+            # Individual cells
+            if cell_datasets:
+                st.markdown("#### 📱 Individual Cells")
+                cols_per_row = 4
+                for i in range(0, len(cell_datasets), cols_per_row):
+                    cols = st.columns(cols_per_row)
+                    for col_idx, dataset in enumerate(cell_datasets[i:i+cols_per_row]):
+                        with cols[col_idx]:
+                            label = dataset['label']
+                            default_color = dataset['default_color']
+                            current_color = st.session_state[session_key].get(label, default_color)
+                            
+                            new_color = st.color_picker(
+                                label,
+                                value=current_color,
+                                key=f"exp_color_{experiment_name}_{label}",
+                                help=f"Choose color for {label}"
+                            )
+                            
+                            if new_color != default_color:
+                                st.session_state[session_key][label] = new_color
+                            elif label in st.session_state[session_key] and new_color == default_color:
+                                del st.session_state[session_key][label]
+                
+                st.markdown("---")
+            
+            # Averages
+            if average_datasets:
+                st.markdown("#### 📊 Average Lines")
+                cols = st.columns(len(average_datasets))
+                for col_idx, dataset in enumerate(average_datasets):
+                    with cols[col_idx]:
+                        label = dataset['label']
+                        default_color = dataset['default_color']
+                        current_color = st.session_state[session_key].get(label, default_color)
+                        
+                        new_color = st.color_picker(
+                            label,
+                            value=current_color,
+                            key=f"exp_color_{experiment_name}_{label}",
+                            help=f"Choose color for {label}"
+                        )
+                        
+                        if new_color != default_color:
+                            st.session_state[session_key][label] = new_color
+                        elif label in st.session_state[session_key] and new_color == default_color:
+                            del st.session_state[session_key][label]
+                
+                st.markdown("---")
+            
+            # Groups
+            if group_datasets:
+                st.markdown("#### 👥 Group Averages")
+                cols = st.columns(len(group_datasets))
+                for col_idx, dataset in enumerate(group_datasets):
+                    with cols[col_idx]:
+                        label = dataset['label']
+                        default_color = dataset['default_color']
+                        current_color = st.session_state[session_key].get(label, default_color)
+                        
+                        new_color = st.color_picker(
+                            label,
+                            value=current_color,
+                            key=f"exp_color_{experiment_name}_{label}",
+                            help=f"Choose color for {label}"
+                        )
+                        
+                        if new_color != default_color:
+                            st.session_state[session_key][label] = new_color
+                        elif label in st.session_state[session_key] and new_color == default_color:
+                            del st.session_state[session_key][label]
+        else:
+            st.info("No datasets available for color customization.")
+    
+    return st.session_state[session_key] 

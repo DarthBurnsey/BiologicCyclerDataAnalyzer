@@ -694,21 +694,46 @@ def display_best_performers_analysis(individual_cells):
         st.info("Insufficient data for overall performance ranking.")
 
 # --- Helper function for cycle life calculation ---
-def calculate_cycle_life_80(qdis_series, cycle_index_series):
+def calculate_cycle_life_80(qdis_series, cycle_index_series, formation_cycles=4):
+    """Calculate cycle life at 80% capacity retention."""
     # Use max of cycles 3 and 4 as initial, or last available if <4 cycles
     if len(qdis_series) >= 4:
         initial_qdis = max(qdis_series.iloc[2], qdis_series.iloc[3])
+        # Determine the reference cycle index (0-based)
+        reference_cycle_idx = 3 if qdis_series.iloc[3] >= qdis_series.iloc[2] else 2
     elif len(qdis_series) > 0:
         initial_qdis = qdis_series.iloc[-1]
+        reference_cycle_idx = len(qdis_series) - 1
     else:
         return None
+    
     threshold = 0.8 * initial_qdis
-    below_threshold = qdis_series <= threshold
-    if below_threshold.any():
-        first_below_idx = below_threshold.idxmin()
-        return int(cycle_index_series.iloc[first_below_idx])
-    else:
+    
+    # Only check for degradation AFTER the reference cycle (formation period)
+    # Start checking from the cycle after our reference cycle
+    start_checking_idx = max(reference_cycle_idx + 1, formation_cycles)
+    
+    if start_checking_idx >= len(qdis_series):
+        # Not enough post-formation data
         return int(cycle_index_series.iloc[-1])
+    
+    # Get the subset of data after formation cycles
+    post_formation_qdis = qdis_series.iloc[start_checking_idx:]
+    post_formation_cycles = cycle_index_series.iloc[start_checking_idx:]
+    
+    # Check for capacity below threshold in post-formation data
+    below_threshold = post_formation_qdis <= threshold
+    if below_threshold.any():
+        # Find the first cycle where capacity drops below threshold
+        first_below_indices = below_threshold[below_threshold].index
+        if len(first_below_indices) > 0:
+            first_below_idx = first_below_indices[0]
+            # Get the corresponding cycle number
+            cycle_position = qdis_series.index.get_loc(first_below_idx)
+            return int(cycle_index_series.iloc[cycle_position])
+    
+    # If capacity never drops below 80% after formation, return the last cycle number
+    return int(cycle_index_series.iloc[-1])
 
 def get_qdis_series(df_cell):
     qdis_raw = df_cell['Q Dis (mAh/g)']
