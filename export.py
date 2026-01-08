@@ -1,4 +1,4 @@
-# export.py
+ # export.py
 from typing import List, Dict, Any, Tuple, Optional
 import io
 import json
@@ -131,41 +131,37 @@ def get_cell_metrics(df_cell: pd.DataFrame, formation_cycles: int = 4) -> Dict[s
         # Coulombic Efficiency (average of post-formation cycles)
         eff_col = 'Efficiency (-)'
         qdis_col = 'Q Dis (mAh/g)'
+        qch_col = 'Q Ch (mAh/g)'
         n_cycles = len(df_cell)
         
-        if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles + 1:
-            try:
-                # Calculate average efficiency for post-formation cycles
-                post_formation_eff = []
-                prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
-                prev_eff = df_cell[eff_col].iloc[formation_cycles]
+        # Coulombic efficiency: prefer Q Dis / Q Ch per cycle; fall back to provided efficiency column
+        post_ce_values = []
+        try:
+            start_idx = formation_cycles if n_cycles > formation_cycles else 0
+            
+            if qdis_col in df_cell.columns and qch_col in df_cell.columns:
+                qdis_series = pd.to_numeric(df_cell[qdis_col], errors='coerce')
+                qch_series = pd.to_numeric(df_cell[qch_col], errors='coerce')
                 
-                for i in range(formation_cycles + 1, n_cycles):
-                    try:
-                        curr_qdis = df_cell[qdis_col].iloc[i]
-                        curr_eff = df_cell[eff_col].iloc[i]
-                        
-                        if curr_qdis > 0 and prev_qdis > 0:
-                            efficiency = (curr_qdis / prev_qdis) * 100
-                            post_formation_eff.append(efficiency)
-                        
-                        prev_qdis = curr_qdis
-                        prev_eff = curr_eff
-                    except (IndexError, ValueError):
-                        continue
-                
-                if post_formation_eff:
-                    avg_eff = np.mean(post_formation_eff)
-                    metrics['coulombic_eff'] = avg_eff
-                    metrics['coulombic_str'] = f"{avg_eff:.1f}%"
-                else:
-                    metrics['coulombic_eff'] = None
-                    metrics['coulombic_str'] = "N/A"
-            except Exception as e:
-                logger.warning(f"Error calculating coulombic efficiency: {e}")
+                for i in range(start_idx, n_cycles):
+                    qdis = qdis_series.iloc[i]
+                    qch = qch_series.iloc[i]
+                    if pd.notna(qdis) and pd.notna(qch) and qch > 0:
+                        post_ce_values.append((qdis / qch) * 100)
+            
+            elif eff_col in df_cell.columns:
+                eff_series = pd.to_numeric(df_cell[eff_col], errors='coerce')
+                post_ce_values = [val * 100 for val in eff_series.iloc[start_idx:n_cycles] if pd.notna(val) and val > 0]
+            
+            if post_ce_values:
+                avg_eff = float(np.mean(post_ce_values))
+                metrics['coulombic_eff'] = avg_eff
+                metrics['coulombic_str'] = f"{avg_eff:.1f}%"
+            else:
                 metrics['coulombic_eff'] = None
                 metrics['coulombic_str'] = "N/A"
-        else:
+        except Exception as e:
+            logger.warning(f"Error calculating coulombic efficiency: {e}")
             metrics['coulombic_eff'] = None
             metrics['coulombic_str'] = "N/A"
         
@@ -416,13 +412,17 @@ def add_formatted_table_to_slide(slide, table_data, left, top, width, height, he
                                 run.font.size = Pt(12)
                     
                     # Average row styling (if exists and avg_row_color provided)
-                    elif avg_row_color and i == len(table_data) - 1 and "AVERAGE" in str(cell_data).upper():
-                        cell.fill.solid()
-                        cell.fill.fore_color.rgb = avg_row_color
-                        for para in cell.text_frame.paragraphs:
-                            for run in para.runs:
-                                run.font.bold = True
-                                run.font.size = Pt(11)
+                    # Check if this is the last row and contains "Average" or "AVERAGE" in the first cell
+                    elif avg_row_color and i == len(table_data) - 1:
+                        # Check first cell of the row for average indicators
+                        first_cell_text = str(table_data[i][0]).upper() if table_data[i] else ""
+                        if "AVERAGE" in first_cell_text or "PERFORMANCE" in first_cell_text:
+                            cell.fill.solid()
+                            cell.fill.fore_color.rgb = avg_row_color
+                            for para in cell.text_frame.paragraphs:
+                                for run in para.runs:
+                                    run.font.bold = True
+                                    run.font.size = Pt(11)
         
         return table
     except Exception as e:
@@ -575,7 +575,9 @@ def export_powerpoint(
     show_average_performance: bool = False,
     avg_line_toggles: Dict[str, bool] = None,
     remove_markers: bool = False,
-    hide_legend: bool = False
+    hide_legend: bool = False,
+    # Optional: existing presentation to append slides to (for project export)
+    existing_prs: Optional[Presentation] = None
 ) -> Tuple[io.BytesIO, str]:
     """
     Enhanced PowerPoint export with comprehensive error handling, logging, and session state consistency.
@@ -603,9 +605,13 @@ def export_powerpoint(
         if avg_line_toggles is None:
             avg_line_toggles = {}
         
-        # Create presentation
-        logger.info("Creating PowerPoint presentation...")
-        prs = Presentation()
+        # Create presentation or use existing one
+        if existing_prs is not None:
+            logger.info("Using existing presentation for slide appending...")
+            prs = existing_prs
+        else:
+            logger.info("Creating new PowerPoint presentation...")
+            prs = Presentation()
         
         # Determine slide title
         if len(dfs) == 1:
@@ -741,7 +747,8 @@ def export_powerpoint(
                         metrics['coulombic_str']
                     ])
                 
-                if show_averages and len(dfs) > 1:
+                # Always add Average Performance row when there are multiple cells
+                if len(dfs) > 1:
                     # Calculate averages
                     avg_metrics = {
                         'max_qdis': [], 'eff_pct': [], 'cycle_life': [],
@@ -764,7 +771,7 @@ def export_powerpoint(
                             avg_metrics['coulombic_eff'].append(metrics['coulombic_eff'])
                     
                     # Calculate final averages
-                    avg_row = ["AVERAGE"]
+                    avg_row = ["Average Performance"]
                     avg_row.append(f"{np.mean(avg_metrics['max_qdis']):.1f}" if avg_metrics['max_qdis'] else "N/A")
                     avg_row.append(f"{np.mean(avg_metrics['eff_pct']):.1f}%" if avg_metrics['eff_pct'] else "N/A")
                     avg_row.append(f"{np.mean(avg_metrics['cycle_life']):.0f}" if avg_metrics['cycle_life'] else "N/A")
@@ -772,14 +779,21 @@ def export_powerpoint(
                     avg_row.append(f"{np.mean(avg_metrics['coulombic_eff']):.1f}%" if avg_metrics['coulombic_eff'] else "N/A")
                     
                     table_data.append(avg_row)
+                    logger.info(f"Added Average Performance row with {len(avg_row)-1} metrics")
                 
                 # Use helper function to create formatted table
                 rows = len(table_data)
                 table_height = 1.5 + 0.3 * rows
+                
+                # Debug: Log table data structure
+                logger.info(f"Summary table data: {len(table_data)} rows, {len(table_data[0]) if table_data else 0} columns")
+                if len(dfs) > 1:
+                    logger.info(f"Average Performance row will be added: {len(dfs)} cells")
+                
                 add_formatted_table_to_slide(
                     slide1, table_data, left_margin, current_y, 8.5, table_height,
                     header_color=RGBColor(68, 114, 196),
-                    avg_row_color=RGBColor(146, 208, 80) if show_averages and len(dfs) > 1 else None
+                    avg_row_color=RGBColor(146, 208, 80) if len(dfs) > 1 else None
                 )
                 
                 current_y += table_height + 0.2
@@ -1067,34 +1081,40 @@ def export_powerpoint(
                 if include_main_plot:
                     slide2_y = plot_start_y + plot_height + 0.5
         
-        # Validate PowerPoint structure
-        if not validate_powerpoint_structure(prs):
-            raise ValueError("PowerPoint structure validation failed")
-        
-        # Save presentation
-        logger.info("=== Saving PowerPoint Presentation ===")
-        pptx_bytes = io.BytesIO()
-        prs.save(pptx_bytes)
-        pptx_bytes.seek(0)
-        
-        # Generate filename
-        if experiment_name:
-            if len(dfs) == 1:
-                testnum = dfs[0].get('testnum', 'Cell 1') or 'Cell 1'
-                pptx_file_name = f'{experiment_name} {testnum} Summary.pptx'
+        # Validate PowerPoint structure (only if not appending to existing)
+        if existing_prs is None:
+            if not validate_powerpoint_structure(prs):
+                raise ValueError("PowerPoint structure validation failed")
+            
+            # Save presentation
+            logger.info("=== Saving PowerPoint Presentation ===")
+            pptx_bytes = io.BytesIO()
+            prs.save(pptx_bytes)
+            pptx_bytes.seek(0)
+            
+            # Generate filename
+            if experiment_name:
+                if len(dfs) == 1:
+                    testnum = dfs[0].get('testnum', 'Cell 1') or 'Cell 1'
+                    pptx_file_name = f'{experiment_name} {testnum} Summary.pptx'
+                else:
+                    pptx_file_name = f'{experiment_name} Cell Comparison Summary.pptx'
             else:
-                pptx_file_name = f'{experiment_name} Cell Comparison Summary.pptx'
+                if len(dfs) == 1:
+                    testnum = dfs[0].get('testnum', 'Cell 1') or 'Cell 1'
+                    pptx_file_name = f'{testnum} Summary.pptx'
+                else:
+                    pptx_file_name = 'Cell Comparison Summary.pptx'
+            
+            logger.info(f"=== PowerPoint Export Completed Successfully ===")
+            logger.info(f"File: {pptx_file_name}")
+            logger.info(f"Size: {len(pptx_bytes.getvalue())} bytes")
+            return pptx_bytes, pptx_file_name
         else:
-            if len(dfs) == 1:
-                testnum = dfs[0].get('testnum', 'Cell 1') or 'Cell 1'
-                pptx_file_name = f'{testnum} Summary.pptx'
-            else:
-                pptx_file_name = 'Cell Comparison Summary.pptx'
-        
-        logger.info(f"=== PowerPoint Export Completed Successfully ===")
-        logger.info(f"File: {pptx_file_name}")
-        logger.info(f"Size: {len(pptx_bytes.getvalue())} bytes")
-        return pptx_bytes, pptx_file_name 
+            # If appending to existing presentation, return None for bytes and empty filename
+            # The caller will save the presentation separately
+            logger.info("=== Slides added to existing presentation ===")
+            return None, "" 
         
     except Exception as e:
         logger.error(f"=== PowerPoint Export Failed ===")
@@ -1139,7 +1159,8 @@ def export_excel(dfs: List[Dict[str, Any]], show_averages: bool, experiment_name
                     metrics['coulombic_str']
                 ])
             
-            if show_averages and len(dfs) > 1:
+            # Always add Average Performance row when there are multiple cells
+            if len(dfs) > 1:
                 # Calculate averages
                 avg_metrics = {
                     'max_qdis': [], 'eff_pct': [], 'cycle_life': [],
@@ -1162,7 +1183,7 @@ def export_excel(dfs: List[Dict[str, Any]], show_averages: bool, experiment_name
                         avg_metrics['coulombic_eff'].append(metrics['coulombic_eff'])
                 
                 # Calculate final averages
-                avg_row = ["AVERAGE"]
+                avg_row = ["Average Performance"]
                 avg_row.append(f"{np.mean(avg_metrics['max_qdis']):.1f}" if avg_metrics['max_qdis'] else "N/A")
                 avg_row.append(f"{np.mean(avg_metrics['eff_pct']):.1f}%" if avg_metrics['eff_pct'] else "N/A")
                 avg_row.append(f"{np.mean(avg_metrics['cycle_life']):.0f}" if avg_metrics['cycle_life'] else "N/A")

@@ -78,6 +78,7 @@ COMPREHENSIVE_ELECTROLYTES = [
     "1M LiPF6 EC:DMC:EMC (1:1:1) + 2% VC + 5% FEC",
     
     # Advanced Electrolytes
+    "2M LiFSI + 0.2M LiDFOB 3:7 FEC:TEGDME",
     "1M LiTFSI EC:DMC:EMC (1:1:1)",
     "1M LiTFSI EC:DMC:EMC (3:7) + 10% FEC",
     "1M LiTFSI EC:DMC:EMC (3:7) + 5% FEC",
@@ -200,16 +201,78 @@ def get_separator_options():
     """
     return COMPREHENSIVE_SEPARATORS.copy()
 
+def track_electrolyte_usage(electrolyte):
+    """
+    Track electrolyte usage by adding it to the recent list for the current project.
+    """
+    if not electrolyte or electrolyte not in COMPREHENSIVE_ELECTROLYTES:
+        return
+
+    try:
+        current_project_id = st.session_state.get('current_project_id')
+        if not current_project_id:
+            return
+
+        from database import get_project_preferences, save_project_preferences
+        preferences = get_project_preferences(current_project_id)
+        recent_electrolytes = preferences.get('recent_electrolytes', [])
+
+        # Remove the electrolyte if it's already in the list
+        if electrolyte in recent_electrolytes:
+            recent_electrolytes.remove(electrolyte)
+
+        # Add it to the front of the list
+        recent_electrolytes.insert(0, electrolyte)
+
+        # Keep only the most recent 10 electrolytes
+        recent_electrolytes = recent_electrolytes[:10]
+
+        # Update preferences
+        preferences['recent_electrolytes'] = recent_electrolytes
+        save_project_preferences(current_project_id, preferences)
+
+    except Exception as e:
+        # Silently fail if tracking fails
+        pass
+
 def get_electrolyte_options():
     """
-    Get comprehensive electrolyte options including all predefined electrolytes.
-    This function can be easily extended to load options from a database in the future.
+    Get comprehensive electrolyte options sorted by recent usage.
+    Recently used electrolytes appear at the top, followed by alphabetical order.
     """
-    return COMPREHENSIVE_ELECTROLYTES.copy()
+    try:
+        # Get current project ID from session state
+        current_project_id = st.session_state.get('current_project_id')
+
+        if current_project_id:
+            # Get project preferences to find recently used electrolytes
+            from database import get_project_preferences
+            preferences = get_project_preferences(current_project_id)
+            recent_electrolytes = preferences.get('recent_electrolytes', [])
+
+            if recent_electrolytes:
+                # Start with recently used electrolytes (in order)
+                sorted_options = recent_electrolytes.copy()
+                
+                # Add a visual separator
+                sorted_options.append("─────────────────────────")
+
+                # Add remaining electrolytes in alphabetical order
+                remaining_electrolytes = [e for e in COMPREHENSIVE_ELECTROLYTES if e not in recent_electrolytes]
+                remaining_electrolytes.sort()  # Alphabetical sort
+
+                sorted_options.extend(remaining_electrolytes)
+                return sorted_options
+    except Exception as e:
+        # If anything fails, fall back to default sorting
+        pass
+
+    # Fallback: return all electrolytes in alphabetical order
+    return sorted(COMPREHENSIVE_ELECTROLYTES.copy())
 
 def render_hybrid_electrolyte_input(label: str, default_value: str = "", key: str = None) -> str:
     """
-    Render a hybrid electrolyte input that allows both dropdown selection and manual entry.
+    Render an improved electrolyte input with searchable dropdown and quick custom entry.
     
     Args:
         label: Label for the input field
@@ -222,77 +285,79 @@ def render_hybrid_electrolyte_input(label: str, default_value: str = "", key: st
     if key is None:
         key = f"electrolyte_{uuid.uuid4().hex[:8]}"
     
-    # Get all available electrolyte options
+    # Get all available electrolyte options (sorted by recent usage)
     electrolyte_options = get_electrolyte_options()
     
-    # Initialize session state for this input
+    # Add a "Custom..." option at the end for manual entry
+    electrolyte_options_with_custom = electrolyte_options + ["➕ Custom..."]
+    
+    # Initialize session state
     value_key = f"{key}_value"
-    mode_key = f"{key}_mode"
+    custom_key = f"{key}_custom"
+    last_tracked_key = f"{key}_last_tracked"
     
     if value_key not in st.session_state:
         st.session_state[value_key] = default_value
-    if mode_key not in st.session_state:
-        st.session_state[mode_key] = "dropdown"  # "dropdown" or "custom"
+    if custom_key not in st.session_state:
+        st.session_state[custom_key] = ""
     
-    # Create two columns for the hybrid input
-    col1, col2 = st.columns([3, 1])
+    # Determine the index for the selectbox
+    current_value = st.session_state[value_key]
+    index = 0
+    if current_value in electrolyte_options:
+        index = electrolyte_options.index(current_value)
     
-    with col1:
-        # Main input field - can be either dropdown or text input
-        if st.session_state[mode_key] == "dropdown":
-            # Dropdown mode
-            current_value = st.session_state[value_key]
-            index = 0
-            if current_value in electrolyte_options:
-                index = electrolyte_options.index(current_value)
-            
-            selected = st.selectbox(
-                label,
-                options=electrolyte_options,
-                index=index,
-                key=f"{key}_dropdown"
-            )
-            st.session_state[value_key] = selected
+    # Main selectbox with search functionality (Streamlit's built-in)
+    selected = st.selectbox(
+        label,
+        options=electrolyte_options_with_custom,
+        index=index,
+        key=f"{key}_dropdown",
+        help="💡 Tip: Start typing to search. Recent selections appear at the top.",
+        format_func=lambda x: "✨ Recently Used ↑" if x == "─────────────────────────" else x
+    )
+    
+    # Handle separator selection (redirect to first real option)
+    if selected == "─────────────────────────":
+        if index > 0:
+            selected = electrolyte_options_with_custom[index]
         else:
-            # Custom entry mode
-            custom_value = st.text_input(
-                label,
-                value=st.session_state[value_key],
-                key=f"{key}_text"
-            )
+            selected = electrolyte_options_with_custom[0] if electrolyte_options_with_custom else default_value
+    
+    # Handle custom entry
+    if selected == "➕ Custom...":
+        custom_value = st.text_input(
+            "Enter custom electrolyte:",
+            value=st.session_state[custom_key],
+            key=f"{key}_custom_input",
+            placeholder="e.g., 1.5M LiFSI DOL:DME (1:1)",
+            help="Enter your custom electrolyte formulation"
+        )
+        
+        if custom_value and custom_value != st.session_state[custom_key]:
+            st.session_state[custom_key] = custom_value
             st.session_state[value_key] = custom_value
+            # Track custom entries too
+            if custom_value not in COMPREHENSIVE_ELECTROLYTES:
+                st.info(f"💡 Custom electrolyte: '{custom_value}' (not in standard list)")
+        
+        final_value = st.session_state[value_key] if st.session_state[value_key] != "➕ Custom..." else custom_value
+    else:
+        # Standard selection
+        final_value = selected
+        st.session_state[value_key] = selected
+        
+        # Track usage only when value actually changes (not on initialization)
+        if selected and selected in COMPREHENSIVE_ELECTROLYTES:
+            if last_tracked_key not in st.session_state:
+                st.session_state[last_tracked_key] = None
+            
+            # Only track if the value changed from last tracked value
+            if st.session_state[last_tracked_key] != selected:
+                track_electrolyte_usage(selected)
+                st.session_state[last_tracked_key] = selected
     
-    with col2:
-        # Toggle button to switch between dropdown and custom entry
-        if st.button(
-            "📝" if st.session_state[mode_key] == "dropdown" else "📋",
-            help="Switch to custom entry" if st.session_state[mode_key] == "dropdown" else "Switch to dropdown",
-            key=f"{key}_toggle"
-        ):
-            st.session_state[mode_key] = "custom" if st.session_state[mode_key] == "dropdown" else "dropdown"
-            st.rerun()
-    
-    # Add autocomplete suggestions if in custom mode
-    if st.session_state[mode_key] == "custom":
-        current_input = st.session_state[value_key].lower()
-        if current_input:
-            # Filter suggestions based on current input
-            suggestions = [opt for opt in electrolyte_options if current_input in opt.lower()]
-            if suggestions:
-                st.markdown("**💡 Suggestions:**")
-                suggestion_cols = st.columns(min(3, len(suggestions)))
-                for i, suggestion in enumerate(suggestions[:6]):  # Limit to 6 suggestions
-                    col_idx = i % 3
-                    with suggestion_cols[col_idx]:
-                        if st.button(
-                            suggestion,
-                            key=f"{key}_suggestion_{i}",
-                            use_container_width=True
-                        ):
-                            st.session_state[value_key] = suggestion
-                            st.rerun()
-    
-    return st.session_state[value_key]
+    return final_value
 
 def render_hybrid_separator_input(label: str, default_value: str = "", key: str = None) -> str:
     """
@@ -1072,6 +1137,28 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                     st.markdown("**Formulation:**")
                     formulation_0 = render_formulation_table(f'formulation_0_{context_key}', project_id, get_components_func)
                     
+                    # Toggle for using same formulation across all cells (default True)
+                    use_same_formulation_key = f'use_same_formulation_{context_key}'
+                    if use_same_formulation_key not in st.session_state:
+                        st.session_state[use_same_formulation_key] = True  # Default to True
+                    use_same_formulation = st.checkbox('💾 Use same formulation for all cells', 
+                                                      value=st.session_state[use_same_formulation_key],
+                                                      key=use_same_formulation_key,
+                                                      help="When enabled, all cells will use the same formulation from Cell 1")
+                    
+                    # Sync formulation to all other cells if toggle is enabled
+                    if use_same_formulation and len(uploaded_files) > 1:
+                        import copy
+                        formulation_key_0 = f'formulation_data_formulation_0_{context_key}'
+                        save_flag_key_0 = f'formulation_saved_formulation_0_{context_key}'
+                        if formulation_key_0 in st.session_state:
+                            for i in range(1, len(uploaded_files)):
+                                formulation_key_i = f'formulation_data_formulation_{i}_{context_key}'
+                                st.session_state[formulation_key_i] = copy.deepcopy(st.session_state[formulation_key_0])
+                                save_flag_key_i = f'formulation_saved_formulation_{i}_{context_key}'
+                                if save_flag_key_0 in st.session_state:
+                                    st.session_state[save_flag_key_i] = st.session_state[save_flag_key_0]
+                    
                     assign_all = st.checkbox('Assign values to all cells', key=f'assign_all_cells_{context_key}')
                 
                 # Add first cell to datasets
@@ -1141,9 +1228,30 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                                 key=f'separator_{i}'
                             )
                             
-                            # Formulation table
-                            st.markdown("**Formulation:**")
-                            formulation = render_formulation_table(f'formulation_{i}_{context_key}', project_id, get_components_func)
+                            # Formulation table - use same formulation if toggle is enabled
+                            use_same_formulation_key = f'use_same_formulation_{context_key}'
+                            use_same_formulation = st.session_state.get(use_same_formulation_key, True)
+                            
+                            if use_same_formulation:
+                                # Use formulation from first cell and sync it
+                                formulation = formulation_0
+                                # Sync the formulation data to this cell's session state
+                                # The key format is: formulation_data_{key_suffix} where key_suffix is f'formulation_{i}_{context_key}'
+                                formulation_key_i = f'formulation_data_formulation_{i}_{context_key}'
+                                formulation_key_0 = f'formulation_data_formulation_0_{context_key}'
+                                if formulation_key_0 in st.session_state:
+                                    import copy
+                                    st.session_state[formulation_key_i] = copy.deepcopy(st.session_state[formulation_key_0])
+                                # Also sync the save flag
+                                save_flag_key_i = f'formulation_saved_formulation_{i}_{context_key}'
+                                save_flag_key_0 = f'formulation_saved_formulation_0_{context_key}'
+                                if save_flag_key_0 in st.session_state:
+                                    st.session_state[save_flag_key_i] = st.session_state[save_flag_key_0]
+                                st.info("💡 Using same formulation as Cell 1. Edit Cell 1's formulation or uncheck 'Use same formulation for all cells' to customize.")
+                            else:
+                                # Individual formulation for this cell
+                                st.markdown("**Formulation:**")
+                                formulation = render_formulation_table(f'formulation_{i}_{context_key}', project_id, get_components_func)
                         
                         # Test number is always individual (not assigned to all)
                         with col2:
@@ -1250,7 +1358,7 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
                 {'Component': '', 'Dry Mass Fraction (%)': 0.0}
             ]
     if save_flag_key not in st.session_state:
-        st.session_state[save_flag_key] = False
+        st.session_state[save_flag_key] = True  # Default to True (saved/on by default)
     
     formulation_data = st.session_state[formulation_key]
     
@@ -1314,11 +1422,97 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
         # Always keep all rows, even if empty
         updated_formulation.append({'Component': component, 'Dry Mass Fraction (%)': fraction})
     
-    # Add new row button
-    if st.button(f"➕ Add Component", key=f'add_component_{key_suffix}'):
-        st.session_state[formulation_key].append({'Component': '', 'Dry Mass Fraction (%)': 0.0})
-        st.session_state[save_flag_key] = False
-        st.rerun()
+    # Add new row button and Copy formulation button
+    btn_col1, btn_col2 = st.columns([1, 1])
+    
+    with btn_col1:
+        if st.button(f"➕ Add Component", key=f'add_component_{key_suffix}', use_container_width=True):
+            st.session_state[formulation_key].append({'Component': '', 'Dry Mass Fraction (%)': 0.0})
+            st.session_state[save_flag_key] = False
+            st.rerun()
+    
+    with btn_col2:
+        copy_button_key = f'show_copy_{key_suffix}'
+        if copy_button_key not in st.session_state:
+            st.session_state[copy_button_key] = False
+        
+        if st.button(f"📋 Copy from...", key=f'copy_formulation_btn_{key_suffix}', use_container_width=True, help="Copy formulation from another experiment"):
+            st.session_state[copy_button_key] = not st.session_state[copy_button_key]
+            st.rerun()
+    
+    # Show copy formulation dropdown if button was clicked
+    if st.session_state.get(copy_button_key, False) and project_id:
+        try:
+            from database import get_all_project_experiments_data
+            import json
+            
+            # Get all experiments from the project
+            experiments = get_all_project_experiments_data(project_id)
+            
+            # Filter experiments that have formulations
+            experiments_with_formulations = []
+            for exp in experiments:
+                exp_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes = exp
+                
+                if formulation_json:
+                    try:
+                        formulation = json.loads(formulation_json)
+                        if formulation and any(row.get('Component') for row in formulation):
+                            experiments_with_formulations.append({
+                                'id': exp_id,
+                                'name': cell_name or file_name,
+                                'formulation': formulation
+                            })
+                    except:
+                        pass
+            
+            if experiments_with_formulations:
+                # Create a clean dropdown for selecting experiment
+                experiment_names = [f"{exp['name']}" for exp in experiments_with_formulations]
+                
+                st.markdown("---")
+                selected_experiment_name = st.selectbox(
+                    "Select experiment to copy formulation from:",
+                    options=experiment_names,
+                    key=f'copy_select_{key_suffix}',
+                    help="Choose an experiment and click 'Copy' to import its formulation"
+                )
+                
+                # Find the selected experiment
+                selected_exp = next((exp for exp in experiments_with_formulations if exp['name'] == selected_experiment_name), None)
+                
+                if selected_exp:
+                    # Show preview of the formulation
+                    with st.expander("Preview formulation", expanded=True):
+                        preview_df = pd.DataFrame(selected_exp['formulation'])
+                        if not preview_df.empty:
+                            st.dataframe(preview_df, use_container_width=True, hide_index=True)
+                    
+                    # Copy button
+                    copy_col1, copy_col2 = st.columns([1, 1])
+                    with copy_col1:
+                        if st.button("✅ Copy This Formulation", key=f'execute_copy_{key_suffix}', type="primary", use_container_width=True):
+                            import copy
+                            st.session_state[formulation_key] = copy.deepcopy(selected_exp['formulation'])
+                            st.session_state[save_flag_key] = False
+                            st.session_state[copy_button_key] = False  # Hide the copy interface
+                            st.success(f"✅ Copied formulation from '{selected_experiment_name}'")
+                            st.rerun()
+                    with copy_col2:
+                        if st.button("❌ Cancel", key=f'cancel_copy_{key_suffix}', use_container_width=True):
+                            st.session_state[copy_button_key] = False
+                            st.rerun()
+                st.markdown("---")
+            else:
+                st.info("💡 No other experiments with formulations found in this project.")
+                if st.button("Close", key=f'close_copy_info_{key_suffix}'):
+                    st.session_state[copy_button_key] = False
+                    st.rerun()
+        except Exception as e:
+            st.error(f"Error loading experiments: {e}")
+            if st.button("Close", key=f'close_copy_error_{key_suffix}'):
+                st.session_state[copy_button_key] = False
+                st.rerun()
     
     # If any changes, reset the save flag
     if changed:

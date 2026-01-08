@@ -612,6 +612,250 @@ def plot_capacity_retention_graph(
     return fig 
 
 
+def plot_combined_capacity_retention_graph(
+    dfs: List[Dict[str, Any]],
+    show_lines: Dict[str, bool],
+    reference_cycle: int,
+    formation_cycles: int,
+    remove_last_cycle: bool,
+    show_graph_title: bool,
+    experiment_name: str,
+    show_average_performance: bool = False,
+    avg_line_toggles: Optional[Dict[str, bool]] = None,
+    remove_markers: bool = False,
+    hide_legend: bool = False,
+    retention_threshold: float = 80.0,
+    y_axis_min: Optional[float] = None,
+    y_axis_max: Optional[float] = None,
+    show_baseline_line: bool = True,
+    show_threshold_line: bool = True,
+    cycle_filter: str = "1-*",
+    custom_colors: Optional[Dict[str, str]] = None,
+    capacity_y_axis_limits: Optional[tuple] = None,
+    formation_cycles_skip: int = 0
+) -> Figure:
+    """
+    Plot combined Specific Capacity vs Cycle Number (primary Y-axis) with Capacity Retention scale (secondary Y-axis).
+    This is a test feature that combines both plots into a single graph with dual Y-axes.
+    Only plots a single trace (Specific Capacity) and uses the secondary Y-axis as an alternative scale.
+    """
+    if avg_line_toggles is None:
+        avg_line_toggles = {"Average Q Dis": True, "Average Q Chg": True}
+    if custom_colors is None:
+        custom_colors = {}
+    
+    # Get matplotlib default color cycle
+    default_colors_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    
+    # Apply cycle filtering
+    from ui_components import parse_cycle_filter
+    filtered_dfs = []
+    for d in dfs:
+        df = d['df'].copy()
+        if not df.empty:
+            # Get max cycle number
+            max_cycle = int(df.iloc[:, 0].max()) if not df.empty else 1
+            # Parse cycle filter
+            cycles_to_include = parse_cycle_filter(cycle_filter, max_cycle)
+            # Filter dataframe to only include specified cycles
+            cycle_col = df.columns[0]
+            df_filtered = df[df[cycle_col].isin(cycles_to_include)]
+            if not df_filtered.empty:
+                filtered_dfs.append({**d, 'df': df_filtered})
+        else:
+            filtered_dfs.append(d)
+    dfs = filtered_dfs
+    
+    x_col = 'Cycle'  # default
+    if dfs:
+        x_col = dfs[0]['df'].columns[0]
+    
+    marker_style = '' if remove_markers else 'o'
+    avg_marker_style = '' if remove_markers else 'D'
+    
+    # Create figure with dual Y-axes
+    fig, ax1 = plt.subplots()
+    ax2 = ax1.twinx()
+    
+    # Collect all capacity values to determine scale
+    all_capacity_values = []
+    initial_capacity = None
+    
+    # Find initial capacity from the first visible cell using formation_cycles_skip
+    # initial_capacity = df['Specific Capacity'].iloc[formation_cycles_skip]
+    for i, d in enumerate(dfs):
+        try:
+            cell_name = d['testnum'] if d['testnum'] else f'Cell {i+1}'
+            label_dis = f"{cell_name} Q Dis"
+            
+            if show_lines.get(label_dis, False):
+                plot_df = d['df'][:-1] if remove_last_cycle else d['df']
+                dataset_x_col = plot_df.columns[0]
+                
+                try:
+                    qdis_data = pd.to_numeric(plot_df['Q Dis (mAh/g)'], errors='coerce')
+                    valid_mask = ~qdis_data.isna()
+                    
+                    if valid_mask.any():
+                        all_capacity_values.extend(qdis_data[valid_mask].tolist())
+                        
+                        # Get initial capacity from cycle index formation_cycles_skip
+                        # This determines the 100% reference capacity
+                        if initial_capacity is None and len(plot_df) > formation_cycles_skip:
+                            try:
+                                # Get capacity at the specified index (after skipping formation cycles)
+                                initial_cap = pd.to_numeric(plot_df['Q Dis (mAh/g)'].iloc[formation_cycles_skip], errors='coerce')
+                                if not pd.isna(initial_cap) and initial_cap > 0:
+                                    initial_capacity = initial_cap
+                            except (IndexError, KeyError):
+                                # If index is out of range, try to find by reference cycle number
+                                ref_data = plot_df[plot_df[dataset_x_col] == reference_cycle]
+                                if not ref_data.empty:
+                                    ref_cap = pd.to_numeric(ref_data['Q Dis (mAh/g)'].iloc[0], errors='coerce')
+                                    if not pd.isna(ref_cap) and ref_cap > 0:
+                                        initial_capacity = ref_cap
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    
+    # If no initial capacity found, use max capacity as fallback
+    if initial_capacity is None and all_capacity_values:
+        initial_capacity = max(all_capacity_values)
+    elif initial_capacity is None:
+        initial_capacity = 100.0  # Default fallback
+    
+    # Calculate conversion factor: k = 100 / initial_capacity
+    # This converts capacity values to retention percentages
+    k = 100.0 / initial_capacity if initial_capacity > 0 else 1.0
+    
+    # Plot only Specific Capacity (Q Dis) on primary Y-axis (left)
+    # This is the single trace that will be displayed
+    for i, d in enumerate(dfs):
+        try:
+            cell_name = d['testnum'] if d['testnum'] else f'Cell {i+1}'
+            label_dis = f"{cell_name} Q Dis"
+            
+            # Get custom color for this cell, or use default from color cycle
+            cell_color = custom_colors.get(cell_name, default_colors_cycle[i % len(default_colors_cycle)])
+            
+            plot_df = d['df'][:-1] if remove_last_cycle else d['df']
+            dataset_x_col = plot_df.columns[0]
+            
+            if show_lines.get(label_dis, False):
+                try:
+                    # Convert to numeric, handling any string values
+                    qdis_data = pd.to_numeric(plot_df['Q Dis (mAh/g)'], errors='coerce')
+                    valid_mask = ~qdis_data.isna()
+                    if valid_mask.any():
+                        ax1.plot(plot_df[dataset_x_col][valid_mask], qdis_data[valid_mask], 
+                               label=label_dis, marker=marker_style, color=cell_color)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    
+    # Plot average capacity if requested
+    if show_average_performance and len(dfs) > 1:
+        dfs_trimmed = [d['df'][:-1] if remove_last_cycle else d['df'] for d in dfs]
+        common_cycles = set(dfs_trimmed[0][x_col])
+        for df in dfs_trimmed[1:]:
+            common_cycles = common_cycles & set(df[x_col])
+        common_cycles = sorted(list(common_cycles))
+        
+        if common_cycles:
+            avg_qdis = []
+            for cycle in common_cycles:
+                qdis_vals = []
+                for df in dfs_trimmed:
+                    row = df[df[x_col] == cycle]
+                    if not row.empty:
+                        if 'Q Dis (mAh/g)' in row:
+                            try:
+                                qdis_val = float(row['Q Dis (mAh/g)'].values[0])
+                                qdis_vals.append(qdis_val)
+                            except (ValueError, TypeError):
+                                pass
+                avg_qdis.append(sum(qdis_vals)/len(qdis_vals) if qdis_vals else None)
+            
+            avg_label_prefix = f"{experiment_name} " if experiment_name else ""
+            avg_color = custom_colors.get("Average", 'black')
+            
+            if avg_line_toggles.get("Average Q Dis", True):
+                ax1.plot(common_cycles, avg_qdis, 
+                       label=f'{avg_label_prefix}Average Q Dis', 
+                       color=avg_color, linewidth=2, marker=avg_marker_style)
+    
+    # Calculate capacity range for setting secondary axis scale
+    if all_capacity_values:
+        min_cap = min(all_capacity_values)
+        max_cap = max(all_capacity_values)
+    else:
+        min_cap = 0.0
+        max_cap = 100.0
+    
+    # Calculate corresponding retention range
+    min_ret = min_cap * k
+    max_ret = max_cap * k
+    
+    # Add horizontal reference lines for retention on secondary axis
+    if show_baseline_line:
+        ax2.axhline(y=100, color='black', linestyle='-', alpha=0.3, linewidth=1, label='100% Baseline')
+    if show_threshold_line:
+        ax2.axhline(y=retention_threshold, color='red', linestyle='--', alpha=0.7, linewidth=2, 
+                   label=f'{retention_threshold}% Threshold')
+    
+    # Add vertical line at reference cycle
+    ax1.axvline(x=reference_cycle, color='green', linestyle=':', alpha=0.7, linewidth=2, 
+               label=f'Reference Cycle ({reference_cycle})')
+    
+    # Set labels and titles
+    ax1.set_xlabel(x_col)
+    ax1.set_ylabel('Specific Capacity (mAh/g)', color='black')
+    ax2.set_ylabel('Capacity Retention (%)', color='black')
+    
+    # Set Y-axis limits
+    # Primary axis: use user-specified limits or auto-scale
+    if capacity_y_axis_limits is not None and capacity_y_axis_limits != (None, None):
+        y_min, y_max = capacity_y_axis_limits
+        if y_min is not None and y_max is not None:
+            ax1.set_ylim(y_min, y_max)
+            # Update secondary axis to match the scaled range
+            min_ret = y_min * k
+            max_ret = y_max * k
+    else:
+        # Auto-scale primary axis, then set secondary to match
+        ax1.relim()
+        ax1.autoscale()
+        y1_min, y1_max = ax1.get_ylim()
+        min_ret = y1_min * k
+        max_ret = y1_max * k
+    
+    # Set secondary axis limits to show retention scale
+    # Use user-specified retention range if provided, otherwise use calculated range from capacity
+    if y_axis_min is not None and y_axis_max is not None:
+        ax2.set_ylim(y_axis_min, y_axis_max)
+    else:
+        # Auto-scale: calculate retention range from capacity range
+        ax2.set_ylim(min_ret, max_ret)
+    
+    # Color the Y-axis labels to match the data
+    ax1.tick_params(axis='y', labelcolor='black')
+    ax2.tick_params(axis='y', labelcolor='black')
+    
+    if show_graph_title:
+        if experiment_name:
+            ax1.set_title(f'{experiment_name} - Specific Capacity & Capacity Retention vs. {x_col}')
+        else:
+            ax1.set_title(f'Specific Capacity & Capacity Retention vs. {x_col}')
+    
+    # Only show legend from primary axis (since we only have one set of traces)
+    if not hide_legend:
+        ax1.legend(loc='best')
+    
+    return fig
+
+
 def plot_comparison_capacity_graph(
     experiments_data: List[Dict[str, Any]],
     show_lines: Dict[str, bool],

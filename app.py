@@ -20,7 +20,9 @@ from database import (
     get_experiment_data, delete_cell_experiment, delete_project, rename_project,
     rename_experiment, save_experiment, update_experiment, check_experiment_name_exists,
     get_experiment_by_name, get_all_project_experiments_data, TEST_USER_ID,
-    update_project_type, get_project_by_id, duplicate_experiment
+    update_project_type, get_project_by_id, duplicate_experiment,
+    get_experiments_by_formulation_component, get_formulation_summary,
+    get_experiments_grouped_by_formulation
 )
 from data_analysis import (
     calculate_cell_summary, calculate_experiment_average,
@@ -38,8 +40,14 @@ from dialogs import confirm_delete_project, confirm_delete_experiment, show_dele
 init_database()
 migrate_database()
 from ui_components import render_toggle_section, display_summary_stats, display_averages, render_cell_inputs, get_initial_areal_capacity, render_formulation_table, get_substrate_options, render_hybrid_electrolyte_input, render_hybrid_separator_input, render_comparison_plot_options, render_experiment_color_customization, render_comparison_color_customization
-from plotting import plot_capacity_graph, plot_capacity_retention_graph, plot_comparison_capacity_graph
+from plotting import plot_capacity_graph, plot_capacity_retention_graph, plot_comparison_capacity_graph, plot_combined_capacity_retention_graph
+from llm_summary import generate_experiment_summary
 from preference_components import render_preferences_sidebar, render_formulation_editor_modal, get_default_values_for_experiment, render_default_indicator
+from formulation_analysis import (
+    extract_formulation_component, extract_all_formulation_components,
+    compare_formulations, create_formulation_comparison_dataframe,
+    group_experiments_by_formulation_range, extract_formulation_component_from_experiment
+)
 
 # =============================
 # Battery Data Gravimetric Capacity Calculator App
@@ -243,35 +251,31 @@ with st.sidebar:
     except:
         st.image("https://placehold.co/150x80?text=Logo", width=150)
     st.markdown("---")
-    st.markdown("#### 📁 Projects")
+    st.markdown("### Projects")
     
-    # Add improved CSS for sidebar
+    # Minimalistic CSS for sidebar
     st.markdown("""
         <style>
+        /* Compact sidebar styling */
         .sidebar-project {
-            margin-bottom: 12px;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 6px;
-            background-color: #fafafa;
-        }
-        .sidebar-project-selected {
-            background-color: #e3f2fd !important;
-            border-color: #1976d2 !important;
+            margin-bottom: 8px;
         }
         .sidebar-experiment {
-            margin: 3px 0px 3px 20px;
-            padding: 4px 6px;
-            border-left: 3px solid #e0e0e0;
-            background-color: #f9f9f9;
-            border-radius: 4px;
+            margin: 2px 0px;
         }
-        .sidebar-experiment-selected {
-            border-left-color: #1976d2 !important;
-            background-color: #e8f4f8 !important;
-        }
+        /* Reduce button margins and padding for cleaner look */
         div[data-testid="stButton"] > button {
             margin: 0px !important;
+            padding: 0.25rem 0.5rem !important;
+            font-size: 0.9rem !important;
+        }
+        /* Compact selectbox */
+        div[data-testid="stSelectbox"] > div {
+            padding: 0.25rem 0.5rem !important;
+        }
+        /* Reduce spacing in sidebar */
+        .element-container {
+            margin-bottom: 0.5rem !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -281,8 +285,8 @@ with st.sidebar:
             project_id, project_name, project_desc, project_type, created_date, last_modified = p
             project_expanded = st.session_state.get(f'project_expanded_{project_id}', False)
             
-            # Project row with better spacing
-            project_cols = st.columns([0.08, 0.74, 0.18])
+            # Compact project row
+            project_cols = st.columns([0.1, 0.75, 0.15])
             with project_cols[0]:
                 # Dropdown arrow with better styling
                 arrow = "▼" if project_expanded else "▶"
@@ -293,11 +297,10 @@ with st.sidebar:
                     st.rerun()
             
             with project_cols[1]:
-                # Project name button with type indicator
-                project_display_name = f"{project_name} ({project_type})"
+                # Project name button - minimalistic
                 is_current_project = st.session_state.get('current_project_id') == project_id
                 button_type = "primary" if is_current_project else "secondary"
-                if st.button(project_display_name, key=f'project_select_{project_id}', 
+                if st.button(project_name, key=f'project_select_{project_id}', 
                            use_container_width=True, type=button_type):
                     # Clear any existing experiment data when switching projects
                     if 'loaded_experiment' in st.session_state:
@@ -348,7 +351,7 @@ with st.sidebar:
             with project_cols[2]:
                 menu_open = st.session_state.get(f'project_menu_open_{project_id}', False)
                 if st.button('⋯', key=f'project_menu_btn_{project_id}', 
-                           help="Project options", type="secondary"):
+                           help="Options", type="secondary"):
                     # Close all other menus
                     for p2 in user_projects:
                         st.session_state[f'project_menu_open_{p2[0]}'] = False
@@ -476,24 +479,49 @@ with st.sidebar:
                             st.session_state[f'changing_project_type_{project_id}'] = False
                             st.rerun()
             
-            # Show experiments if project is expanded (removed requirement for current project)
+            # Show experiments if project is expanded
             if project_expanded:
                 existing_experiments = get_project_experiments(project_id)
                 if existing_experiments:
-                    st.markdown("&nbsp;&nbsp;&nbsp;**🧪 Experiments:**", unsafe_allow_html=True)
-                    for experiment in existing_experiments:
+                    # Sort experiments based on user preference
+                    sort_key = f'experiment_sort_{project_id}'
+                    default_sort = st.session_state.get(sort_key, 'name')  # Default to name sorting (reverse alphabetical)
+                    
+                    # Minimalistic sort selector - compact design
+                    sort_cols = st.columns([0.7, 0.3])
+                    with sort_cols[0]:
+                        st.markdown("&nbsp;&nbsp;&nbsp;**Experiments**", unsafe_allow_html=True)
+                    with sort_cols[1]:
+                        sort_option = st.selectbox(
+                            "",
+                            options=['name', 'date'],
+                            format_func=lambda x: 'Z-A' if x == 'name' else 'Date',
+                            index=0 if default_sort == 'name' else 1,
+                            key=f'sort_select_{project_id}',
+                            label_visibility="collapsed"
+                        )
+                        if sort_option != default_sort:
+                            st.session_state[sort_key] = sort_option
+                            st.rerun()
+                    
+                    # Sort experiments
+                    if default_sort == 'name':
+                        # Sort by name (reverse alphabetical - Z to A) so T33 comes before T32
+                        sorted_experiments = sorted(existing_experiments, key=lambda x: x[1].lower(), reverse=True)
+                    else:
+                        # Sort by date (newest first)
+                        sorted_experiments = sorted(existing_experiments, key=lambda x: x[4] if x[4] else '', reverse=True)
+                    
+                    for experiment in sorted_experiments:
                         experiment_id, experiment_name, file_name, data_json, created_date = experiment
                         loaded_exp = st.session_state.get('loaded_experiment')
                         is_current_experiment = (loaded_exp and loaded_exp.get('experiment_id') == experiment_id)
                         
-                        # Experiment row with better spacing
+                        # Minimalistic experiment row - cleaner layout
                         with st.container():
-                            exp_cols = st.columns([0.12, 0.68, 0.20])
+                            exp_cols = st.columns([0.8, 0.2])
                             
                             with exp_cols[0]:
-                                st.markdown("&nbsp;&nbsp;📊", unsafe_allow_html=True)
-                            
-                            with exp_cols[1]:
                                 button_type = "primary" if is_current_experiment else "secondary"
                                 if st.button(experiment_name, key=f'exp_select_{experiment_id}', 
                                            use_container_width=True, type=button_type):
@@ -525,10 +553,10 @@ with st.sidebar:
                                     }
                                     st.rerun()
                             
-                            with exp_cols[2]:
+                            with exp_cols[1]:
                                 exp_menu_open = st.session_state.get(f'exp_menu_open_{experiment_id}', False)
                                 if st.button('⋯', key=f'exp_menu_btn_{experiment_id}', 
-                                           help="Experiment options", type="secondary"):
+                                           help="Options", type="secondary"):
                                     for e2 in existing_experiments:
                                         st.session_state[f'exp_menu_open_{e2[0]}'] = False
                                     st.session_state[f'exp_menu_open_{experiment_id}'] = not exp_menu_open
@@ -577,10 +605,10 @@ with st.sidebar:
                                         st.session_state[f'renaming_experiment_{experiment_id}'] = False
                                         st.rerun()
                 else:
-                    st.markdown("&nbsp;&nbsp;&nbsp;&nbsp;*No experiments in this project*", unsafe_allow_html=True)
+                    st.markdown("&nbsp;&nbsp;&nbsp;&nbsp;<small>*No experiments*</small>", unsafe_allow_html=True)
             
-            # Add spacing between projects
-            st.markdown("<br>", unsafe_allow_html=True)
+            # Minimal spacing between projects
+            st.markdown("")
     else:
         st.info("No projects found. Create your first project below.")
 
@@ -608,13 +636,17 @@ with st.sidebar:
                 st.error("Please enter a project name.")
 
     st.markdown("---")
-    st.markdown("#### 📁 Project Contents")
-    # (Optional: Show currently loaded experiment status here)
-
-    st.markdown("#### ℹ️ Quick Start")
-    st.markdown("1. **Create or select a project** above")
-    st.markdown("2. **Go to Cell Inputs tab** to upload data or edit experiments") 
-    st.markdown("3. **View results** in Summary, Plots, and Export tabs")
+    
+    # Show currently loaded experiment status
+    loaded_experiment = st.session_state.get('loaded_experiment')
+    if loaded_experiment:
+        st.markdown("**Active:** " + loaded_experiment.get('experiment_name', 'Unknown'))
+    
+    st.markdown("---")
+    st.markdown("### Quick Start")
+    st.markdown("1. Create or select a project")
+    st.markdown("2. Go to **Cell Inputs** tab")
+    st.markdown("3. View results in **Summary** and **Plots**")
     
     # Render project preferences sidebar if a project is selected
     if st.session_state.get('current_project_id'):
@@ -774,9 +806,9 @@ if st.session_state.get('show_cell_inputs_prompt'):
 # Create tabs - include Master Table and Comparison tabs if a project is selected
 current_project_id = st.session_state.get('current_project_id')
 if current_project_id:
-    tab_inputs, tab1, tab2, tab3, tab_comparison, tab_master = st.tabs(["🧪 Cell Inputs", "📊 Summary", "📈 Plots", "📤 Export", "🔄 Comparison", "📋 Master Table"])
+    tab_inputs, tab1, tab2, tab_comparison, tab_master = st.tabs(["🧪 Cell Inputs", "📈 Plots", "📤 Export", "🔄 Comparison", "📋 Master Table"])
 else:
-    tab_inputs, tab1, tab2, tab3 = st.tabs(["🧪 Cell Inputs", "📊 Summary", "📈 Plots", "📤 Export"])
+    tab_inputs, tab1, tab2 = st.tabs(["🧪 Cell Inputs", "📈 Plots", "📤 Export"])
     tab_comparison = None
     tab_master = None
 
@@ -922,7 +954,7 @@ with tab_inputs:
         experiment_name_input = st.text_input(
             'Experiment Name', 
             value=current_experiment_name if loaded_experiment else experiment_name,
-            placeholder='Enter experiment name for file naming and summary tab',
+            placeholder='Enter experiment name for file naming',
             key="main_experiment_name"
         )
     
@@ -2046,6 +2078,113 @@ if loaded_experiment:
             st.info(f"📅 Experiment Date: {experiment_data['experiment_date']}")
         if experiment_data.get('disc_diameter_mm'):
             st.info(f"🔘 Disc Diameter: {experiment_data['disc_diameter_mm']} mm")
+        
+        # LLM Summary Section
+        experiment_id = loaded_experiment.get('experiment_id')
+        with st.expander("🤖 Generate LLM-Ready Summary", expanded=False):
+            st.markdown("""
+            Generate a token-efficient summary of this experiment optimized for LLM analysis.
+            Includes experiment parameters, cell performance metrics, curve characteristics, 
+            and a capacity vs cycle plot image.
+            """)
+            
+            if st.button("📋 Generate Summary", type="primary", use_container_width=True, 
+                         key=f'llm_summary_btn_{experiment_id}'):
+                with st.spinner("Generating summary and plot..."):
+                    try:
+                        summary_text, plot_image_base64, stats = generate_experiment_summary(experiment_id)
+                        
+                        # Display statistics
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Estimated Tokens", f"{stats.get('token_estimate', 0):,}")
+                        with col2:
+                            st.metric("Characters", f"{stats.get('char_count', 0):,}")
+                        with col3:
+                            st.metric("Lines", f"{stats.get('line_count', 0):,}")
+                        with col4:
+                            st.metric("Cells", f"{stats.get('num_cells', 0)}")
+                        
+                        # Display plot image if available
+                        if plot_image_base64:
+                            st.markdown("### Capacity vs Cycle Plot")
+                            st.markdown("*This plot image can be included in your LLM prompt for visual analysis.*")
+                            # Decode and display image
+                            import base64
+                            from io import BytesIO
+                            from PIL import Image
+                            img_data = base64.b64decode(plot_image_base64)
+                            img = Image.open(BytesIO(img_data))
+                            st.image(img, caption=f"{loaded_experiment['experiment_name']} - Capacity vs Cycle", 
+                                   use_container_width=True)
+                            
+                            # Download button for plot
+                            st.download_button(
+                                label="📥 Download Plot Image",
+                                data=img_data,
+                                file_name=f"{loaded_experiment['experiment_name']}_capacity_plot.png",
+                                mime="image/png",
+                                key=f'download_plot_{experiment_id}'
+                            )
+                        
+                        # Display summary text in text area for easy copying
+                        st.markdown("### Summary Text (Copy for LLM)")
+                        st.text_area(
+                            "Experiment Summary",
+                            value=summary_text,
+                            height=400,
+                            key=f'llm_summary_textarea_{experiment_id}',
+                            help="Copy this text and paste it into your LLM prompt for analysis. Include the plot image above if using a vision model."
+                        )
+                        
+                        # Copy button using streamlit's clipboard functionality
+                        st.code(summary_text, language=None)
+                        
+                        # Save to session state for later viewing (use different key than widget)
+                        st.session_state[f'llm_summary_text_{experiment_id}'] = summary_text
+                        st.session_state[f'llm_summary_plot_{experiment_id}'] = plot_image_base64
+                        st.session_state[f'llm_summary_stats_{experiment_id}'] = stats
+                        
+                        st.success("✅ Summary generated! Copy the text above to use with your LLM.")
+                        
+                    except Exception as e:
+                        st.error(f"Error generating summary: {str(e)}")
+                        st.exception(e)
+            
+            # Show cached summary if available
+            cached_summary = st.session_state.get(f'llm_summary_text_{experiment_id}')
+            if cached_summary:
+                if st.button("📄 View Last Summary", key=f'view_summary_{experiment_id}'):
+                    cached_stats = st.session_state.get(f'llm_summary_stats_{experiment_id}', {})
+                    cached_plot = st.session_state.get(f'llm_summary_plot_{experiment_id}')
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Estimated Tokens", f"{cached_stats.get('token_estimate', 0):,}")
+                    with col2:
+                        st.metric("Characters", f"{cached_stats.get('char_count', 0):,}")
+                    with col3:
+                        st.metric("Lines", f"{cached_stats.get('line_count', 0):,}")
+                    with col4:
+                        st.metric("Cells", f"{cached_stats.get('num_cells', 0)}")
+                    
+                    if cached_plot:
+                        st.markdown("### Capacity vs Cycle Plot")
+                        import base64
+                        from io import BytesIO
+                        from PIL import Image
+                        img_data = base64.b64decode(cached_plot)
+                        img = Image.open(BytesIO(img_data))
+                        st.image(img, caption=f"{loaded_experiment['experiment_name']} - Capacity vs Cycle", 
+                               use_container_width=True)
+                    
+                    st.text_area(
+                        "Experiment Summary",
+                        value=cached_summary,
+                        height=400,
+                        key=f'llm_summary_view_textarea_{experiment_id}'
+                    )
+                    st.code(cached_summary, language=None)
     else:
         st.error("❌ Failed to load experiment data")
         ready = False
@@ -2220,29 +2359,6 @@ if ready:
         group_curves = [compute_group_avg_curve(group_dfs[idx]) for idx in range(3)]
     # --- Main Tabs Content ---
     with tab1:
-        st.header("📊 Summary Tables")
-        
-        # Show update notification if calculations were recently updated
-        if st.session_state.get('calculations_updated', False):
-            update_time = st.session_state.get('update_timestamp')
-            if update_time:
-                time_str = update_time.strftime("%H:%M:%S")
-                st.success(f"✅ Values updated at {time_str} - All calculations have been refreshed!")
-                # Clear the flag after showing it once in Summary tab
-                st.session_state['calculations_updated'] = False
-        
-        st.markdown("---")
-        # Add toggle for showing average column
-        show_average_col = False
-        if len(dfs) > 1:
-            show_average_col = st.toggle("Show average column", value=True, key="show_average_col_toggle")
-        # Only one summary table should be rendered:
-        from ui_components import display_summary_stats
-        display_summary_stats(dfs, disc_area_cm2, show_average_col, group_assignments, group_names)
-    with tab2:
-        st.header("📈 Plots")
-        st.markdown("---")
-        
         # Get formation cycles for reference cycle calculation
         formation_cycles = st.session_state.get('current_formation_cycles', 4)
         if ready and datasets:
@@ -2250,9 +2366,7 @@ if ready:
             if 'formation_cycles' in datasets[0]:
                 formation_cycles = datasets[0]['formation_cycles']
         
-        # Unified Plot Controls (applies to all plots)
-        st.subheader("🎛️ Plot Controls")
-        st.markdown("*Configure what data to show and how plots should look*")
+        # Plot Controls
         show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles, cycle_filter, y_axis_limits = render_toggle_section(dfs, enable_grouping=enable_grouping)
         
         # Color customization UI
@@ -2261,38 +2375,17 @@ if ready:
             enable_grouping, group_names
         )
         
-        st.markdown("---")
-        
-        # Main Capacity Plot Section
-        st.subheader("📊 Main Capacity Plot")
-        
-        # Generate main capacity plot using unified settings
-        fig = plot_capacity_graph(
-            dfs, show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name,
-            show_average_performance, avg_line_toggles, remove_markers, hide_legend,
-            group_a_curve=(group_curves[0][0], group_curves[0][1]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][1] and group_plot_toggles.get("Group Q Dis", False) else None,
-            group_b_curve=(group_curves[1][0], group_curves[1][1]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][1] and group_plot_toggles.get("Group Q Dis", False) else None,
-            group_c_curve=(group_curves[2][0], group_curves[2][1]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][1] and group_plot_toggles.get("Group Q Dis", False) else None,
-            group_a_qchg=(group_curves[0][0], group_curves[0][2]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][2] and group_plot_toggles.get("Group Q Chg", False) else None,
-            group_b_qchg=(group_curves[1][0], group_curves[1][2]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][2] and group_plot_toggles.get("Group Q Chg", False) else None,
-            group_c_qchg=(group_curves[2][0], group_curves[2][2]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][2] and group_plot_toggles.get("Group Q Chg", False) else None,
-            group_a_eff=(group_curves[0][0], group_curves[0][3]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][3] and group_plot_toggles.get("Group Efficiency", False) else None,
-            group_b_eff=(group_curves[1][0], group_curves[1][3]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][3] and group_plot_toggles.get("Group Efficiency", False) else None,
-            group_c_eff=(group_curves[2][0], group_curves[2][3]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][3] and group_plot_toggles.get("Group Efficiency", False) else None,
-            group_names=group_names,
-            cycle_filter=cycle_filter,
-            custom_colors=custom_colors,
-            y_axis_limits=y_axis_limits
+        # Combined plot toggle
+        show_combined_plot = st.checkbox(
+            "Show Capacity Retention on Secondary Y-Axis",
+            value=False,
+            key="show_combined_capacity_retention",
+            help="Combine Specific Capacity and Capacity Retention into a single graph with dual Y-axes."
         )
-        st.pyplot(fig)
         
-        st.markdown("---")
-        
-        # Capacity Retention Plot Section
-        st.subheader("📉 Capacity Retention Plot")
-        
-        if ready and dfs:
-            # Get available cycles from the data to determine valid range for reference cycle
+        # Conditionally show combined plot or separate plots based on toggle
+        if show_combined_plot and ready and dfs:
+            # Get reference cycle settings
             all_cycles = []
             for d in dfs:
                 try:
@@ -2306,190 +2399,277 @@ if ready:
             if all_cycles:
                 min_cycle = min(all_cycles)
                 max_cycle = max(all_cycles)
-                default_ref_cycle = formation_cycles + 1
                 
-                # Ensure default reference cycle is within valid range
-                if default_ref_cycle < min_cycle:
-                    default_ref_cycle = min_cycle
-                elif default_ref_cycle > max_cycle:
-                    default_ref_cycle = max_cycle
+                # Get maximum data length for formation cycles skip limit
+                max_data_length = 0
+                for d in dfs:
+                    try:
+                        df = d['df']
+                        if not df.empty:
+                            max_data_length = max(max_data_length, len(df))
+                    except:
+                        pass
                 
-                # Reference cycle input controls
-                col1, col2, col3 = st.columns([2, 1, 1])
+                # Combined Plot Configuration
+                config_col1, config_col2 = st.columns([1, 1])
                 
-                with col1:
-                    reference_cycle = st.number_input(
-                        "🎯 Reference Cycle (100% baseline)",
-                        min_value=int(min_cycle),
-                        max_value=int(max_cycle),
-                        value=int(default_ref_cycle),
+                with config_col1:
+                    max_skip = max(0, max_data_length - 1) if max_data_length > 0 else 0
+                    formation_cycles_skip = st.number_input(
+                        "Formation Cycles to Skip",
+                        min_value=0,
+                        max_value=max_skip,
+                        value=0,
                         step=1,
-                        key="reference_cycle",
-                        help=f"Select which cycle to use as the 100% reference point. Default is cycle {formation_cycles + 1} (first cycle after {formation_cycles} formation cycles)."
+                        key="combined_formation_cycles_skip",
+                        help=f"Number of initial cycles to skip when determining the 100% reference capacity."
                     )
                 
-                with col2:
-                    st.metric("Formation Cycles", formation_cycles)
-                
-                with col3:
-                    st.metric("Available Cycles", f"{int(min_cycle)} - {int(max_cycle)}")
-                
-                # Advanced retention plot controls
-                st.markdown("#### 🔧 Advanced Plot Controls")
-                
-                # Controls in columns for better layout
-                control_col1, control_col2, control_col3 = st.columns([1, 1, 1])
-                
-                with control_col1:
+                with config_col2:
                     retention_threshold = st.slider(
-                        "📏 Retention Threshold (%)",
+                        "Retention Threshold (%)",
                         min_value=0.0,
                         max_value=100.0,
                         value=80.0,
                         step=5.0,
-                        key="retention_threshold",
-                        help="Set the threshold line for capacity retention analysis. Common values: 80% (standard), 70% (aggressive)."
+                        key="combined_retention_threshold",
+                        help="Set the threshold line for capacity retention analysis."
                     )
                 
-                with control_col2:
-                    # Y-axis scaling options
-                    y_axis_preset = st.selectbox(
-                        "📊 Y-Axis Range",
-                        options=["Full Range (0-110%)", "Focused View (70-110%)", "Standard View (50-110%)", "Custom Range"],
-                        index=0,
-                        key="y_axis_preset",
-                        help="Choose the Y-axis range for better visualization of retention data."
-                    )
+                baseline_col1, baseline_col2 = st.columns(2)
+                with baseline_col1:
+                    show_baseline_100 = st.checkbox('Show 100% baseline', value=True, key='combined_show_baseline_100')
+                with baseline_col2:
+                    show_baseline_80 = st.checkbox(f'Show {retention_threshold:.0f}% threshold', value=True, key='combined_show_baseline_80')
                 
-                with control_col3:
-                    # If custom range is selected, show input fields
-                    if y_axis_preset == "Custom Range":
-                        custom_min = st.number_input(
-                            "Min Y (%)", 
-                            min_value=0.0, 
-                            max_value=100.0, 
-                            value=st.session_state.get('retention_y_axis_min', 0.0),
-                            step=5.0,
-                            key="retention_y_axis_min",
-                            help="Set custom minimum Y-axis value"
-                        )
-                        custom_max = st.number_input(
-                            "Max Y (%)", 
-                            min_value=50.0, 
-                            max_value=200.0, 
-                            value=st.session_state.get('retention_y_axis_max', 110.0),
-                            step=5.0,
-                            key="retention_y_axis_max",
-                            help="Set custom maximum Y-axis value"
-                        )
-                        y_axis_min, y_axis_max = custom_min, custom_max
-                    else:
-                        # Set Y-axis range based on preset
-                        if y_axis_preset == "Full Range (0-110%)":
-                            y_axis_min, y_axis_max = 0.0, 110.0
-                        elif y_axis_preset == "Focused View (70-110%)":
-                            y_axis_min, y_axis_max = 70.0, 110.0
-                        elif y_axis_preset == "Standard View (50-110%)":
-                            y_axis_min, y_axis_max = 50.0, 110.0
-                        
-                        # Show current range as metric
-                        st.metric("Y-Axis Range", f"{y_axis_min:.0f}% - {y_axis_max:.0f}%")
+                # Calculate reference cycle based on formation cycles skip
+                # The reference cycle index will be formation_cycles_skip (0-based index)
+                # But we need the actual cycle number from the data
+                reference_cycle_index = formation_cycles_skip
                 
-                # Retention plot specific options (only unique settings, reuse unified settings for common ones)
-                with st.expander("🎨 Retention Plot Specific Options", expanded=False):
-                    st.markdown("### Retention Plot Customization")
-                    
-                    retention_col1, retention_col2 = st.columns(2)
-                    
-                    with retention_col1:
-                        st.markdown("**Reference Lines**")
-                        show_baseline_line = st.checkbox(
-                            '📏 Show baseline (100%)', 
-                            value=True,
-                            key='retention_baseline',
-                            help="Show the 100% baseline reference line"
-                        )
-                        
-                    with retention_col2:
-                        show_threshold_line = st.checkbox(
-                            f'📉 Show threshold ({retention_threshold:.0f}%)', 
-                            value=True,
-                            key='retention_threshold_line',
-                            help=f"Show the {retention_threshold:.0f}% retention threshold line"
-                        )
+                # Get the actual cycle number from the first visible cell
+                reference_cycle = None
+                for d in dfs:
+                    try:
+                        df = d['df']
+                        if not df.empty and len(df) > reference_cycle_index:
+                            cycle_col = df.columns[0]
+                            reference_cycle = int(df.iloc[reference_cycle_index][cycle_col])
+                            break
+                    except:
+                        pass
                 
-                # Info box explaining the reference cycle and synchronization
-                st.info(f"ℹ️ **Current Reference:** Cycle {reference_cycle} is set as 100% capacity. All other cycles show retention relative to this reference.")
-                st.info("🔗 **Synchronized Data:** This plot uses the same data series selection as the main plot above. Only the selected discharge and charge capacity lines are shown.")
+                # Fallback to default if not found
+                if reference_cycle is None:
+                    default_ref_cycle = formation_cycles + 1
+                    if default_ref_cycle < min_cycle:
+                        default_ref_cycle = min_cycle
+                    elif default_ref_cycle > max_cycle:
+                        default_ref_cycle = max_cycle
+                    reference_cycle = int(default_ref_cycle)
                 
-                # Generate capacity retention plot using unified settings
-                retention_fig = plot_capacity_retention_graph(
-                    dfs, show_lines, reference_cycle, formation_cycles, remove_last_cycle, 
-                    show_graph_title, experiment_name, show_average_performance, 
+                y_axis_preset = st.selectbox(
+                    "Retention Y-Axis Range",
+                    options=["Auto-scale", "Full Range (0-110%)", "Focused View (70-110%)", "Standard View (50-110%)", "Custom Range"],
+                    index=0,
+                    key="combined_y_axis_preset"
+                )
+                
+                # Set Y-axis range based on preset
+                if y_axis_preset == "Auto-scale":
+                    y_axis_min, y_axis_max = None, None  # Will be calculated from capacity range
+                elif y_axis_preset == "Full Range (0-110%)":
+                    y_axis_min, y_axis_max = 0.0, 110.0
+                elif y_axis_preset == "Focused View (70-110%)":
+                    y_axis_min, y_axis_max = 70.0, 110.0
+                elif y_axis_preset == "Standard View (50-110%)":
+                    y_axis_min, y_axis_max = 50.0, 110.0
+                else:
+                    custom_col1, custom_col2 = st.columns(2)
+                    with custom_col1:
+                        y_axis_min = st.number_input("Min Y (%)", min_value=0.0, max_value=100.0, value=0.0, step=5.0, key="combined_retention_y_axis_min")
+                    with custom_col2:
+                        y_axis_max = st.number_input("Max Y (%)", min_value=50.0, max_value=200.0, value=110.0, step=5.0, key="combined_retention_y_axis_max")
+                
+                # Generate combined plot
+                combined_fig = plot_combined_capacity_retention_graph(
+                    dfs, show_lines, reference_cycle, formation_cycles, remove_last_cycle,
+                    show_graph_title, experiment_name, show_average_performance,
                     avg_line_toggles, remove_markers, hide_legend,
-                    group_a_curve=None,  # Can be extended later for group retention
-                    group_b_curve=None,
-                    group_c_curve=None,
-                    group_names=group_names,
                     retention_threshold=retention_threshold,
                     y_axis_min=y_axis_min,
                     y_axis_max=y_axis_max,
-                    show_baseline_line=show_baseline_line,
-                    show_threshold_line=show_threshold_line,
+                    show_baseline_line=show_baseline_100,
+                    show_threshold_line=show_baseline_80,
                     cycle_filter=cycle_filter,
-                    custom_colors=custom_colors
+                    custom_colors=custom_colors,
+                    capacity_y_axis_limits=y_axis_limits,
+                    formation_cycles_skip=formation_cycles_skip
                 )
-                st.pyplot(retention_fig)
+                st.pyplot(combined_fig)
                 
-                # Additional information and controls summary
-                with st.expander("📖 Capacity Retention Information", expanded=False):
-                    st.markdown(f"""
-                    **How Capacity Retention is Calculated:**
-                    - The selected reference cycle capacity is set to 100%
-                    - Each cycle's retention = (Current Cycle Capacity / Reference Cycle Capacity) × 100%
-                    - Reference lines are shown at 100% (baseline) and {retention_threshold}% (user-defined threshold)
-                    - The green vertical line indicates the current reference cycle
-                    
-                    **Current Settings:**
-                    - 🎯 **Reference Cycle:** {reference_cycle} (set as 100% baseline)
-                    - 📏 **Retention Threshold:** {retention_threshold}% (red dashed line)
-                    - 📊 **Y-Axis Range:** {y_axis_min:.0f}% - {y_axis_max:.0f}%
-                    
-                    **Key Features:**
-                    - 🎯 **Reference Cycle:** Change which cycle serves as the 100% baseline
-                    - 📏 **Adjustable Threshold:** Set custom retention threshold line (default: 80%)
-                    - 📊 **Y-Axis Scaling:** Choose from preset ranges or set custom range for better visualization
-                    - 🎨 **Display Controls:** Show/hide markers, legend, title, and reference lines
-                    - 🔗 **Synchronized Data:** Uses the same data series selection as the main plot
-                    - 🔄 **Real-time Updates:** All plots update automatically when settings change
-                    - 🔄 **Interactive:** Hover over data points for detailed information
-                    - 📈 **Enhanced Visualization:** Focus on specific retention ranges for detailed analysis
-                    """)
-                    
-                    # Show threshold and scaling tips
-                    st.markdown("#### 💡 Usage Tips:")
-                    st.markdown(f"""
-                    - **Data Synchronization:** Both plots show the same data series. Change selections in the "Data Series Selection" section above to filter both plots simultaneously.
-                    - **Threshold at {retention_threshold}%:** {"Standard degradation benchmark" if retention_threshold == 80 else "Custom degradation benchmark"} {"(Hidden)" if not show_threshold_line else "(Visible)"}
-                    - **Y-Axis Range:** {"Full view - good for complete retention analysis" if y_axis_preset == "Full Range (0-110%)" else "Focused view - better for detailed capacity changes analysis"}
-                    - **Reference Cycle {reference_cycle}:** {"First cycle after formation" if reference_cycle == formation_cycles + 1 else "Custom baseline cycle"}
-                    - **Display Options:** {"Markers hidden" if remove_markers else "Markers shown"}, {"Legend hidden" if hide_legend else "Legend shown"}, {"Title hidden" if not show_graph_title else "Title shown"}
-                    - **Reference Lines:** {"100% baseline hidden" if not show_baseline_line else "100% baseline shown"}, {"Threshold line hidden" if not show_threshold_line else "Threshold line shown"}
-                    - **Remove Last Cycle:** {"Applied to both plots" if remove_last_cycle else "Not applied"}
-                    """)
+                st.caption(f"Combined view: Specific Capacity (left Y-axis) and Capacity Retention (right Y-axis). Reference: cycle {reference_cycle}.")
             else:
-                st.warning("⚠️ No cycle data available for capacity retention analysis. Please upload data files first.")
+                st.warning("No cycle data available. Please upload data files first.")
         else:
-            st.info("📈 Upload and process data files to see capacity retention analysis.")
-            st.markdown("""
-            **Capacity Retention Plot Features:**
-            - Shows how capacity changes relative to a reference cycle
-            - Default reference is the first cycle after formation
-            - Interactive reference cycle selection
-            - Real-time plot updates
-            - Visual guidelines at 100% and 80% retention levels
-            """)
-    with tab3:
+            # Separate plots (when combined toggle is disabled)
+            fig = plot_capacity_graph(
+                dfs, show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name,
+                show_average_performance, avg_line_toggles, remove_markers, hide_legend,
+                group_a_curve=(group_curves[0][0], group_curves[0][1]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][1] and group_plot_toggles.get("Group Q Dis", False) else None,
+                group_b_curve=(group_curves[1][0], group_curves[1][1]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][1] and group_plot_toggles.get("Group Q Dis", False) else None,
+                group_c_curve=(group_curves[2][0], group_curves[2][1]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][1] and group_plot_toggles.get("Group Q Dis", False) else None,
+                group_a_qchg=(group_curves[0][0], group_curves[0][2]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][2] and group_plot_toggles.get("Group Q Chg", False) else None,
+                group_b_qchg=(group_curves[1][0], group_curves[1][2]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][2] and group_plot_toggles.get("Group Q Chg", False) else None,
+                group_c_qchg=(group_curves[2][0], group_curves[2][2]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][2] and group_plot_toggles.get("Group Q Chg", False) else None,
+                group_a_eff=(group_curves[0][0], group_curves[0][3]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][3] and group_plot_toggles.get("Group Efficiency", False) else None,
+                group_b_eff=(group_curves[1][0], group_curves[1][3]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][3] and group_plot_toggles.get("Group Efficiency", False) else None,
+                group_c_eff=(group_curves[2][0], group_curves[2][3]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][3] and group_plot_toggles.get("Group Efficiency", False) else None,
+                group_names=group_names,
+                cycle_filter=cycle_filter,
+                custom_colors=custom_colors,
+                y_axis_limits=y_axis_limits
+            )
+            st.pyplot(fig)
+            
+            if ready and dfs:
+                # Get available cycles from the data to determine valid range for reference cycle
+                all_cycles = []
+                for d in dfs:
+                    try:
+                        df = d['df']
+                        if not df.empty:
+                            cycles = df[df.columns[0]].tolist()
+                            all_cycles.extend(cycles)
+                    except:
+                        pass
+                
+                if all_cycles:
+                    min_cycle = min(all_cycles)
+                    max_cycle = max(all_cycles)
+                    default_ref_cycle = formation_cycles + 1
+                    
+                    # Ensure default reference cycle is within valid range
+                    if default_ref_cycle < min_cycle:
+                        default_ref_cycle = min_cycle
+                    elif default_ref_cycle > max_cycle:
+                        default_ref_cycle = max_cycle
+                    
+                    # Reference cycle input controls
+                    col1, col2, col3 = st.columns([2, 1, 1])
+                    
+                    with col1:
+                        reference_cycle = st.number_input(
+                            "Reference Cycle (100% baseline)",
+                            min_value=int(min_cycle),
+                            max_value=int(max_cycle),
+                            value=int(default_ref_cycle),
+                            step=1,
+                            key="reference_cycle",
+                            help=f"Select which cycle to use as the 100% reference point."
+                        )
+                    
+                    with col2:
+                        st.metric("Formation Cycles", formation_cycles)
+                    
+                    with col3:
+                        st.metric("Available Cycles", f"{int(min_cycle)} - {int(max_cycle)}")
+                    
+                    # Retention plot controls
+                    control_col1, control_col2, control_col3 = st.columns([1, 1, 1])
+                    
+                    with control_col1:
+                        retention_threshold = st.slider(
+                            "Retention Threshold (%)",
+                            min_value=0.0,
+                            max_value=100.0,
+                            value=80.0,
+                            step=5.0,
+                            key="retention_threshold"
+                        )
+                    
+                    with control_col2:
+                        y_axis_preset = st.selectbox(
+                            "Y-Axis Range",
+                            options=["Full Range (0-110%)", "Focused View (70-110%)", "Standard View (50-110%)", "Custom Range"],
+                            index=0,
+                            key="y_axis_preset"
+                        )
+                    
+                    with control_col3:
+                        if y_axis_preset == "Custom Range":
+                            custom_min = st.number_input("Min Y (%)", min_value=0.0, max_value=100.0, value=st.session_state.get('retention_y_axis_min', 0.0), step=5.0, key="retention_y_axis_min")
+                            custom_max = st.number_input("Max Y (%)", min_value=50.0, max_value=200.0, value=st.session_state.get('retention_y_axis_max', 110.0), step=5.0, key="retention_y_axis_max")
+                            y_axis_min, y_axis_max = custom_min, custom_max
+                        else:
+                            if y_axis_preset == "Full Range (0-110%)":
+                                y_axis_min, y_axis_max = 0.0, 110.0
+                            elif y_axis_preset == "Focused View (70-110%)":
+                                y_axis_min, y_axis_max = 70.0, 110.0
+                            elif y_axis_preset == "Standard View (50-110%)":
+                                y_axis_min, y_axis_max = 50.0, 110.0
+                            st.metric("Y-Axis Range", f"{y_axis_min:.0f}% - {y_axis_max:.0f}%")
+                    
+                    # Retention plot specific options
+                        retention_col1, retention_col2 = st.columns(2)
+                        with retention_col1:
+                            show_baseline_line = st.checkbox(
+                            'Show baseline (100%)',
+                                value=True,
+                            key='retention_baseline'
+                            )
+                        with retention_col2:
+                            show_threshold_line = st.checkbox(
+                            f'Show threshold ({retention_threshold:.0f}%)',
+                                value=True,
+                            key='retention_threshold_line'
+                            )
+                    
+                    # Generate capacity retention plot using unified settings
+                    retention_fig = plot_capacity_retention_graph(
+                        dfs, show_lines, reference_cycle, formation_cycles, remove_last_cycle, 
+                        show_graph_title, experiment_name, show_average_performance, 
+                        avg_line_toggles, remove_markers, hide_legend,
+                        group_a_curve=None,  # Can be extended later for group retention
+                        group_b_curve=None,
+                        group_c_curve=None,
+                        group_names=group_names,
+                        retention_threshold=retention_threshold,
+                        y_axis_min=y_axis_min,
+                        y_axis_max=y_axis_max,
+                        show_baseline_line=show_baseline_line,
+                        show_threshold_line=show_threshold_line,
+                        cycle_filter=cycle_filter,
+                        custom_colors=custom_colors
+                    )
+                    st.pyplot(retention_fig)
+                else:
+                    st.warning("No cycle data available. Please upload data files first.")
+            else:
+                st.info("Upload and process data files to see capacity retention analysis.")
+        
+        # Summary Table Section at the bottom
+        if ready and dfs:
+            st.markdown("---")
+            st.subheader("Summary Statistics")
+            
+            # Show update notification if calculations were recently updated
+            if st.session_state.get('calculations_updated', False):
+                update_time = st.session_state.get('update_timestamp')
+                if update_time:
+                    time_str = update_time.strftime("%H:%M:%S")
+                    st.success(f"Values updated at {time_str} - All calculations have been refreshed!")
+                    st.session_state['calculations_updated'] = False
+            
+            # Add toggle for showing average column
+            show_average_col = False
+            if len(dfs) > 1:
+                show_average_col = st.toggle("Show average column", value=True, key="show_average_col_toggle")
+            
+            # Display summary statistics table
+            from ui_components import display_summary_stats
+            display_summary_stats(dfs, disc_area_cm2, show_average_col, group_assignments, group_names)
+    with tab2:
         st.header("📤 Export & Download")
         st.markdown("---")
         
@@ -2651,6 +2831,45 @@ if ready:
                     else:
                         st.warning("⚠️ No formulation data found in dfs or loaded_experiment")
             
+            # Debug: Show summary table data and averages
+            if include_summary_table and len(dfs) > 1:
+                with st.expander("🔍 Debug: Summary Table & Averages", expanded=False):
+                    import pandas as pd
+                    from export import get_cell_metrics
+                    
+                    # Create a DataFrame-like structure for display
+                    debug_data = []
+                    for i, d in enumerate(dfs):
+                        df_cell = d['df']
+                        cell_name = d.get('testnum', f'Cell {i+1}') or f'Cell {i+1}'
+                        metrics = get_cell_metrics(df_cell, dfs[0].get('formation_cycles', 4))
+                        debug_data.append({
+                            'Cell': cell_name,
+                            '1st Cycle Discharge Capacity (mAh/g)': metrics.get('max_qdis'),
+                            'First Cycle Efficiency (%)': metrics.get('eff_pct'),
+                            'Cycle Life (80%)': metrics.get('cycle_life'),
+                            'Reversible Capacity (mAh/g)': metrics.get('reversible_capacity'),
+                            'Coulombic Efficiency (%)': metrics.get('coulombic_eff')
+                        })
+                    
+                    debug_df = pd.DataFrame(debug_data)
+                    st.write("**Cell Data:**")
+                    st.dataframe(debug_df)
+                    st.write("**DataFrame Statistics:**")
+                    st.write(debug_df.describe())
+                    
+                    # Calculate and show averages
+                    avg_row = {
+                        'Cell': 'Average Performance',
+                        '1st Cycle Discharge Capacity (mAh/g)': debug_df['1st Cycle Discharge Capacity (mAh/g)'].mean() if '1st Cycle Discharge Capacity (mAh/g)' in debug_df.columns else None,
+                        'First Cycle Efficiency (%)': debug_df['First Cycle Efficiency (%)'].mean() if 'First Cycle Efficiency (%)' in debug_df.columns else None,
+                        'Cycle Life (80%)': debug_df['Cycle Life (80%)'].mean() if 'Cycle Life (80%)' in debug_df.columns else None,
+                        'Reversible Capacity (mAh/g)': debug_df['Reversible Capacity (mAh/g)'].mean() if 'Reversible Capacity (mAh/g)' in debug_df.columns else None,
+                        'Coulombic Efficiency (%)': debug_df['Coulombic Efficiency (%)'].mean() if 'Coulombic Efficiency (%)' in debug_df.columns else None
+                    }
+                    st.write("**Average Performance Row:**")
+                    st.write(avg_row)
+            
             if content_items:
                 for item in content_items:
                     st.markdown(f"- {item}")
@@ -2726,6 +2945,200 @@ if ready:
             
             st.markdown("---")
             
+            # Project-Level Export Section
+            if current_project_id:
+                st.markdown("---")
+                st.subheader("📦 Export Entire Project")
+                st.markdown("*Export all experiments in the current project to a single PowerPoint file*")
+                
+                if st.button("🚀 Export Entire Project", type="secondary", use_container_width=True):
+                    try:
+                        from database import get_all_project_experiments_data, get_project_by_id
+                        from export import export_powerpoint
+                        from io import BytesIO
+                        from pptx import Presentation
+                        from pptx.util import Inches, Pt
+                        from pptx.enum.text import PP_ALIGN
+                        import json
+                        from io import StringIO
+                        from data_processing import calculate_efficiency_based_on_project_type
+                        
+                        # Get all experiments for the project, sorted by creation date
+                        all_experiments_data = get_all_project_experiments_data(current_project_id)
+                        
+                        if not all_experiments_data:
+                            st.error("❌ No experiments found in this project.")
+                        else:
+                            # Sort by creation date (chronologically)
+                            # Handle None values by using a far-future date for sorting
+                            from datetime import datetime
+                            def get_sort_key(exp_data):
+                                created_date = exp_data[13] if len(exp_data) > 13 else None  # created_date is index 13
+                                if created_date is None:
+                                    return datetime.max  # Put None dates at the end
+                                # If it's already a datetime, use it directly
+                                if isinstance(created_date, datetime):
+                                    return created_date
+                                # If it's a string, try to parse it
+                                if isinstance(created_date, str):
+                                    try:
+                                        return datetime.fromisoformat(created_date.replace('Z', '+00:00'))
+                                    except:
+                                        return datetime.max
+                                return datetime.max
+                            
+                            all_experiments_data.sort(key=get_sort_key)
+                            
+                            st.info(f"📊 Found {len(all_experiments_data)} experiment(s). Generating slides...")
+                            
+                            # Create a new presentation for the project
+                            project_prs = Presentation()
+                            project_prs.slide_layouts[6]  # Blank layout
+                            
+                            # Get project info
+                            project_info = get_project_by_id(current_project_id)
+                            project_name = project_info[1] if project_info else "Project"
+                            project_type = project_info[3] if project_info and len(project_info) > 3 else "Full Cell"
+                            
+                            # Process each experiment
+                            experiments_processed = 0
+                            for exp_data in all_experiments_data:
+                                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                                
+                                try:
+                                    # Parse experiment data
+                                    parsed_data = json.loads(data_json)
+                                    
+                                    # Load cells data
+                                    cells_data = parsed_data.get('cells', [])
+                                    if not cells_data:
+                                        # Single cell experiment
+                                        cells_data = [{
+                                            'data_json': data_json,
+                                            'cell_name': exp_name,
+                                            'test_number': test_number,
+                                            'loading': loading,
+                                            'active_material': active_material,
+                                            'formation_cycles': formation_cycles,
+                                            'formulation': json.loads(formulation_json) if formulation_json else []
+                                        }]
+                                    
+                                    # Build dfs structure for this experiment
+                                    exp_dfs = []
+                                    for cell_data in cells_data:
+                                        if cell_data.get('excluded', False):
+                                            continue
+                                        
+                                        cell_data_json = cell_data.get('data_json', '')
+                                        if not cell_data_json:
+                                            continue
+                                        
+                                        df = pd.read_json(StringIO(cell_data_json))
+                                        
+                                        # Recalculate efficiency based on project type
+                                        if 'Q charge (mA.h)' in df.columns and 'Q discharge (mA.h)' in df.columns:
+                                            df['Efficiency (-)'] = calculate_efficiency_based_on_project_type(
+                                                df['Q charge (mA.h)'], 
+                                                df['Q discharge (mA.h)'], 
+                                                project_type
+                                            ) / 100
+                                        
+                                        # Get formulation
+                                        formulation = cell_data.get('formulation', [])
+                                        if not formulation and formulation_json:
+                                            try:
+                                                formulation = json.loads(formulation_json)
+                                            except:
+                                                formulation = []
+                                        
+                                        exp_dfs.append({
+                                            'df': df,
+                                            'testnum': cell_data.get('test_number', cell_data.get('cell_name', 'Unknown')),
+                                            'loading': cell_data.get('loading', loading),
+                                            'active': cell_data.get('active_material', active_material),
+                                            'formation_cycles': cell_data.get('formation_cycles', formation_cycles),
+                                            'project_type': project_type,
+                                            'excluded': False,
+                                            'pressed_thickness': parsed_data.get('pressed_thickness'),
+                                            'solids_content': parsed_data.get('solids_content'),
+                                            'porosity': cell_data.get('porosity', porosity),
+                                            'formulation': formulation
+                                        })
+                                    
+                                    if not exp_dfs:
+                                        st.warning(f"⚠️ Skipping {exp_name}: No valid cell data found.")
+                                        continue
+                                    
+                                    # Add slides for this experiment to the project presentation
+                                    export_powerpoint(
+                                        dfs=exp_dfs,
+                                        show_averages=True,
+                                        experiment_name=exp_name,
+                                        show_lines=show_lines,
+                                        show_efficiency_lines=show_efficiency_lines,
+                                        remove_last_cycle=remove_last_cycle,
+                                        include_summary_table=include_summary_table,
+                                        include_main_plot=include_main_plot,
+                                        include_retention_plot=include_retention_plot,
+                                        include_notes=include_notes,
+                                        include_electrode_data=include_electrode_data,
+                                        include_porosity=include_porosity,
+                                        include_thickness=include_thickness,
+                                        include_solids_content=include_solids_content,
+                                        include_formulation=include_formulation,
+                                        experiment_notes=experiment_notes or "",
+                                        retention_threshold=st.session_state.get('retention_threshold', 80.0),
+                                        reference_cycle=st.session_state.get('reference_cycle', 5),
+                                        formation_cycles=formation_cycles or 4,
+                                        retention_show_lines=show_lines,
+                                        retention_remove_markers=remove_markers,
+                                        retention_hide_legend=hide_legend,
+                                        retention_show_title=show_graph_title,
+                                        show_baseline_line=st.session_state.get('retention_show_baseline', True),
+                                        show_threshold_line=st.session_state.get('retention_show_threshold', True),
+                                        y_axis_min=st.session_state.get('y_axis_min', 0.0),
+                                        y_axis_max=st.session_state.get('y_axis_max', 110.0),
+                                        show_graph_title=st.session_state.get('show_graph_title', True),
+                                        show_average_performance=show_average_performance,
+                                        avg_line_toggles=st.session_state.get('avg_line_toggles', {}),
+                                        remove_markers=st.session_state.get('remove_markers', False),
+                                        hide_legend=st.session_state.get('hide_legend', False),
+                                        existing_prs=project_prs  # Append to project presentation
+                                    )
+                                    
+                                    experiments_processed += 1
+                                    
+                                except Exception as e:
+                                    st.warning(f"⚠️ Error processing experiment {exp_name}: {str(e)}")
+                                    import logging
+                                    logging.error(f"Error processing experiment {exp_name}: {e}")
+                                    continue
+                            
+                            if experiments_processed > 0:
+                                # Save project presentation
+                                project_bio = BytesIO()
+                                project_prs.save(project_bio)
+                                project_bio.seek(0)
+                                
+                                st.success(f"✅ Project export completed! Processed {experiments_processed} experiment(s).")
+                                st.download_button(
+                                    "📥 Download Project PowerPoint",
+                                    data=project_bio,
+                                    file_name="project_summary.pptx",
+                                    mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                                    key='download_project_pptx',
+                                    use_container_width=True
+                                )
+                            else:
+                                st.error("❌ No experiments could be processed for export.")
+                    
+                    except Exception as e:
+                        st.error(f"❌ Error exporting project: {str(e)}")
+                        import traceback
+                        st.error(traceback.format_exc())
+            
+            st.markdown("---")
+            
             # Excel Export Section
             st.subheader("📊 Excel Export")
             st.markdown("*Download detailed data in Excel format*")
@@ -2764,16 +3177,14 @@ if ready:
 # --- Comparison Tab ---
 if tab_comparison and current_project_id:
     with tab_comparison:
-        st.header("🔄 Experiment Comparison")
         current_project_name = st.session_state.get('current_project_name', 'Selected Project')
-        st.markdown(f"**Project:** {current_project_name}")
-        st.markdown("---")
+        st.caption(f"Project: {current_project_name}")
         
         # Get all experiments data for this project
         all_experiments_data = get_all_project_experiments_data(current_project_id)
         
         if not all_experiments_data:
-            st.info("📊 No experiments found in this project. Create experiments to see comparison data.")
+            st.info("No experiments found in this project. Create experiments to see comparison data.")
         else:
             # Extract experiment names for selection
             experiment_options = []
@@ -2785,18 +3196,17 @@ if tab_comparison and current_project_id:
                 experiment_dict[exp_name] = exp_data
             
             # Experiment Selection
-            st.subheader("📋 Select Experiments to Compare")
             selected_experiments = st.multiselect(
-                "Choose two or more experiments:",
+                "Select experiments to compare",
                 options=experiment_options,
                 default=[],
-                help="Select multiple experiments to compare their performance metrics"
+                help="Select two or more experiments to compare"
             )
             
             if len(selected_experiments) < 2:
-                st.warning("⚠️ Please select at least 2 experiments to enable comparison.")
+                st.warning("Please select at least 2 experiments to enable comparison.")
             else:
-                st.success(f"✅ Comparing {len(selected_experiments)} experiments")
+                st.caption(f"Comparing {len(selected_experiments)} experiments")
                 
                 # Process selected experiments data
                 comparison_data = []
@@ -2902,14 +3312,13 @@ if tab_comparison and current_project_id:
                     col1, col2 = st.columns([2, 1])
                     
                     with col1:
-                        st.subheader("📊 Comparison Visualization")
+                        st.subheader("Comparison Visualization")
                         
                         # Plot selection
                         plot_type = st.selectbox(
-                            "Select comparison metric:",
+                            "Metric",
                             ["Reversible Capacity", "Coulombic Efficiency", "First Discharge Capacity", 
-                             "First Cycle Efficiency", "Cycle Life (80%)", "Areal Capacity"],
-                            help="Choose which metric to visualize for comparison"
+                             "First Cycle Efficiency", "Cycle Life (80%)", "Areal Capacity"]
                         )
                         
                         # Create comparison plot
@@ -2958,7 +3367,7 @@ if tab_comparison and current_project_id:
                             plt.savefig(buf, format='png', dpi=300, bbox_inches='tight')
                             buf.seek(0)
                             st.download_button(
-                                label="📥 Download Plot",
+                                label="Download Plot",
                                 data=buf,
                                 file_name=f"comparison_{plot_type.lower().replace(' ', '_')}.png",
                                 mime="image/png"
@@ -2967,10 +3376,9 @@ if tab_comparison and current_project_id:
                             st.warning(f"No data available for {plot_type} comparison.")
                     
                     with col2:
-                        st.subheader("📋 Quick Stats")
+                        st.subheader("Quick Stats")
                         
-                        # Show experiment count
-                        st.metric("Experiments Selected", len(selected_experiments))
+                        st.metric("Experiments", len(selected_experiments))
                         st.metric("Total Cells", len(individual_cells_comparison))
                         
                         # Show best performer for selected metric
@@ -2978,17 +3386,10 @@ if tab_comparison and current_project_id:
                             best_idx = np.argmax(values)
                             best_exp = exp_names[best_idx]
                             best_value = values[best_idx]
-                            st.metric(
-                                f"Best {plot_type}",
-                                f"{best_value:.2f} {unit}",
-                                delta=None,
-                                help=f"Experiment: {best_exp}"
-                            )
+                            st.metric(f"Best {plot_type}", f"{best_value:.2f} {unit}")
                     
-                    # Add the new capacity comparison plot section
-                    st.markdown("---")
-                    st.subheader("📈 Capacity Data Comparison")
-                    st.markdown("*Compare capacity curves from multiple experiments on the same plot*")
+                    # Capacity comparison plot section
+                    st.subheader("Capacity Data Comparison")
                     
                     # Prepare experiment data for plotting
                     experiments_plot_data = []
@@ -3076,7 +3477,7 @@ if tab_comparison and current_project_id:
                             comparison_fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
                             buf.seek(0)
                             st.download_button(
-                                label="📥 Download Capacity Comparison Plot",
+                                label="Download Plot",
                                 data=buf,
                                 file_name="capacity_comparison_plot.png",
                                 mime="image/png"
@@ -3084,23 +3485,21 @@ if tab_comparison and current_project_id:
                             
                         except Exception as e:
                             st.error(f"Error generating comparison plot: {str(e)}")
-                            st.info("This may happen if the selected experiments have incompatible data formats.")
                     else:
-                        st.warning("No valid experiment data available for capacity plotting. Please ensure experiments contain proper cycling data.")
+                        st.warning("No valid experiment data available for capacity plotting.")
                     
                     # Summary comparison table
-                    st.subheader("📊 Comparison Summary Table")
+                    st.subheader("Comparison Summary Table")
                     
                     # Table filter options
-                    with st.expander("🔧 Table Options", expanded=False):
+                    with st.expander("Table Options", expanded=False):
                         show_columns = st.multiselect(
-                            "Select metrics to display:",
+                            "Select metrics to display",
                             ["Experiment", "Reversible Capacity (mAh/g)", "Coulombic Efficiency (%)", 
                              "First Discharge (mAh/g)", "First Efficiency (%)", 
                              "Cycle Life (80%)", "Areal Capacity (mAh/cm²)", "Active Material (%)", "Date"],
                             default=["Experiment", "Reversible Capacity (mAh/g)", "Coulombic Efficiency (%)", 
-                                   "First Discharge (mAh/g)", "Cycle Life (80%)"],
-                            help="Choose which columns to display in the comparison table"
+                                   "First Discharge (mAh/g)", "Cycle Life (80%)"]
                         )
                     
                     if show_columns:
@@ -3131,7 +3530,7 @@ if tab_comparison and current_project_id:
                             # Export option for table
                             csv_data = filtered_df.to_csv(index=False)
                             st.download_button(
-                                label="📥 Download Table (CSV)",
+                                label="Download Table (CSV)",
                                 data=csv_data,
                                 file_name="experiment_comparison.csv",
                                 mime="text/csv"
@@ -3143,8 +3542,7 @@ if tab_comparison and current_project_id:
                     
                     # Individual cells comparison (optional detailed view)
                     if individual_cells_comparison:
-                        with st.expander("🔬 Individual Cells Detailed Comparison", expanded=False):
-                            st.markdown("**All individual cells from selected experiments:**")
+                        with st.expander("Individual Cells Detailed Comparison", expanded=False):
                             
                             # Create individual cells DataFrame
                             individual_df_data = []
@@ -3168,13 +3566,433 @@ if tab_comparison and current_project_id:
                             # Export option for individual cells
                             individual_csv = individual_df.to_csv(index=False)
                             st.download_button(
-                                label="📥 Download Individual Cells (CSV)",
+                                label="Download Individual Cells (CSV)",
                                 data=individual_csv,
                                 file_name="individual_cells_comparison.csv",
                                 mime="text/csv"
                             )
-else:
-                    st.error("No valid data found for selected experiments.")
+                    else:
+                        st.error("No valid data found for selected experiments.")
+            
+            # Formulation-Based Comparison Section
+            st.subheader("Formulation-Based Comparison")
+            
+            # Get formulation summary for the project
+            formulation_summary = get_formulation_summary(current_project_id)
+            
+            if not formulation_summary:
+                st.info("No formulation data found in this project. Add formulations to your experiments to enable formulation-based comparisons.")
+            else:
+                # Component selection
+                component_names = sorted(list(formulation_summary.keys()))
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    selected_component = st.selectbox(
+                        "Select formulation component",
+                        options=component_names
+                    )
+                
+                with col2:
+                    if selected_component:
+                        stats = formulation_summary[selected_component]
+                        st.metric(f"{selected_component} Range", f"{stats['min']:.1f} - {stats['max']:.1f}%")
+                
+                if selected_component:
+                    # Get experiments with this component
+                    matching_experiments = get_experiments_by_formulation_component(
+                        current_project_id, selected_component
+                    )
+                    
+                    if not matching_experiments:
+                        st.warning(f"No experiments found with {selected_component} in their formulation.")
+                    else:
+                        # Filter options
+                        with st.expander("Filter Options", expanded=False):
+                            filter_col1, filter_col2 = st.columns(2)
+                            with filter_col1:
+                                min_pct = st.number_input(f"Minimum {selected_component} %", min_value=0.0, max_value=100.0, value=0.0, step=0.5)
+                            with filter_col2:
+                                max_pct = st.number_input(f"Maximum {selected_component} %", min_value=0.0, max_value=100.0, value=100.0, step=0.5)
+                        
+                        # Apply filters
+                        if min_pct > 0 or max_pct < 100:
+                            filtered_experiments = get_experiments_by_formulation_component(
+                                current_project_id, selected_component,
+                                min_percentage=min_pct if min_pct > 0 else None,
+                                max_percentage=max_pct if max_pct < 100 else None
+                            )
+                        else:
+                            filtered_experiments = matching_experiments
+                        
+                        if filtered_experiments:
+                            st.caption(f"Found {len(filtered_experiments)} experiments")
+                            
+                            # Create comparison DataFrame
+                            comparison_df = create_formulation_comparison_dataframe(
+                                filtered_experiments, selected_component
+                            )
+                            
+                            if not comparison_df.empty:
+                                # Initialize excluded metric values in session state
+                                # Store as set of tuples: (experiment_name, metric_name)
+                                exclusion_key = f'formulation_excluded_{selected_component}_{current_project_id}'
+                                if exclusion_key not in st.session_state:
+                                    st.session_state[exclusion_key] = set()
+                                
+                                excluded_values = st.session_state[exclusion_key]
+                                
+                                # Initialize overwritten values in session state
+                                # Store as dict: {(experiment_name, metric_name): overwritten_value}
+                                overwrite_key = f'formulation_overwritten_{selected_component}_{current_project_id}'
+                                if overwrite_key not in st.session_state:
+                                    st.session_state[overwrite_key] = {}
+                                
+                                overwritten_values = st.session_state[overwrite_key]
+                                
+                                # Visualization: Performance vs Component Percentage
+                                st.subheader(f"Performance vs {selected_component} Percentage")
+                                
+                                # Metric selection for Y-axis
+                                metric_options = {
+                                'Reversible Capacity (mAh/g)': 'Reversible Capacity (mAh/g)',
+                                'First Discharge (mAh/g)': 'First Discharge (mAh/g)',
+                                'First Efficiency (%)': 'First Efficiency (%)',
+                                'Cycle Life': 'Cycle Life',
+                                'Porosity (%)': 'Porosity (%)'
+                                }
+                                
+                                selected_metric = st.selectbox("Performance metric", options=list(metric_options.keys()))
+                                
+                                metric_col = metric_options[selected_metric]
+                                
+                                # Create a copy for plotting with overwritten values applied
+                                plot_df = comparison_df.copy()
+                                
+                                # Apply overwritten values
+                                for idx, row in plot_df.iterrows():
+                                    exp_name = row['Experiment']
+                                    overwrite_key_tuple = (exp_name, metric_col)
+                                    if overwrite_key_tuple in overwritten_values:
+                                        plot_df.at[idx, metric_col] = overwritten_values[overwrite_key_tuple]
+                                
+                                # Filter out excluded metric values and rows with missing data
+                                def is_excluded(exp_name, metric):
+                                    return (exp_name, metric) in excluded_values
+                                
+                                plot_df = plot_df[
+                                    (~plot_df.apply(lambda row: is_excluded(row['Experiment'], metric_col), axis=1)) &
+                                    plot_df[metric_col].notna() & 
+                                    (plot_df[metric_col] != 'N/A')
+                                ].copy()
+                                
+                                if not plot_df.empty:
+                                    # Convert metric column to numeric if needed
+                                    plot_df[metric_col] = pd.to_numeric(plot_df[metric_col], errors='coerce')
+                                    plot_df = plot_df.dropna(subset=[metric_col, 'Component %'])
+                                    
+                                    if not plot_df.empty:
+                                        # Create scatter plot
+                                        fig, ax = plt.subplots(figsize=(10, 6))
+                                        
+                                        scatter = ax.scatter(
+                                            plot_df['Component %'],
+                                            plot_df[metric_col],
+                                            s=100,
+                                            alpha=0.6,
+                                            c=plot_df['Component %'],
+                                            cmap='viridis',
+                                            edgecolors='black',
+                                            linewidths=1
+                                        )
+                                        
+                                        # Add trend line
+                                        z = np.polyfit(plot_df['Component %'], plot_df[metric_col], 1)
+                                        p = np.poly1d(z)
+                                        ax.plot(
+                                            plot_df['Component %'],
+                                            p(plot_df['Component %']),
+                                            "r--",
+                                            alpha=0.5,
+                                            label=f'Trend: y = {z[0]:.2f}x + {z[1]:.2f}'
+                                        )
+                                        
+                                        ax.set_xlabel(f'{selected_component} (%)', fontsize=12, fontweight='bold')
+                                        ax.set_ylabel(selected_metric, fontsize=12, fontweight='bold')
+                                        ax.set_title(f'{selected_metric} vs {selected_component} Percentage', fontsize=14, fontweight='bold')
+                                        ax.grid(True, alpha=0.3)
+                                        ax.legend()
+                                        
+                                        # Add colorbar
+                                        cbar = plt.colorbar(scatter, ax=ax)
+                                        cbar.set_label(f'{selected_component} (%)', fontsize=10)
+                                        
+                                        plt.tight_layout()
+                                        st.pyplot(fig)
+                                        
+                                        # Export plot
+                                        buf = io.BytesIO()
+                                        fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                                        buf.seek(0)
+                                        st.download_button(
+                                            label=f"Download Plot",
+                                            data=buf,
+                                            file_name=f"{selected_metric.replace(' ', '_')}_vs_{selected_component.replace(' ', '_')}.png",
+                                            mime="image/png"
+                                        )
+                                    else:
+                                        st.warning(f"No valid data points for {selected_metric} comparison.")
+                                else:
+                                    st.warning(f"No data available for {selected_metric} in the selected experiments.")
+                                
+                                # Simple comparison table - clean and user-friendly
+                                st.subheader("Detailed Comparison Table")
+
+                                # Table options
+                                with st.expander("🔧 Table Options", expanded=False):
+                                    show_columns = st.multiselect(
+                                        "Select metrics to display:",
+                                        ['Experiment', 'Component %', 'Reversible Capacity (mAh/g)',
+                                         'First Discharge (mAh/g)', 'First Efficiency (%)',
+                                         'Cycle Life', 'Loading (mg)', 'Active Material (%)',
+                                         'Porosity (%)', 'Date'],
+                                        default=['Experiment', 'Component %', 'Reversible Capacity (mAh/g)',
+                                                'First Discharge (mAh/g)', 'Cycle Life'],
+                                        help="Choose which columns to display in the comparison table"
+                                    )
+
+                                if show_columns:
+                                    # Filter to selected columns and sort by component percentage
+                                    available_columns = [col for col in show_columns if col in comparison_df.columns]
+                                    if available_columns:
+                                        filtered_df = comparison_df[available_columns].sort_values('Component %')
+                                        st.dataframe(filtered_df, use_container_width=True)
+
+                                        # Export option for table
+                                        csv_data = filtered_df.to_csv(index=False)
+                                        st.download_button(
+                                            label="📥 Download Table (CSV)",
+                                            data=csv_data,
+                                            file_name=f"{selected_component.replace(' ', '_')}_comparison.csv",
+                                            mime="text/csv"
+                                        )
+                                    else:
+                                        st.warning("No valid columns selected for display.")
+                                else:
+                                    st.warning("Please select at least one column to display.")
+
+                                # Optional individual cells comparison
+                                with st.expander("🔬 Individual Cells Detailed Comparison", expanded=False):
+                                    st.markdown("**All individual cells from selected experiments:**")
+
+                                    # Create individual cells DataFrame
+                                    individual_df_data = []
+                                    for exp in filtered_experiments:
+                                        exp_id, project_id, cell_name, file_name, loading, active_material, \
+                                        formation_cycles, test_number, electrolyte, substrate, separator, \
+                                        formulation_json, data_json, solids_content, pressed_thickness, \
+                                        experiment_notes, created_date, porosity = exp
+                                        
+                                        exp_name = cell_name
+                                        component_pct = extract_formulation_component_from_experiment(exp, selected_component)
+
+                                        # Extract cell data from data_json
+                                        reversible_capacity = None
+                                        first_discharge = None
+                                        first_efficiency = None
+                                        cycle_life = None
+                                        cell_loading = loading
+                                        cell_active_material = active_material
+                                        
+                                        if data_json:
+                                            try:
+                                                parsed_data = json.loads(data_json)
+                                                formation_cycles = formation_cycles or 4
+                                                
+                                                if 'cells' in parsed_data:
+                                                    # Multi-cell experiment - process each cell
+                                                    for cell in parsed_data['cells']:
+                                                        if cell.get('excluded', False):
+                                                            continue
+                                                        
+                                                        # Reset metrics for each cell
+                                                        cell_reversible_capacity = None
+                                                        cell_first_discharge = None
+                                                        cell_first_efficiency = None
+                                                        cell_cycle_life = None
+                                                        cell_loading = loading  # Start with experiment-level loading
+                                                        cell_active_material = active_material  # Start with experiment-level active_material
+                                                        
+                                                        # Extract loading and active_material from cell data
+                                                        if cell.get('loading') is not None:
+                                                            cell_loading = cell.get('loading')
+                                                        if cell.get('active_material') is not None:
+                                                            cell_active_material = cell.get('active_material')
+                                                        
+                                                        if 'data_json' in cell:
+                                                            try:
+                                                                df = pd.read_json(StringIO(cell['data_json']))
+                                                                
+                                                                # Get first discharge capacity (max of first 3 cycles)
+                                                                if 'Q Dis (mAh/g)' in df.columns:
+                                                                    first_three = df['Q Dis (mAh/g)'].head(3).tolist()
+                                                                    if first_three:
+                                                                        cell_first_discharge = max(first_three)
+                                                                    
+                                                                    # Get first post-formation cycle (reversible capacity)
+                                                                    if len(df) > formation_cycles:
+                                                                        cell_reversible_capacity = df['Q Dis (mAh/g)'].iloc[formation_cycles]
+                                                                
+                                                                # Get first cycle efficiency
+                                                                if 'Efficiency (-)' in df.columns and len(df) > 0:
+                                                                    first_eff = df['Efficiency (-)'].iloc[0]
+                                                                    if first_eff is not None:
+                                                                        try:
+                                                                            cell_first_efficiency = float(first_eff) * 100
+                                                                        except (ValueError, TypeError):
+                                                                            pass
+                                                                
+                                                                # Calculate cycle life (80% threshold)
+                                                                if 'Q Dis (mAh/g)' in df.columns and len(df) > formation_cycles:
+                                                                    post_formation = df.iloc[formation_cycles:]
+                                                                    if not post_formation.empty:
+                                                                        initial_capacity = post_formation['Q Dis (mAh/g)'].iloc[0]
+                                                                        if initial_capacity > 0:
+                                                                            threshold = 0.8 * initial_capacity
+                                                                            below_threshold = post_formation[post_formation['Q Dis (mAh/g)'] < threshold]
+                                                                            if not below_threshold.empty:
+                                                                                cell_cycle_life = int(post_formation.index[below_threshold.index[0]])
+                                                            except Exception:
+                                                                pass
+                                                        
+                                                        # Add row for this cell
+                                                        row = {
+                                                            'Experiment': exp_name,
+                                                            'Component %': f"{component_pct:.1f}%" if component_pct else 'N/A',
+                                                            'Reversible Capacity (mAh/g)': cell_reversible_capacity if cell_reversible_capacity is not None else 'N/A',
+                                                            'First Discharge (mAh/g)': cell_first_discharge if cell_first_discharge is not None else 'N/A',
+                                                            'First Efficiency (%)': f"{cell_first_efficiency:.2f}%" if cell_first_efficiency is not None else 'N/A',
+                                                            'Cycle Life': cell_cycle_life if cell_cycle_life is not None else 'N/A',
+                                                            'Loading (mg)': cell_loading if cell_loading is not None else 'N/A',
+                                                            'Active Material (%)': cell_active_material if cell_active_material is not None else 'N/A',
+                                                            'Porosity (%)': f"{porosity * 100:.2f}%" if porosity is not None else 'N/A'
+                                                        }
+                                                        individual_df_data.append(row)
+                                                else:
+                                                    # Legacy single cell experiment
+                                                    try:
+                                                        df = pd.read_json(StringIO(data_json))
+                                                        formation_cycles = formation_cycles or 4
+                                                        
+                                                        if 'Q Dis (mAh/g)' in df.columns:
+                                                            # First discharge (max of first 3)
+                                                            first_three = df['Q Dis (mAh/g)'].head(3).tolist()
+                                                            if first_three:
+                                                                first_discharge = max(first_three)
+                                                            
+                                                            # Reversible capacity
+                                                            if len(df) > formation_cycles:
+                                                                reversible_capacity = df['Q Dis (mAh/g)'].iloc[formation_cycles]
+                                                        
+                                                        # First cycle efficiency
+                                                        if 'Efficiency (-)' in df.columns and len(df) > 0:
+                                                            first_eff = df['Efficiency (-)'].iloc[0]
+                                                            if first_eff is not None:
+                                                                try:
+                                                                    first_efficiency = float(first_eff) * 100
+                                                                except (ValueError, TypeError):
+                                                                    pass
+                                                        
+                                                        # Cycle life
+                                                        if 'Q Dis (mAh/g)' in df.columns and len(df) > formation_cycles:
+                                                            post_formation = df.iloc[formation_cycles:]
+                                                            if not post_formation.empty:
+                                                                initial_capacity = post_formation['Q Dis (mAh/g)'].iloc[0]
+                                                                if initial_capacity > 0:
+                                                                    threshold = 0.8 * initial_capacity
+                                                                    below_threshold = post_formation[post_formation['Q Dis (mAh/g)'] < threshold]
+                                                                    if not below_threshold.empty:
+                                                                        cycle_life = int(post_formation.index[below_threshold.index[0]])
+                                                    except Exception:
+                                                        pass
+                                                    
+                                                    # Add row for single cell experiment
+                                                    row = {
+                                                        'Experiment': exp_name,
+                                                        'Component %': f"{component_pct:.1f}%" if component_pct else 'N/A',
+                                                        'Reversible Capacity (mAh/g)': reversible_capacity if reversible_capacity is not None else 'N/A',
+                                                        'First Discharge (mAh/g)': first_discharge if first_discharge is not None else 'N/A',
+                                                        'First Efficiency (%)': f"{first_efficiency:.2f}%" if first_efficiency is not None else 'N/A',
+                                                        'Cycle Life': cycle_life if cycle_life is not None else 'N/A',
+                                                        'Loading (mg)': cell_loading if cell_loading is not None else 'N/A',
+                                                        'Active Material (%)': cell_active_material if cell_active_material is not None else 'N/A',
+                                                        'Porosity (%)': f"{porosity * 100:.2f}%" if porosity is not None else 'N/A'
+                                                    }
+                                                    individual_df_data.append(row)
+                                            except Exception:
+                                                # If data_json parsing fails, still add a row with available data
+                                                row = {
+                                                    'Experiment': exp_name,
+                                                    'Component %': f"{component_pct:.1f}%" if component_pct else 'N/A',
+                                                    'Reversible Capacity (mAh/g)': 'N/A',
+                                                    'First Discharge (mAh/g)': 'N/A',
+                                                    'First Efficiency (%)': 'N/A',
+                                                    'Cycle Life': 'N/A',
+                                                    'Loading (mg)': cell_loading if cell_loading is not None else 'N/A',
+                                                    'Active Material (%)': cell_active_material if cell_active_material is not None else 'N/A',
+                                                    'Porosity (%)': f"{porosity * 100:.2f}%" if porosity is not None else 'N/A'
+                                                }
+                                                individual_df_data.append(row)
+                                        else:
+                                            # No data_json available, add row with available data
+                                            row = {
+                                                'Experiment': exp_name,
+                                                'Component %': f"{component_pct:.1f}%" if component_pct else 'N/A',
+                                                'Reversible Capacity (mAh/g)': 'N/A',
+                                                'First Discharge (mAh/g)': 'N/A',
+                                                'First Efficiency (%)': 'N/A',
+                                                'Cycle Life': 'N/A',
+                                                'Loading (mg)': cell_loading if cell_loading is not None else 'N/A',
+                                                'Active Material (%)': cell_active_material if cell_active_material is not None else 'N/A',
+                                                'Porosity (%)': f"{porosity * 100:.2f}%" if porosity is not None else 'N/A'
+                                        }
+                                        individual_df_data.append(row)
+
+                                    if individual_df_data:
+                                        individual_df = pd.DataFrame(individual_df_data)
+                                        st.dataframe(individual_df, use_container_width=True)
+
+                                        # Export option for individual cells
+                                        individual_csv = individual_df.to_csv(index=False)
+                                        st.download_button(
+                                            label="📥 Download Individual Cells (CSV)",
+                                            data=individual_csv,
+                                            file_name=f"{selected_component.replace(' ', '_')}_individual_cells.csv",
+                                            mime="text/csv"
+                                        )
+                                    else:
+                                        st.info("No individual cell data available for the selected experiments.")
+
+                                # Grouped analysis
+                                st.subheader("Grouped Analysis")
+                                st.caption(f"Experiments grouped by {selected_component} percentage ranges")
+
+                                grouped = group_experiments_by_formulation_range(
+                                    filtered_experiments, selected_component, range_size=5.0
+                                )
+
+                                if grouped:
+                                    for range_label in sorted(grouped.keys(), key=lambda x: float(x.split('-')[0])):
+                                        experiments_in_range = grouped[range_label]
+                                        with st.expander(f"{range_label} ({len(experiments_in_range)} experiments)"):
+                                            for exp in experiments_in_range:
+                                                exp_name = exp[2]  # cell_name
+                                                component_pct = extract_formulation_component_from_experiment(exp, selected_component)
+                                                st.write(f"• **{exp_name}**: {component_pct:.1f}% {selected_component}")
+                            else:
+                                st.warning("Could not create comparison table. Check that experiments have valid formulation and performance data.")
+                        else:
+                            st.warning(f"No experiments found with {selected_component} in the specified range ({min_pct:.1f}% - {max_pct:.1f}%).")
 
 # --- Master Table Tab ---
 if tab_master and current_project_id:

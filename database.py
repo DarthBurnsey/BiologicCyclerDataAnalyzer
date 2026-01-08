@@ -805,6 +805,233 @@ def get_project_preference(project_id, key, default=None):
         result = cursor.fetchone()
         return result[0] if result else default
 
+def get_experiments_by_formulation_component(project_id, component_name, min_percentage=None, max_percentage=None):
+    """
+    Get experiments that contain a specific formulation component within a percentage range.
+    
+    Args:
+        project_id: The project ID to search within
+        component_name: Name of the component to search for (e.g., "Graphite")
+        min_percentage: Minimum dry mass fraction percentage (optional)
+        max_percentage: Maximum dry mass fraction percentage (optional)
+    
+    Returns:
+        List of experiment data tuples matching the criteria
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, project_id, cell_name, file_name, loading, active_material, 
+                   formation_cycles, test_number, electrolyte, substrate, separator, 
+                   formulation_json, data_json, solids_content, pressed_thickness, 
+                   experiment_notes, created_date, porosity
+            FROM cell_experiments 
+            WHERE project_id = ? AND (formulation_json IS NOT NULL OR data_json IS NOT NULL)
+        ''', (project_id,))
+        
+        all_experiments = cursor.fetchall()
+        matching_experiments = []
+        
+        for exp in all_experiments:
+            formulation_json = exp[11]  # formulation_json is at index 11
+            data_json = exp[12]  # data_json is at index 12
+            formulations_to_check = []
+            
+            # Check formulation_json field
+            if formulation_json:
+                try:
+                    formulation = json.loads(formulation_json)
+                    if isinstance(formulation, list):
+                        formulations_to_check.append(formulation)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            # Check data_json for multi-cell experiments
+            if data_json:
+                try:
+                    data = json.loads(data_json)
+                    if 'cells' in data:
+                        for cell in data['cells']:
+                            formulation = cell.get('formulation', [])
+                            if isinstance(formulation, list) and formulation:
+                                formulations_to_check.append(formulation)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            # Process each formulation
+            found_match = False
+            for formulation in formulations_to_check:
+                if found_match:
+                    break
+                for item in formulation:
+                    if isinstance(item, dict):
+                        component = (item.get('Component') or 
+                                   item.get('component') or 
+                                   item.get('Component Name') or '')
+                        if component.strip().lower() == component_name.strip().lower():
+                            percentage = (item.get('Dry Mass Fraction (%)') or
+                                        item.get('dry_mass_fraction') or
+                                        item.get('Value') or None)
+                            
+                            if percentage is not None:
+                                try:
+                                    percentage = float(percentage)
+                                    # Check if percentage is within range
+                                    if min_percentage is not None and percentage < min_percentage:
+                                        continue
+                                    if max_percentage is not None and percentage > max_percentage:
+                                        continue
+                                    matching_experiments.append(exp)
+                                    found_match = True
+                                    break
+                                except (ValueError, TypeError):
+                                    continue
+        
+        return matching_experiments
+
+def get_formulation_summary(project_id):
+    """
+    Get a summary of all formulation components used in a project.
+    
+    Returns:
+        Dictionary with component names as keys and lists of percentage values as values
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT formulation_json, data_json
+            FROM cell_experiments 
+            WHERE project_id = ? AND (formulation_json IS NOT NULL OR data_json IS NOT NULL)
+        ''', (project_id,))
+        
+        results = cursor.fetchall()
+        component_summary = {}
+        
+        for formulation_json, data_json in results:
+            formulations_to_check = []
+            
+            # Check formulation_json field
+            if formulation_json:
+                try:
+                    formulation = json.loads(formulation_json)
+                    if isinstance(formulation, list):
+                        formulations_to_check.append(formulation)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            # Check data_json for multi-cell experiments
+            if data_json:
+                try:
+                    data = json.loads(data_json)
+                    if 'cells' in data:
+                        for cell in data['cells']:
+                            formulation = cell.get('formulation', [])
+                            if isinstance(formulation, list) and formulation:
+                                formulations_to_check.append(formulation)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            # Process each formulation
+            for formulation in formulations_to_check:
+                for item in formulation:
+                    if isinstance(item, dict):
+                        component = (item.get('Component') or 
+                                   item.get('component') or 
+                                   item.get('Component Name') or '')
+                        if component:
+                            percentage = (item.get('Dry Mass Fraction (%)') or
+                                        item.get('dry_mass_fraction') or
+                                        item.get('Value') or None)
+                            
+                            if percentage is not None:
+                                try:
+                                    percentage = float(percentage)
+                                    if component not in component_summary:
+                                        component_summary[component] = []
+                                    component_summary[component].append(percentage)
+                                except (ValueError, TypeError):
+                                    continue
+        
+        # Calculate statistics for each component
+        component_stats = {}
+        for component, percentages in component_summary.items():
+            if percentages:
+                component_stats[component] = {
+                    'values': sorted(set(percentages)),
+                    'min': min(percentages),
+                    'max': max(percentages),
+                    'avg': sum(percentages) / len(percentages),
+                    'count': len(percentages)
+                }
+        
+        return component_stats
+
+def get_experiments_grouped_by_formulation(project_id, component_name):
+    """
+    Group experiments by the percentage of a specific component.
+    
+    Returns:
+        Dictionary with percentage ranges as keys and lists of experiment IDs as values
+    """
+    experiments = get_experiments_by_formulation_component(project_id, component_name)
+    grouped = {}
+    
+    for exp in experiments:
+        formulation_json = exp[11]
+        data_json = exp[12]
+        formulations_to_check = []
+        
+        # Check formulation_json field
+        if formulation_json:
+            try:
+                formulation = json.loads(formulation_json)
+                if isinstance(formulation, list):
+                    formulations_to_check.append(formulation)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
+        # Check data_json for multi-cell experiments
+        if data_json:
+            try:
+                data = json.loads(data_json)
+                if 'cells' in data:
+                    for cell in data['cells']:
+                        formulation = cell.get('formulation', [])
+                        if isinstance(formulation, list) and formulation:
+                            formulations_to_check.append(formulation)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
+        # Process each formulation
+        found_match = False
+        for formulation in formulations_to_check:
+            if found_match:
+                break
+            for item in formulation:
+                if isinstance(item, dict):
+                    component = (item.get('Component') or 
+                               item.get('component') or 
+                               item.get('Component Name') or '')
+                    if component.strip().lower() == component_name.strip().lower():
+                        percentage = (item.get('Dry Mass Fraction (%)') or
+                                    item.get('dry_mass_fraction') or
+                                    item.get('Value') or None)
+                        
+                        if percentage is not None:
+                            try:
+                                percentage = float(percentage)
+                                # Round to nearest 0.5 for grouping
+                                rounded = round(percentage * 2) / 2
+                                if rounded not in grouped:
+                                    grouped[rounded] = []
+                                grouped[rounded].append(exp[0])  # exp[0] is the experiment ID
+                                found_match = True
+                                break
+                            except (ValueError, TypeError):
+                                continue
+    
+    return grouped
+
 # Initialize database when module is imported
 init_database()
 migrate_database()
