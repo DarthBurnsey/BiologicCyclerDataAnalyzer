@@ -3,4 +3,6 @@ pandas
 openpyxl 
 matplotlib 
 pillow 
-python-pptx 
+python-pptx
+plotly
+scipy 

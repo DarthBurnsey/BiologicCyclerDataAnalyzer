@@ -48,6 +48,19 @@ from formulation_analysis import (
     compare_formulations, create_formulation_comparison_dataframe,
     group_experiments_by_formulation_range, extract_formulation_component_from_experiment
 )
+from dashboard_analytics import (
+    get_global_statistics, get_project_summaries, get_top_performers,
+    get_recent_activity, get_stalled_projects, get_cells_with_cycle_data
+)
+from insights_engine import generate_insights
+from dashboard_components import (
+    render_dashboard_header, render_filter_controls, render_project_summary_grid,
+    render_top_performers_table, render_insights_alerts
+)
+from dashboard_plots import (
+    plot_multi_project_retention, plot_fade_rate_scatter,
+    plot_project_comparison_bar, plot_activity_timeline
+)
 
 # =============================
 # Battery Data Gravimetric Capacity Calculator App
@@ -58,18 +71,18 @@ with st.container():
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        st.title("🔋 CellScope")
+        st.title("CellScope")
     
     with col2:
         # Show current experiment status
         loaded_experiment = st.session_state.get('loaded_experiment')
         if loaded_experiment:
-            st.info(f"📊 {loaded_experiment['experiment_name']}")
+            st.info(f"{loaded_experiment['experiment_name']}")
     
     with col3:
         # Save button for loaded experiments
         if loaded_experiment:
-            if st.button("💾 Save", key="save_changes_btn"):
+            if st.button("Save", key="save_changes_btn"):
                 # Get current experiment data
                 experiment_data = loaded_experiment['experiment_data']
                 experiment_id = loaded_experiment['experiment_id']
@@ -234,9 +247,9 @@ with st.container():
                 st.session_state['calculations_updated'] = True
                 st.session_state['update_timestamp'] = datetime.now()
                 
-                st.success("✅ Changes saved!")
+                st.success("Changes saved!")
                 if recalculated_cells:
-                    st.info(f"🔄 Recalculated specific capacity values for {len(recalculated_cells)} cell(s): {', '.join(recalculated_cells)}")
+                    st.info(f"Recalculated specific capacity values for {len(recalculated_cells)} cell(s): {', '.join(recalculated_cells)}")
                 st.rerun()
 
 st.markdown("---")
@@ -253,29 +266,140 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### Projects")
     
-    # Minimalistic CSS for sidebar
+    # Modern sidebar styling with improved readability
     st.markdown("""
         <style>
-        /* Compact sidebar styling */
-        .sidebar-project {
-            margin-bottom: 8px;
+        /* ===== SIDEBAR TYPOGRAPHY & COLORS ===== */
+        section[data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
         }
-        .sidebar-experiment {
-            margin: 2px 0px;
+        
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3,
+        section[data-testid="stSidebar"] h4,
+        section[data-testid="stSidebar"] p,
+        section[data-testid="stSidebar"] span,
+        section[data-testid="stSidebar"] label {
+            color: #f1f5f9 !important;
         }
-        /* Reduce button margins and padding for cleaner look */
-        div[data-testid="stButton"] > button {
-            margin: 0px !important;
-            padding: 0.25rem 0.5rem !important;
-            font-size: 0.9rem !important;
+        
+        section[data-testid="stSidebar"] hr {
+            border-color: rgba(148, 163, 184, 0.2) !important;
         }
-        /* Compact selectbox */
-        div[data-testid="stSelectbox"] > div {
-            padding: 0.25rem 0.5rem !important;
+        
+        /* ===== PROJECT & EXPERIMENT BUTTONS ===== */
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button {
+            margin: 2px 0 !important;
+            padding: 0.5rem 0.75rem !important;
+            font-size: 0.875rem !important;
+            font-weight: 500 !important;
+            border-radius: 8px !important;
+            transition: all 0.15s ease !important;
+            border: 1px solid transparent !important;
         }
-        /* Reduce spacing in sidebar */
-        .element-container {
-            margin-bottom: 0.5rem !important;
+        
+        /* Secondary buttons (unselected projects/experiments) */
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="secondary"] {
+            background: rgba(51, 65, 85, 0.6) !important;
+            color: #e2e8f0 !important;
+            border-color: rgba(71, 85, 105, 0.5) !important;
+        }
+        
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="secondary"]:hover {
+            background: rgba(71, 85, 105, 0.8) !important;
+            border-color: rgba(100, 116, 139, 0.7) !important;
+            transform: translateX(2px);
+        }
+        
+        /* Primary buttons (selected projects/experiments) */
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="primary"] {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+            color: #ffffff !important;
+            border-color: #3b82f6 !important;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3) !important;
+        }
+        
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="primary"]:hover {
+            background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%) !important;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4) !important;
+        }
+        
+        /* Arrow/toggle buttons styling */
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button:has(span:only-child) {
+            min-width: 32px !important;
+            padding: 0.4rem !important;
+        }
+        
+        /* ===== THREE-DOT MENU BUTTONS ===== */
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="secondary"]:has(:contains("⋯")) {
+            min-width: 36px !important;
+            max-width: 36px !important;
+            padding: 0.35rem !important;
+            background: rgba(71, 85, 105, 0.4) !important;
+            border-radius: 6px !important;
+            font-size: 1.1rem !important;
+            font-weight: 700 !important;
+            letter-spacing: 1px !important;
+        }
+        
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="secondary"]:has(:contains("⋯")):hover {
+            background: rgba(100, 116, 139, 0.6) !important;
+        }
+        
+        /* ===== DROPDOWN MENUS ===== */
+        section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > div {
+            padding: 0 !important;
+        }
+        
+        section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div {
+            background: rgba(51, 65, 85, 0.8) !important;
+            border: 1px solid rgba(71, 85, 105, 0.6) !important;
+            border-radius: 6px !important;
+            color: #e2e8f0 !important;
+        }
+        
+        /* ===== SPACING & LAYOUT ===== */
+        section[data-testid="stSidebar"] .element-container {
+            margin-bottom: 0.25rem !important;
+        }
+        
+        section[data-testid="stSidebar"] .stExpander {
+            background: rgba(30, 41, 59, 0.5) !important;
+            border: 1px solid rgba(71, 85, 105, 0.4) !important;
+            border-radius: 10px !important;
+            margin: 8px 0 !important;
+        }
+        
+        section[data-testid="stSidebar"] .stExpander > div:first-child {
+            color: #f1f5f9 !important;
+        }
+        
+        /* ===== TEXT INPUTS IN SIDEBAR ===== */
+        section[data-testid="stSidebar"] div[data-testid="stTextInput"] input {
+            background: rgba(51, 65, 85, 0.8) !important;
+            border: 1px solid rgba(100, 116, 139, 0.5) !important;
+            border-radius: 6px !important;
+            color: #f1f5f9 !important;
+            padding: 0.5rem !important;
+        }
+        
+        section[data-testid="stSidebar"] div[data-testid="stTextInput"] input:focus {
+            border-color: #3b82f6 !important;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
+        }
+        
+        section[data-testid="stSidebar"] div[data-testid="stTextArea"] textarea {
+            background: rgba(51, 65, 85, 0.8) !important;
+            border: 1px solid rgba(100, 116, 139, 0.5) !important;
+            border-radius: 6px !important;
+            color: #f1f5f9 !important;
+        }
+        
+        /* ===== SUCCESS/INFO/WARNING MESSAGES ===== */
+        section[data-testid="stSidebar"] .stAlert {
+            background: rgba(30, 41, 59, 0.8) !important;
+            border-radius: 8px !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -285,8 +409,8 @@ with st.sidebar:
             project_id, project_name, project_desc, project_type, created_date, last_modified = p
             project_expanded = st.session_state.get(f'project_expanded_{project_id}', False)
             
-            # Compact project row
-            project_cols = st.columns([0.1, 0.75, 0.15])
+            # Project row with improved proportions
+            project_cols = st.columns([0.08, 0.78, 0.14])
             with project_cols[0]:
                 # Dropdown arrow with better styling
                 arrow = "▼" if project_expanded else "▶"
@@ -349,77 +473,30 @@ with st.sidebar:
                     st.rerun()
             
             with project_cols[2]:
-                menu_open = st.session_state.get(f'project_menu_open_{project_id}', False)
-                if st.button('⋯', key=f'project_menu_btn_{project_id}', 
-                           help="Options", type="secondary"):
-                    # Close all other menus
-                    for p2 in user_projects:
-                        st.session_state[f'project_menu_open_{p2[0]}'] = False
-                    st.session_state[f'project_menu_open_{project_id}'] = not menu_open
-                    st.rerun()
-                # Project menu with better styling
-                if menu_open:
-                    with st.container():
-                        st.markdown("---")
-                        if st.button('🆕 New Experiment', key=f'project_new_exp_{project_id}_menu', use_container_width=True):
-                            st.session_state['current_project_id'] = project_id
-                            st.session_state['current_project_name'] = project_name
-                            st.session_state['start_new_experiment'] = True
-                            if 'loaded_experiment' in st.session_state:
-                                del st.session_state['loaded_experiment']
-                            
-                            # Clear all cell input session state variables
-                            keys_to_clear = []
-                            for key in st.session_state.keys():
-                                # Clear cell-specific input fields
-                                if (key.startswith('loading_') or 
-                                    key.startswith('active_') or 
-                                    key.startswith('testnum_') or 
-                                    key.startswith('formation_cycles_') or
-                                    key.startswith('electrolyte_') or
-                                    key.startswith('substrate_') or
-                                    key.startswith('formulation_data_') or 
-                                    key.startswith('formulation_saved_') or
-                                    key.startswith('component_dropdown_') or
-                                    key.startswith('component_text_') or
-                                    key.startswith('component_') or  # Add autocomplete input keys
-                                    key.startswith('fraction_') or
-                                    key.endswith('_query') or  # Autocomplete query keys
-                                    key.endswith('_suggestions') or  # Autocomplete suggestions keys
-                                    key.endswith('_selected') or  # Autocomplete selected keys
-                                    key.endswith('_show_suggestions') or  # Autocomplete show suggestions keys
-                                    key.endswith('_input') or  # Autocomplete input keys
-                                    key.endswith('_clear') or  # Autocomplete clear keys
-                                    key.startswith('component_') and key.endswith('_suggestion_') or  # Autocomplete suggestion button keys
-                                    key.startswith('add_row_') or
-                                    key.startswith('delete_row_') or
-                                    key.startswith('multi_file_upload_') or
-                                    key.startswith('assign_all_cells_') or
-                                    key == 'datasets' or
-                                    key == 'processed_data_cache' or
-                                    key == 'cache_key'):
-                                    keys_to_clear.append(key)
-                            
-                            # Remove the keys
-                            for key in keys_to_clear:
-                                del st.session_state[key]
-                            
-                            st.session_state[f'project_menu_open_{project_id}'] = False
-                            st.session_state['show_cell_inputs_prompt'] = True
-                            st.rerun()
-                        if st.button('✏️ Rename', key=f'project_rename_{project_id}_menu', use_container_width=True):
-                            st.session_state[f'renaming_project_{project_id}'] = True
-                            st.session_state[f'project_menu_open_{project_id}'] = False
-                            st.rerun()
-                        if st.button('🔄 Change Type', key=f'project_change_type_{project_id}_menu', use_container_width=True):
-                            st.session_state[f'changing_project_type_{project_id}'] = True
-                            st.session_state[f'project_menu_open_{project_id}'] = False
-                            st.rerun()
-                        if st.button('🗑️ Delete', key=f'project_delete_{project_id}_menu', use_container_width=True, type="secondary"):
-                            st.session_state['confirm_delete_project'] = project_id
-                            st.session_state[f'project_menu_open_{project_id}'] = False
-                            st.rerun()
-                        st.markdown("---")
+                with st.popover("⋮", help="Project options"):
+                    st.markdown(f"**📁 {project_name}**")
+                    st.markdown("---")
+                    if st.button('🆕 New Experiment', key=f'project_new_exp_{project_id}_menu', use_container_width=True):
+                        st.session_state['current_project_id'] = project_id
+                        st.session_state['current_project_name'] = project_name
+                        st.session_state['start_new_experiment'] = True
+                        if 'loaded_experiment' in st.session_state:
+                            del st.session_state['loaded_experiment']
+                        keys_to_clear = [k for k in list(st.session_state.keys()) if k.startswith(('loading_', 'active_', 'testnum_', 'formation_cycles_', 'electrolyte_', 'substrate_', 'formulation_data_', 'formulation_saved_', 'component_', 'fraction_', 'add_row_', 'delete_row_', 'multi_file_upload_', 'assign_all_cells_')) or k.endswith(('_query', '_suggestions', '_selected', '_show_suggestions', '_input', '_clear')) or k in ('datasets', 'processed_data_cache', 'cache_key')]
+                        for key in keys_to_clear:
+                            del st.session_state[key]
+                        st.session_state['show_cell_inputs_prompt'] = True
+                        st.rerun()
+                    if st.button('✏️ Rename', key=f'project_rename_{project_id}_menu', use_container_width=True):
+                        st.session_state[f'renaming_project_{project_id}'] = True
+                        st.rerun()
+                    if st.button('🔄 Change Type', key=f'project_change_type_{project_id}_menu', use_container_width=True):
+                        st.session_state[f'changing_project_type_{project_id}'] = True
+                        st.rerun()
+                    st.markdown("---")
+                    if st.button('🗑️ Delete', key=f'project_delete_{project_id}_menu', use_container_width=True, type="primary"):
+                        st.session_state['confirm_delete_project'] = project_id
+                        st.rerun()
             
             # Inline rename for project
             if st.session_state.get(f'renaming_project_{project_id}', False):
@@ -437,10 +514,10 @@ with st.sidebar:
                                     if st.session_state.get('current_project_id') == project_id:
                                         st.session_state['current_project_name'] = new_name.strip()
                                     st.session_state[f'renaming_project_{project_id}'] = False
-                                    st.success(f"✅ Renamed to '{new_name.strip()}'!")
+                                    st.success(f"Renamed to '{new_name.strip()}'!")
                                     st.rerun()
                                 except Exception as e:
-                                    st.error(f"❌ Error: {str(e)}")
+                                    st.error(f"Error: {str(e)}")
                             else:
                                 st.warning("Please enter a different name.")
                     with col2:
@@ -468,10 +545,10 @@ with st.sidebar:
                                 try:
                                     update_project_type(project_id, new_project_type)
                                     st.session_state[f'changing_project_type_{project_id}'] = False
-                                    st.success(f"✅ Changed type to '{new_project_type}'!")
+                                    st.success(f"Changed type to '{new_project_type}'!")
                                     st.rerun()
                                 except Exception as e:
-                                    st.error(f"❌ Error: {str(e)}")
+                                    st.error(f"Error: {str(e)}")
                             else:
                                 st.warning("Please select a different type.")
                     with col2:
@@ -517,9 +594,9 @@ with st.sidebar:
                         loaded_exp = st.session_state.get('loaded_experiment')
                         is_current_experiment = (loaded_exp and loaded_exp.get('experiment_id') == experiment_id)
                         
-                        # Minimalistic experiment row - cleaner layout
+                        # Experiment row with improved proportions
                         with st.container():
-                            exp_cols = st.columns([0.8, 0.2])
+                            exp_cols = st.columns([0.85, 0.15])
                             
                             with exp_cols[0]:
                                 button_type = "primary" if is_current_experiment else "secondary"
@@ -554,28 +631,19 @@ with st.sidebar:
                                     st.rerun()
                             
                             with exp_cols[1]:
-                                exp_menu_open = st.session_state.get(f'exp_menu_open_{experiment_id}', False)
-                                if st.button('⋯', key=f'exp_menu_btn_{experiment_id}', 
-                                           help="Options", type="secondary"):
-                                    for e2 in existing_experiments:
-                                        st.session_state[f'exp_menu_open_{e2[0]}'] = False
-                                    st.session_state[f'exp_menu_open_{experiment_id}'] = not exp_menu_open
-                                    st.rerun()
-                                
-                                if exp_menu_open:
-                                    with st.container():
-                                        if st.button('✏️ Rename', key=f'exp_rename_{experiment_id}_menu', use_container_width=True):
-                                            st.session_state[f'renaming_experiment_{experiment_id}'] = True
-                                            st.session_state[f'exp_menu_open_{experiment_id}'] = False
-                                            st.rerun()
-                                        if st.button('📋 Duplicate', key=f'exp_duplicate_{experiment_id}_menu', use_container_width=True):
-                                            st.session_state['duplicate_experiment'] = (experiment_id, experiment_name)
-                                            st.session_state[f'exp_menu_open_{experiment_id}'] = False
-                                            st.rerun()
-                                        if st.button('🗑️ Delete', key=f'exp_delete_{experiment_id}_menu', use_container_width=True, type="secondary"):
-                                            st.session_state['confirm_delete_experiment'] = (experiment_id, experiment_name)
-                                            st.session_state[f'exp_menu_open_{experiment_id}'] = False
-                                            st.rerun()
+                                with st.popover("⋮", help="Experiment options"):
+                                    st.markdown(f"**🧪 {experiment_name}**")
+                                    st.markdown("---")
+                                    if st.button('✏️ Rename', key=f'exp_rename_{experiment_id}_menu', use_container_width=True):
+                                        st.session_state[f'renaming_experiment_{experiment_id}'] = True
+                                        st.rerun()
+                                    if st.button('📋 Duplicate', key=f'exp_duplicate_{experiment_id}_menu', use_container_width=True):
+                                        st.session_state['duplicate_experiment'] = (experiment_id, experiment_name)
+                                        st.rerun()
+                                    st.markdown("---")
+                                    if st.button('🗑️ Delete', key=f'exp_delete_{experiment_id}_menu', use_container_width=True, type="primary"):
+                                        st.session_state['confirm_delete_experiment'] = (experiment_id, experiment_name)
+                                        st.rerun()
                         
                         # Inline rename for experiment with better layout
                         if st.session_state.get(f'renaming_experiment_{experiment_id}', False):
@@ -594,10 +662,10 @@ with st.sidebar:
                                                     st.session_state['loaded_experiment'].get('experiment_id') == experiment_id):
                                                     st.session_state['loaded_experiment']['experiment_name'] = new_exp_name.strip()
                                                 st.session_state[f'renaming_experiment_{experiment_id}'] = False
-                                                st.success(f"✅ Renamed to '{new_exp_name.strip()}'!")
+                                                st.success(f"Renamed to '{new_exp_name.strip()}'!")
                                                 st.rerun()
                                             except Exception as e:
-                                                st.error(f"❌ Error: {str(e)}")
+                                                st.error(f"Error: {str(e)}")
                                         else:
                                             st.warning("Please enter a different name.")
                                 with col2:
@@ -652,106 +720,113 @@ with st.sidebar:
     if st.session_state.get('current_project_id'):
         render_preferences_sidebar(st.session_state['current_project_id'])
 
-# --- Dropdown CSS and Global State Management ---
-# Add CSS for Gmail-style popup dropdown
+# --- Popover Menu Styling ---
 st.markdown(
     """
     <style>
-    /* Container for the three dots and popup */
-    .dropdown-container {
-        position: relative;
-        display: inline-block;
+    /* ===== POPOVER MENU STYLING ===== */
+    /* Style the popover trigger button (vertical ellipsis) */
+    section[data-testid="stSidebar"] div[data-testid="stPopover"] > button {
+        min-width: 32px !important;
+        max-width: 32px !important;
+        height: 32px !important;
+        padding: 0 !important;
+        background: rgba(71, 85, 105, 0.3) !important;
+        border: 1px solid rgba(100, 116, 139, 0.3) !important;
+        border-radius: 6px !important;
+        color: #94a3b8 !important;
+        font-size: 1.2rem !important;
+        font-weight: 600 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        transition: all 0.15s ease !important;
     }
     
-    /* Three dots button styling */
-    .three-dots-btn {
-        background: none;
-        border: none;
-        font-size: 18px;
-        cursor: pointer;
-        padding: 4px 8px;
-        border-radius: 4px;
-        color: #666;
-        transition: background-color 0.2s;
+    section[data-testid="stSidebar"] div[data-testid="stPopover"] > button:hover {
+        background: rgba(100, 116, 139, 0.5) !important;
+        border-color: rgba(148, 163, 184, 0.5) !important;
+        color: #e2e8f0 !important;
+        transform: scale(1.05);
     }
     
-    .three-dots-btn:hover {
-        background-color: #f0f0f0;
+    /* Popover content panel styling */
+    div[data-testid="stPopoverBody"] {
+        background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%) !important;
+        border: 1px solid rgba(203, 213, 225, 0.8) !important;
+        border-radius: 12px !important;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15), 0 4px 12px rgba(0, 0, 0, 0.1) !important;
+        padding: 0.75rem !important;
+        min-width: 200px !important;
     }
     
-    /* Gmail-style popup menu */
-    .popup-menu {
-        position: absolute;
-        right: 0;
-        top: 100%;
-        background-color: white;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-        z-index: 1000;
-        min-width: 120px;
-        margin-top: 4px;
-        padding: 4px 0;
-        display: none;
+    div[data-testid="stPopoverBody"] p,
+    div[data-testid="stPopoverBody"] span,
+    div[data-testid="stPopoverBody"] strong {
+        color: #1e293b !important;
     }
     
-    /* Show popup when active */
-    .popup-menu.show {
-        display: block;
+    div[data-testid="stPopoverBody"] hr {
+        border-color: rgba(148, 163, 184, 0.3) !important;
+        margin: 0.5rem 0 !important;
     }
     
-    /* Popup menu items */
-    .popup-item {
-        display: block;
-        width: 100%;
-        padding: 8px 16px;
-        text-align: left;
-        background: none;
-        border: none;
-        cursor: pointer;
-        font-size: 14px;
-        color: #333;
-        transition: background-color 0.2s;
-        white-space: nowrap;
+    /* Menu item buttons inside popover */
+    div[data-testid="stPopoverBody"] div[data-testid="stButton"] > button {
+        background: rgba(241, 245, 249, 0.8) !important;
+        border: 1px solid rgba(203, 213, 225, 0.6) !important;
+        border-radius: 8px !important;
+        color: #334155 !important;
+        padding: 0.6rem 0.85rem !important;
+        margin: 4px 0 !important;
+        font-size: 0.9rem !important;
+        font-weight: 500 !important;
+        text-align: left !important;
+        transition: all 0.15s ease !important;
     }
     
-    .popup-item:hover {
-        background-color: #f5f5f5;
+    div[data-testid="stPopoverBody"] div[data-testid="stButton"] > button:hover {
+        background: rgba(226, 232, 240, 0.9) !important;
+        border-color: rgba(148, 163, 184, 0.7) !important;
+        transform: translateX(4px);
+        color: #1e293b !important;
     }
     
-    .popup-item.delete {
-        color: #d32f2f;
+    /* Delete button styling (uses primary type) */
+    div[data-testid="stPopoverBody"] div[data-testid="stButton"] > button[kind="primary"] {
+        background: rgba(254, 226, 226, 0.6) !important;
+        border-color: rgba(252, 165, 165, 0.6) !important;
+        color: #dc2626 !important;
     }
     
-    .popup-item.delete:hover {
-        background-color: #ffebee;
+    div[data-testid="stPopoverBody"] div[data-testid="stButton"] > button[kind="primary"]:hover {
+        background: rgba(254, 202, 202, 0.8) !important;
+        border-color: rgba(248, 113, 113, 0.7) !important;
+        color: #b91c1c !important;
     }
     
-    /* Arrow pointing up to the three dots */
-    .popup-menu::before {
-        content: '';
-        position: absolute;
-        top: -6px;
-        right: 12px;
-        width: 0;
-        height: 0;
-        border-left: 6px solid transparent;
-        border-right: 6px solid transparent;
-        border-bottom: 6px solid white;
-        z-index: 1001;
+    /* ===== GENERAL UI POLISH ===== */
+    /* Smooth animations */
+    section[data-testid="stSidebar"] * {
+        transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease !important;
     }
     
-    .popup-menu::after {
-        content: '';
-        position: absolute;
-        top: -7px;
-        right: 12px;
-        width: 0;
-        height: 0;
-        border-left: 6px solid transparent;
-        border-right: 6px solid transparent;
-        border-bottom: 6px solid #ddd;
-        z-index: 1000;
+    /* Scrollbar styling for sidebar */
+    section[data-testid="stSidebar"]::-webkit-scrollbar {
+        width: 6px;
+    }
+    
+    section[data-testid="stSidebar"]::-webkit-scrollbar-track {
+        background: rgba(30, 41, 59, 0.5);
+    }
+    
+    section[data-testid="stSidebar"]::-webkit-scrollbar-thumb {
+        background: rgba(100, 116, 139, 0.5);
+        border-radius: 3px;
+    }
+    
+    section[data-testid="stSidebar"]::-webkit-scrollbar-thumb:hover {
+        background: rgba(148, 163, 184, 0.6);
     }
     </style>
     """,
@@ -774,12 +849,12 @@ if st.session_state.get("duplicate_experiment"):
     experiment_id, experiment_name = st.session_state["duplicate_experiment"]
     try:
         new_experiment_id, new_experiment_name = duplicate_experiment(experiment_id)
-        st.success(f"✅ Successfully duplicated '{experiment_name}' as '{new_experiment_name}'! You can now upload new data to this experiment.")
+        st.success(f"Successfully duplicated '{experiment_name}' as '{new_experiment_name}'! You can now upload new data to this experiment.")
         # Clear the duplication state
         del st.session_state["duplicate_experiment"]
         st.rerun()
     except Exception as e:
-        st.error(f"❌ Error duplicating experiment: {str(e)}")
+        st.error(f"Error duplicating experiment: {str(e)}")
         del st.session_state["duplicate_experiment"]
 
 if 'datasets' not in st.session_state:
@@ -800,17 +875,208 @@ if 'show_cell_inputs_prompt' not in st.session_state:
     st.session_state['show_cell_inputs_prompt'] = False
 
 if st.session_state.get('show_cell_inputs_prompt'):
-    st.warning('Please click the "🧪 Cell Inputs" tab above to start your new experiment.')
+    st.warning('Please click the "Cell Inputs" tab above to start your new experiment.')
     st.session_state['show_cell_inputs_prompt'] = False
 
-# Create tabs - include Master Table and Comparison tabs if a project is selected
+# Create tabs - Dashboard is always visible, others depend on project selection
 current_project_id = st.session_state.get('current_project_id')
 if current_project_id:
-    tab_inputs, tab1, tab2, tab_comparison, tab_master = st.tabs(["🧪 Cell Inputs", "📈 Plots", "📤 Export", "🔄 Comparison", "📋 Master Table"])
+    tab_dashboard, tab_inputs, tab1, tab2, tab_comparison, tab_master = st.tabs([
+        "📊 Dashboard", "Cell Inputs", "Plots", "Export", "Comparison", "Master Table"
+    ])
 else:
-    tab_inputs, tab1, tab2 = st.tabs(["🧪 Cell Inputs", "📈 Plots", "📤 Export"])
+    tab_dashboard, tab_inputs, tab1, tab2 = st.tabs([
+        "📊 Dashboard", "Cell Inputs", "Plots", "Export"
+    ])
     tab_comparison = None
     tab_master = None
+
+# --- Dashboard Tab ---
+with tab_dashboard:
+    st.header("📊 Battery Testing Dashboard")
+    
+    # Render filter controls in sidebar
+    filter_params = render_filter_controls()
+    
+    # Cache dashboard data for 60 seconds to improve performance
+    @st.cache_data(ttl=60, show_spinner=False)
+    def load_dashboard_data(user_id: str, filter_params_json: str):
+        """Load all dashboard data with caching."""
+        import json
+        filters = json.loads(filter_params_json)
+        
+        # Fetch all data
+        stats = get_global_statistics(user_id, filters)
+        projects = get_project_summaries(user_id, filters)
+        top_cells = get_top_performers(
+            user_id, 
+            metric='retention',
+            top_n=5,
+            min_cycles=filters.get('min_cycles', 100),
+            filter_params=filters
+        )
+        activity = get_recent_activity(user_id, days=30)
+        cells_data = get_cells_with_cycle_data(
+            user_id,
+            min_cycles=filters.get('min_cycles', 100),
+            filter_params=filters
+        )
+        
+        # Generate insights
+        dashboard_data = {
+            'stats': stats,
+            'projects': projects,
+            'top_cells': top_cells
+        }
+        insights = generate_insights(user_id, dashboard_data)
+        
+        return {
+            'stats': stats,
+            'projects': projects,
+            'top_cells': top_cells,
+            'activity': activity,
+            'cells_data': cells_data,
+            'insights': insights
+        }
+    
+    # Load data with spinner
+    with st.spinner("Loading dashboard data..."):
+        # Convert filter_params to JSON for caching
+        import json
+        filter_json = json.dumps(filter_params, default=str)
+        
+        try:
+            data = load_dashboard_data(TEST_USER_ID, filter_json)
+        except Exception as e:
+            st.error(f"Error loading dashboard data: {str(e)}")
+            st.stop()
+    
+    # Header section with key metrics
+    st.subheader("📈 Overview")
+    render_dashboard_header(data['stats'])
+    
+    st.markdown("---")
+    
+    # Insights section
+    st.subheader("💡 Actionable Insights")
+    with st.expander("View Recommendations & Alerts", expanded=True):
+        render_insights_alerts(data['insights'])
+    
+    st.markdown("---")
+    
+    # Two-column layout for project summary and top performers
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("📁 Project Summary")
+        render_project_summary_grid(data['projects'])
+    
+    with col2:
+        st.subheader("🏆 Top Performers")
+        
+        # Metric selector for top performers
+        metric_options = {
+            'retention': 'Capacity Retention',
+            'fade_rate': 'Fade Rate',
+            'efficiency': 'Coulombic Efficiency'
+        }
+        selected_metric = st.selectbox(
+            "Sort by:",
+            options=list(metric_options.keys()),
+            format_func=lambda x: metric_options[x],
+            key='dashboard_metric_selector'
+        )
+        
+        # Reload top performers with selected metric
+        top_cells_by_metric = get_top_performers(
+            TEST_USER_ID,
+            metric=selected_metric,
+            top_n=5,
+            min_cycles=filter_params.get('min_cycles', 100),
+            filter_params=filter_params
+        )
+        
+        render_top_performers_table(top_cells_by_metric)
+    
+    st.markdown("---")
+    
+    # Visualizations section
+    st.subheader("📊 Performance Visualizations")
+    
+    # Tabs for different plots
+    viz_tabs = st.tabs(["Retention Curves", "Fade Analysis", "Project Comparison", "Activity"])
+    
+    with viz_tabs[0]:
+        st.markdown("#### Capacity Retention vs. Cycle Number")
+        
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            show_avg = st.checkbox("Show Average", value=True, key='dashboard_show_avg')
+            max_cells = st.slider(
+                "Max cells per project",
+                min_value=5,
+                max_value=20,
+                value=10,
+                key='dashboard_max_cells'
+            )
+        
+        with col1:
+            if data['cells_data']:
+                fig_retention = plot_multi_project_retention(
+                    data['cells_data'],
+                    group_by='project',
+                    show_average=show_avg,
+                    max_cells_per_group=max_cells
+                )
+                st.plotly_chart(fig_retention, use_container_width=True)
+            else:
+                st.info("No cycling data available. Upload experiments to see retention curves.")
+    
+    with viz_tabs[1]:
+        st.markdown("#### Fade Rate Analysis")
+        
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            x_axis_options = {
+                'initial_capacity': 'Initial Capacity',
+                'temperature': 'Temperature',
+                'c_rate': 'C-Rate'
+            }
+            x_axis = st.selectbox(
+                "X-axis:",
+                options=list(x_axis_options.keys()),
+                format_func=lambda x: x_axis_options[x],
+                key='dashboard_fade_x_axis'
+            )
+        
+        with col1:
+            if data['cells_data']:
+                fig_fade = plot_fade_rate_scatter(
+                    data['cells_data'],
+                    x_axis=x_axis,
+                    color_by='project'
+                )
+                st.plotly_chart(fig_fade, use_container_width=True)
+            else:
+                st.info("No cycling data available for fade analysis.")
+    
+    with viz_tabs[2]:
+        st.markdown("#### Project Performance Comparison")
+        
+        if data['projects']:
+            fig_comparison = plot_project_comparison_bar(data['projects'])
+            st.plotly_chart(fig_comparison, use_container_width=True)
+        else:
+            st.info("No project data available.")
+    
+    with viz_tabs[3]:
+        st.markdown("#### Recent Activity Timeline")
+        
+        if data['activity']:
+            fig_activity = plot_activity_timeline(data['activity'])
+            st.plotly_chart(fig_activity, use_container_width=True)
+        else:
+            st.info("No activity in the last 30 days.")
 
 # --- Cell Inputs Tab ---
 with tab_inputs:
@@ -834,6 +1100,7 @@ with tab_inputs:
                 key.startswith('formation_cycles_') or
                 key.startswith('electrolyte_') or
                 key.startswith('substrate_') or
+                key.startswith('separator_') or  # Added separator_
                 key.startswith('formulation_data_') or 
                 key.startswith('formulation_saved_') or
                 key.startswith('component_dropdown_') or
@@ -843,6 +1110,7 @@ with tab_inputs:
                 key.startswith('delete_row_') or
                 key.startswith('multi_file_upload_') or
                 key.startswith('assign_all_cells_') or
+                key.startswith('use_same_formulation_') or  # Added this
                 key == 'datasets' or
                 key == 'processed_data_cache' or
                 key == 'cache_key'):
@@ -853,7 +1121,7 @@ with tab_inputs:
             del st.session_state[key]
         
         st.session_state['start_new_experiment'] = False
-    st.header("🧪 Cell Inputs & Experiment Setup")
+    st.header("Cell Inputs & Experiment Setup")
     st.markdown("---")
     
     # Check if we have a loaded experiment
@@ -868,9 +1136,9 @@ with tab_inputs:
         
         # Show different message for experiments with no cells (e.g., duplicates)
         if len(cells_data) == 0:
-            st.info(f"📝 Setting up experiment: **{loaded_experiment['experiment_name']}** (ready for data upload)")
+            st.info(f"Setting up experiment: **{loaded_experiment['experiment_name']}** (ready for data upload)")
         else:
-            st.info(f"📊 Editing experiment: **{loaded_experiment['experiment_name']}**")
+            st.info(f"Editing experiment: **{loaded_experiment['experiment_name']}**")
         
         # Load existing values from the experiment
         current_experiment_name = loaded_experiment['experiment_name']
@@ -926,7 +1194,7 @@ with tab_inputs:
         st.session_state['datasets'] = datasets
         
     elif is_new_experiment:
-        st.info(f"📝 Creating a new experiment in project: **{st.session_state['current_project_name']}**")
+        st.info(f"Creating a new experiment in project: **{st.session_state['current_project_name']}**")
         current_experiment_name = ""
         current_experiment_date = date.today()
         current_disc_diameter = 15
@@ -937,7 +1205,7 @@ with tab_inputs:
         st.session_state['pressed_thickness'] = 0.0
         st.session_state['experiment_notes'] = ''
     else:
-        st.info("📝 Create a new experiment or load an existing one from the sidebar")
+        st.info("Create a new experiment or load an existing one from the sidebar")
         current_experiment_name = ""
         current_experiment_date = date.today()
         current_disc_diameter = 15
@@ -975,7 +1243,7 @@ with tab_inputs:
     
     # Enhanced Full Cell format selection
     if project_type == "Full Cell":
-        st.markdown("#### 🔋 Cell Configuration")
+        st.markdown("#### Cell Configuration")
         
         # Cell format dropdown
         format_options = ["Coin", "Pouch", "Cylindrical", "Prismatic"]
@@ -1164,22 +1432,22 @@ with tab_inputs:
                         st.rerun()
                 
                 with col_btn2:
-                    if st.button("🗑️ Remove Cell", key=f'remove_cell_loaded_0'):
+                    if st.button("Remove Cell", key=f'remove_cell_loaded_0'):
                         st.session_state[f'confirm_remove_cell_loaded_0'] = True
 
                 # Show excluded status
                 if datasets[0].get('excluded', False):
-                    st.warning("⚠️ This cell is excluded from analysis")
+                    st.warning("This cell is excluded from analysis")
                     if st.button("✅ Include Cell", key=f'include_cell_loaded_0'):
                         datasets[0]['excluded'] = False
                         st.session_state['datasets'] = datasets  # Save to session state
                         st.rerun()
 
                 if st.session_state.get(f'confirm_remove_cell_loaded_0', False):
-                    st.error("⚠️ **PERMANENT DELETION** - This will permanently delete the cell data and cannot be undone!")
+                    st.error("**PERMANENT DELETION** - This will permanently delete the cell data and cannot be undone!")
                     col_confirm1, col_confirm2 = st.columns(2)
                     with col_confirm1:
-                        if st.button("🗑️ Delete Permanently", key=f'confirm_yes_loaded_0', type="primary"):
+                        if st.button("Delete Permanently", key=f'confirm_yes_loaded_0', type="primary"):
                             # Actually remove the cell from the datasets
                             datasets.pop(0)
                             st.session_state[f'confirm_remove_cell_loaded_0'] = False
@@ -1302,22 +1570,22 @@ with tab_inputs:
                                     st.rerun()
                             
                             with col_btn2:
-                                if st.button("🗑️ Remove Cell", key=f'remove_cell_loaded_{i}'):
+                                if st.button("Remove Cell", key=f'remove_cell_loaded_{i}'):
                                     st.session_state[f'confirm_remove_cell_loaded_{i}'] = True
 
                             # Show excluded status
                             if dataset.get('excluded', False):
-                                st.warning("⚠️ This cell is excluded from analysis")
+                                st.warning("This cell is excluded from analysis")
                                 if st.button("✅ Include Cell", key=f'include_cell_loaded_{i}'):
                                     datasets[i]['excluded'] = False
                                     st.session_state['datasets'] = datasets  # Save to session state
                                     st.rerun()
 
                             if st.session_state.get(f'confirm_remove_cell_loaded_{i}', False):
-                                st.error("⚠️ **PERMANENT DELETION** - This will permanently delete the cell data and cannot be undone!")
+                                st.error("**PERMANENT DELETION** - This will permanently delete the cell data and cannot be undone!")
                                 col_confirm1, col_confirm2 = st.columns(2)
                                 with col_confirm1:
-                                    if st.button("🗑️ Delete Permanently", key=f'confirm_yes_loaded_{i}', type="primary"):
+                                    if st.button("Delete Permanently", key=f'confirm_yes_loaded_{i}', type="primary"):
                                         # Actually remove the cell from the datasets
                                         datasets.pop(i)
                                         st.session_state[f'confirm_remove_cell_loaded_{i}'] = False
@@ -1430,22 +1698,22 @@ with tab_inputs:
                             st.rerun()
                     
                     with col_btn2:
-                        if st.button("🗑️ Remove Cell", key=f'remove_cell_single_{i}'):
+                        if st.button("Remove Cell", key=f'remove_cell_single_{i}'):
                             st.session_state[f'confirm_remove_cell_single_{i}'] = True
 
                     # Show excluded status
                     if dataset.get('excluded', False):
-                        st.warning("⚠️ This cell is excluded from analysis")
+                        st.warning("This cell is excluded from analysis")
                         if st.button("✅ Include Cell", key=f'include_cell_single_{i}'):
                             datasets[i]['excluded'] = False
                             st.session_state['datasets'] = datasets  # Save to session state
                             st.rerun()
 
                     if st.session_state.get(f'confirm_remove_cell_single_{i}', False):
-                        st.error("⚠️ **PERMANENT DELETION** - This will permanently delete the cell data and cannot be undone!")
+                        st.error("**PERMANENT DELETION** - This will permanently delete the cell data and cannot be undone!")
                         col_confirm1, col_confirm2 = st.columns(2)
                         with col_confirm1:
-                            if st.button("🗑️ Delete Permanently", key=f'confirm_yes_single_{i}', type="primary"):
+                            if st.button("Delete Permanently", key=f'confirm_yes_single_{i}', type="primary"):
                                 # Actually remove the cell from the datasets  
                                 datasets.pop(i)
                                 st.session_state[f'confirm_remove_cell_single_{i}'] = False
@@ -1471,7 +1739,7 @@ with tab_inputs:
                     dataset.update(edited_dataset)
     else:
         # New experiment flow - use unified render_cell_inputs
-        st.markdown("#### 📁 Upload Cell Data Files")
+        st.markdown("#### Upload Cell Data Files")
         
         # For duplicated experiments, pre-populate defaults from original experiment
         if loaded_experiment:
@@ -1479,7 +1747,7 @@ with tab_inputs:
             default_cell_values = experiment_data.get('default_cell_values', {})
             
             if default_cell_values:
-                st.info("ℹ️ Using default values from the original experiment. You can modify these as needed.")
+                st.info("Using default values from the original experiment. You can modify these as needed.")
                 # Pre-populate session state with default values from the original experiment
                 if 'loading_0' not in st.session_state:
                     st.session_state['loading_0'] = default_cell_values.get('loading', 20.0)
@@ -1500,8 +1768,18 @@ with tab_inputs:
                         st.session_state['formulation_data_0_main_cell_inputs'] = formulation
         
         current_project_id = st.session_state.get('current_project_id')
-        datasets = render_cell_inputs(context_key='main_cell_inputs', project_id=current_project_id, get_components_func=get_project_components)
+        # Pass experiment name for auto-generating cell names with roman numerals
+        # Use experiment_name_input directly (defined above) for real-time updates
+        datasets, full_cell_data = render_cell_inputs(
+            context_key='main_cell_inputs', 
+            project_id=current_project_id, 
+            get_components_func=get_project_components,
+            experiment_name=experiment_name_input if experiment_name_input else '',
+            project_type=project_type
+        )
         st.session_state['datasets'] = datasets
+        if full_cell_data:
+            st.session_state['full_cell_data'] = full_cell_data
         # Store original uploaded files separately to prevent loss
         if datasets:
             st.session_state['original_uploaded_files'] = [ds['file'] for ds in datasets if ds.get('file')]
@@ -1601,7 +1879,7 @@ with tab_inputs:
     # Save/Update experiment button
     st.markdown("---")
     if loaded_experiment:
-        if st.button("💾 Update Experiment", type="primary", use_container_width=True):
+        if st.button("Update Experiment", type="primary", use_container_width=True):
             # Update the loaded experiment with new values
             experiment_id = loaded_experiment['experiment_id']
             project_id = loaded_experiment['project_id']
@@ -1657,16 +1935,16 @@ with tab_inputs:
                                 try:
                                     first_qdis_old = original_df['Q Dis (mAh/g)'].iloc[0] if 'Q Dis (mAh/g)' in original_df.columns else 'N/A'
                                     first_qdis_new = updated_df['Q Dis (mAh/g)'].iloc[0] if 'Q Dis (mAh/g)' in updated_df.columns else 'N/A'
-                                    st.info(f"🔄 Recalculated gravimetric capacities for {new_testnum}")
-                                    st.info(f"   📊 Changes: Loading: {original_loading}→{new_loading}mg, Active: {original_active}→{new_active}%")
+                                    st.info(f"Recalculated gravimetric capacities for {new_testnum}")
+                                    st.info(f"   Changes: Loading: {original_loading}→{new_loading}mg, Active: {original_active}→{new_active}%")
                                     if isinstance(first_qdis_old, (int, float)) and isinstance(first_qdis_new, (int, float)):
-                                        st.info(f"   📈 First Cycle Q Dis: {first_qdis_old:.2f}→{first_qdis_new:.2f} mAh/g")
+                                        st.info(f"   First Cycle Q Dis: {first_qdis_old:.2f}→{first_qdis_new:.2f} mAh/g")
                                     else:
-                                        st.info(f"   📈 First Cycle Q Dis: {first_qdis_old}→{first_qdis_new} mAh/g")
+                                        st.info(f"   First Cycle Q Dis: {first_qdis_old}→{first_qdis_new} mAh/g")
                                 except Exception:
-                                    st.info(f"🔄 Recalculated gravimetric capacities for {new_testnum}")
+                                    st.info(f"Recalculated gravimetric capacities for {new_testnum}")
                         except Exception as e:
-                            st.warning(f"⚠️ Could not recalculate capacities for {new_testnum}: {str(e)}")
+                            st.warning(f"Could not recalculate capacities for {new_testnum}: {str(e)}")
                     
                     updated_cell = original_cell.copy()
                     
@@ -1684,9 +1962,9 @@ with tab_inputs:
                                 formulation=dataset['formulation']
                             )
                             updated_cell['porosity'] = porosity_data['porosity']
-                            st.info(f"   🔬 Recalculated porosity: {porosity_data['porosity']*100:.1f}%")
+                            st.info(f"   Recalculated porosity: {porosity_data['porosity']*100:.1f}%")
                         except Exception as e:
-                            st.warning(f"   ⚠️ Could not recalculate porosity for {new_testnum}: {str(e)}")
+                            st.warning(f"   Could not recalculate porosity for {new_testnum}: {str(e)}")
                     
                     # Read other widget values too
                     widget_electrolyte = st.session_state.get(f'edit_electrolyte_{i}') or st.session_state.get(f'edit_single_electrolyte_{i}')
@@ -1746,16 +2024,16 @@ with tab_inputs:
                                         formulation=dataset['formulation']
                                     )
                                     new_cell['porosity'] = porosity_data['porosity']
-                                    st.info(f"   🔬 Calculated porosity for {cell_name}: {porosity_data['porosity']*100:.1f}%")
+                                    st.info(f"   Calculated porosity for {cell_name}: {porosity_data['porosity']*100:.1f}%")
                                 except Exception as e:
-                                    st.warning(f"   ⚠️ Could not calculate porosity for {cell_name}: {str(e)}")
+                                    st.warning(f"   Could not calculate porosity for {cell_name}: {str(e)}")
                             
                             updated_cells_data.append(new_cell)
-                            st.info(f"✅ Processed new cell: {cell_name}")
+                            st.info(f"Processed new cell: {cell_name}")
                         else:
-                            st.warning(f"⚠️ Failed to process data for {cell_name}. Skipping this cell.")
+                            st.warning(f"Failed to process data for {cell_name}. Skipping this cell.")
                     except Exception as e:
-                        st.error(f"❌ Error processing {cell_name}: {str(e)}")
+                        st.error(f"Error processing {cell_name}: {str(e)}")
                         continue
             
             try:
@@ -1819,24 +2097,24 @@ with tab_inputs:
                         # Set a flag to indicate that calculations have been updated
                         st.session_state['calculations_updated'] = True
                         st.session_state['update_timestamp'] = datetime.now()
-                        st.success("✅ Experiment updated successfully! All calculated values have been refreshed.")
-                        st.info("🔄 Summary tables, plots, and Master Table will reflect the updated values.")
+                        st.success("Experiment updated successfully! All calculated values have been refreshed.")
+                        st.info("Summary tables, plots, and Master Table will reflect the updated values.")
                     else:
-                        st.success("✅ Experiment updated successfully!")
+                        st.success("Experiment updated successfully!")
                 except Exception as reload_error:
-                    st.warning(f"⚠️ Experiment updated but failed to reload data: {str(reload_error)}")
+                    st.warning(f"Experiment updated but failed to reload data: {str(reload_error)}")
                     st.success("✅ Experiment updated successfully!")
                 
                 st.rerun()
             except Exception as e:
-                st.error(f"❌ Error updating experiment: {str(e)}")
+                st.error(f"Error updating experiment: {str(e)}")
     
     elif is_new_experiment:
         # Save new experiment (only if we have valid data and a selected project)
         valid_datasets = [ds for ds in datasets if not ds.get('excluded', False) and ds.get('file') and ds.get('loading', 0) > 0 and 0 < ds.get('active', 0) <= 100]
         
         if valid_datasets and st.session_state.get('current_project_id'):
-            if st.button("💾 Save New Experiment", type="primary", use_container_width=True):
+            if st.button("Save New Experiment", type="primary", use_container_width=True):
                 current_project_id = st.session_state['current_project_id']
                 current_project_name = st.session_state['current_project_name']
                 
@@ -1878,9 +2156,9 @@ with tab_inputs:
                                 'excluded': ds.get('excluded', False)  # Add this line
                             })
                         else:
-                            st.warning(f"⚠️ Failed to process data for {cell_name}. Skipping this cell.")
+                            st.warning(f"Failed to process data for {cell_name}. Skipping this cell.")
                     except Exception as e:
-                        st.error(f"❌ Error processing {cell_name}: {str(e)}")
+                        st.error(f"Error processing {cell_name}: {str(e)}")
                         continue
                 
                 # Save the experiment
@@ -1912,7 +2190,7 @@ with tab_inputs:
                                 experiment_notes=experiment_notes,
                                 cell_format_data=cell_format_data
                             )
-                            st.success(f"🔄 Updated experiment '{exp_name}' in project '{current_project_name}'!")
+                            st.success(f"Updated experiment '{exp_name}' in project '{current_project_name}'!")
                         else:
                             # Prepare cell format data for Full Cell projects
                             cell_format_data = {}
@@ -1937,18 +2215,18 @@ with tab_inputs:
                                 experiment_notes=experiment_notes,
                                 cell_format_data=cell_format_data
                             )
-                            st.success(f"✅ Saved experiment '{exp_name}' with {len(cells_data)} cells in project '{current_project_name}'!")
+                            st.success(f"Saved experiment '{exp_name}' with {len(cells_data)} cells in project '{current_project_name}'!")
                         
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Failed to save experiment: {str(e)}")
+                        st.error(f"Failed to save experiment: {str(e)}")
                 else:
-                    st.error("❌ No valid cell data to save. Please check your files and try again.")
+                    st.error("No valid cell data to save. Please check your files and try again.")
         
         elif valid_datasets and not st.session_state.get('current_project_id'):
-            st.warning("⚠️ Please select a project in the sidebar before saving the experiment.")
+            st.warning("Please select a project in the sidebar before saving the experiment.")
         elif not valid_datasets:
-            st.info("ℹ️ Upload cell data files and enter valid parameters to save an experiment.")
+            st.info("Upload cell data files and enter valid parameters to save an experiment.")
 
 # --- Data Preprocessing Section ---
 # This section is now handled in the Cell Inputs tab
@@ -1958,7 +2236,7 @@ with tab_inputs:
 loaded_experiment = st.session_state.get('loaded_experiment')
 if loaded_experiment:
     st.markdown("---")
-    st.markdown(f"### 📊 Loaded Experiment: {loaded_experiment['experiment_name']}")
+    st.markdown(f"### Loaded Experiment: {loaded_experiment['experiment_name']}")
     
     # Convert saved JSON data back to DataFrames
     loaded_dfs = []
@@ -2064,7 +2342,7 @@ if loaded_experiment:
         # Use loaded data for analysis
         dfs = loaded_dfs
         ready = True
-        st.success(f"✅ Loaded {len(loaded_dfs)} cell(s) from saved experiment")
+        st.success(f"Loaded {len(loaded_dfs)} cell(s) from saved experiment")
         
         # Update datasets in session state to reflect any widget changes
         # This ensures Summary tables and other components also show updated values
@@ -2088,7 +2366,7 @@ if loaded_experiment:
             and a capacity vs cycle plot image.
             """)
             
-            if st.button("📋 Generate Summary", type="primary", use_container_width=True, 
+            if st.button("Generate Summary", type="primary", use_container_width=True, 
                          key=f'llm_summary_btn_{experiment_id}'):
                 with st.spinner("Generating summary and plot..."):
                     try:
@@ -2120,7 +2398,7 @@ if loaded_experiment:
                             
                             # Download button for plot
                             st.download_button(
-                                label="📥 Download Plot Image",
+                                label="Download Plot Image",
                                 data=img_data,
                                 file_name=f"{loaded_experiment['experiment_name']}_capacity_plot.png",
                                 mime="image/png",
@@ -2145,7 +2423,7 @@ if loaded_experiment:
                         st.session_state[f'llm_summary_plot_{experiment_id}'] = plot_image_base64
                         st.session_state[f'llm_summary_stats_{experiment_id}'] = stats
                         
-                        st.success("✅ Summary generated! Copy the text above to use with your LLM.")
+                        st.success("Summary generated! Copy the text above to use with your LLM.")
                         
                     except Exception as e:
                         st.error(f"Error generating summary: {str(e)}")
@@ -2154,7 +2432,7 @@ if loaded_experiment:
             # Show cached summary if available
             cached_summary = st.session_state.get(f'llm_summary_text_{experiment_id}')
             if cached_summary:
-                if st.button("📄 View Last Summary", key=f'view_summary_{experiment_id}'):
+                if st.button("View Last Summary", key=f'view_summary_{experiment_id}'):
                     cached_stats = st.session_state.get(f'llm_summary_stats_{experiment_id}', {})
                     cached_plot = st.session_state.get(f'llm_summary_plot_{experiment_id}')
                     
@@ -2186,7 +2464,7 @@ if loaded_experiment:
                     )
                     st.code(cached_summary, language=None)
     else:
-        st.error("❌ Failed to load experiment data")
+        st.error("Failed to load experiment data")
         ready = False
 
 # Determine if we have data ready for analysis
@@ -2244,7 +2522,7 @@ else:
                     if sample:  # File has content
                         safe_datasets.append(ds)
                 except Exception as e:
-                    st.warning(f"⚠️ Skipping invalid file: {ds.get('file', {}).get('name', 'Unknown')} - {str(e)}")
+                    st.warning(f"Skipping invalid file: {ds.get('file', {}).get('name', 'Unknown')} - {str(e)}")
                     continue
             
             if safe_datasets:
@@ -2266,16 +2544,22 @@ else:
                 file_types = [d.get('file_type', 'Unknown') for d in dfs]
                 biologic_count = file_types.count('biologic_csv')
                 neware_count = file_types.count('neware_xlsx')
+                mti_count = file_types.count('mti_xlsx')
                 
-                if biologic_count > 0 and neware_count > 0:
-                    st.info(f"📁 Processed {len(dfs)} files: {biologic_count} Biologic CSV file(s) and {neware_count} Neware XLSX file(s)")
-                elif biologic_count > 0:
-                    st.info(f"📁 Processed {biologic_count} Biologic CSV file(s)")
-                elif neware_count > 0:
-                    st.info(f"📁 Processed {neware_count} Neware XLSX file(s)")
+                # Build info message about processed files
+                file_type_parts = []
+                if biologic_count > 0:
+                    file_type_parts.append(f"{biologic_count} Biologic CSV file(s)")
+                if neware_count > 0:
+                    file_type_parts.append(f"{neware_count} Neware XLSX file(s)")
+                if mti_count > 0:
+                    file_type_parts.append(f"{mti_count} MTI XLSX file(s)")
+                
+                if file_type_parts:
+                    st.info(f"Processed {len(dfs)} files: {', '.join(file_type_parts)}")
             else:
                 dfs = []
-                st.error("❌ No valid files found for processing.")
+                st.error("No valid files found for processing.")
             
             # Cache the processed data
             st.session_state['processed_data_cache'] = dfs
@@ -2669,21 +2953,140 @@ if ready:
             # Display summary statistics table
             from ui_components import display_summary_stats
             display_summary_stats(dfs, disc_area_cm2, show_average_col, group_assignments, group_names)
+        
+        # --- Full Cell Specific Plots ---
+        if project_type == 'Full Cell' and ready and dfs:
+            st.markdown("---")
+            st.header("🔋 Full Cell Performance Analysis")
+            st.info("📊 Device-level performance metrics optimized for Full Cell characterization")
+            
+            # High-Precision Coulombic Efficiency Plot
+            st.subheader("⚡ High-Precision Coulombic Efficiency Tracking")
+            st.markdown("High-precision CE tracking for cycle life prediction (typically plotted in 99-100% range)")
+            
+            ce_col1, ce_col2 = st.columns(2)
+            with ce_col1:
+                ce_y_min = st.number_input(
+                    'CE Y-axis Min (%)',
+                    min_value=90.0,
+                    max_value=100.0,
+                    value=99.0,
+                    step=0.1,
+                    key='ce_y_min',
+                    help="Minimum Y-axis value for CE plot"
+                )
+            with ce_col2:
+                ce_y_max = st.number_input(
+                    'CE Y-axis Max (%)',
+                    min_value=90.0,
+                    max_value=100.0,
+                    value=100.0,
+                    step=0.1,
+                    key='ce_y_max',
+                    help="Maximum Y-axis value for CE plot"
+                )
+            
+            try:
+                from plotting import plot_coulombic_efficiency_precision
+                ce_fig = plot_coulombic_efficiency_precision(
+                    dfs, show_lines, remove_last_cycle, show_graph_title, experiment_name,
+                    remove_markers=remove_markers, hide_legend=hide_legend, 
+                    cycle_filter=cycle_filter, custom_colors=custom_colors,
+                    y_axis_min=ce_y_min, y_axis_max=ce_y_max
+                )
+                st.pyplot(ce_fig)
+            except Exception as e:
+                st.error(f"Error plotting Coulombic Efficiency: {e}")
+            
+            st.markdown("---")
+            
+            # Energy Efficiency Plot
+            st.subheader("⚡ Energy Efficiency")
+            st.markdown("Energy efficiency (E_discharge / E_charge) provides insights into voltage polarization and cycle life")
+            
+            try:
+                from plotting import plot_energy_efficiency
+                ee_fig = plot_energy_efficiency(
+                    dfs, show_lines, remove_last_cycle, show_graph_title, experiment_name,
+                    remove_markers=remove_markers, hide_legend=hide_legend, 
+                    cycle_filter=cycle_filter, custom_colors=custom_colors
+                )
+                st.pyplot(ee_fig)
+            except Exception as e:
+                st.error(f"Error plotting Energy Efficiency: {e}")
+            
+            st.markdown("---")
+            
+            # N/P Ratio Sensitivity Analysis
+            st.subheader("📊 N/P Ratio Sensitivity Analysis")
+            
+            # Calculate N/P ratios for current experiment if Full Cell data is available
+            full_cell_data = st.session_state.get('full_cell_data')
+            if full_cell_data and dfs:
+                st.markdown("**Current Experiment N/P Ratio:**")
+                
+                # Calculate N/P ratio from formation data for each cell
+                from data_analysis import calculate_np_ratio_from_formation, validate_np_ratio
+                
+                np_ratios_calculated = []
+                for i, d in enumerate(dfs):
+                    df = d['df']
+                    cell_name = d.get('testnum', f'Cell {i+1}')
+                    
+                    # Get anode/cathode masses from full_cell_data
+                    anode_mass = full_cell_data.get('anode_mass')
+                    cathode_mass = full_cell_data.get('cathode_mass')
+                    
+                    np_ratio = calculate_np_ratio_from_formation(
+                        df, 
+                        formation_cycles=formation_cycles,
+                        anode_mass=anode_mass,
+                        cathode_mass=cathode_mass
+                    )
+                    
+                    if np_ratio:
+                        np_ratios_calculated.append((cell_name, np_ratio))
+                        warning_level, message = validate_np_ratio(np_ratio)
+                        
+                        if warning_level == 'critical':
+                            st.error(f"**{cell_name}**: {message}")
+                        elif warning_level == 'warning':
+                            st.warning(f"**{cell_name}**: {message}")
+                        else:
+                            st.success(f"**{cell_name}**: {message}")
+                
+                # Show average N/P ratio if multiple cells
+                if len(np_ratios_calculated) > 1:
+                    avg_np_ratio = sum(r[1] for r in np_ratios_calculated) / len(np_ratios_calculated)
+                    st.info(f"**Average N/P Ratio**: {avg_np_ratio:.3f}")
+                    
+                    warning_level, message = validate_np_ratio(avg_np_ratio)
+                    if warning_level == 'critical':
+                        st.error(f"⚠️ {message}")
+                    elif warning_level == 'warning':
+                        st.warning(f"⚠️ {message}")
+                
+                st.markdown("---")
+                st.markdown("**N/P Ratio Sensitivity Plot:**")
+                st.info("📝 To create N/P ratio sensitivity plots, compare multiple experiments with different N/P ratios using the Comparison tab")
+            else:
+                st.info("💡 Enter Full Cell mass balance data in the Cell Inputs tab to calculate N/P ratios from formation data")
+    
     with tab2:
-        st.header("📤 Export & Download")
+        st.header("Export & Download")
         st.markdown("---")
         
         # Only show export options if data is ready
         if ready:
-            st.subheader("🔧 PowerPoint Export Options")
+            st.subheader("PowerPoint Export Options")
             st.markdown("*Configure what to include in your PowerPoint slide*")
             
             # Toggle Controls for Slide Content
-            with st.expander("📋 Slide Content Selection", expanded=True):
+            with st.expander("Slide Content Selection", expanded=True):
                 content_col1, content_col2, content_col3 = st.columns(3)
                 
                 with content_col1:
-                    st.markdown("**📊 Data & Tables**")
+                    st.markdown("**Data & Tables**")
                     include_summary_table = st.checkbox(
                         "Main summary table",
                         value=True,
@@ -2692,7 +3095,7 @@ if ready:
                     )
                     
                 with content_col2:
-                    st.markdown("**📈 Plots**")
+                    st.markdown("**Plots**")
                     include_main_plot = st.checkbox(
                         "Capacity comparison plot",
                         value=True,
@@ -2707,7 +3110,7 @@ if ready:
                     )
                     
                 with content_col3:
-                    st.markdown("**📝 Additional Data**")
+                    st.markdown("**Additional Data**")
                     include_notes = st.checkbox(
                         "Experiment notes",
                         value=True,
@@ -2729,7 +3132,7 @@ if ready:
             
             # Electrode Data Sub-toggles
             if include_electrode_data:
-                with st.expander("🔬 Electrode Data Details", expanded=True):
+                with st.expander("Electrode Data Details", expanded=True):
                     electrode_col1, electrode_col2, electrode_col3 = st.columns(3)
                     
                     with electrode_col1:
@@ -2774,13 +3177,13 @@ if ready:
             
             # Note: Retention plot settings are automatically synchronized with the Plots tab
             if include_retention_plot:
-                st.info("ℹ️ **Retention plot settings are automatically synchronized with the Plots tab**")
+                st.info("**Retention plot settings are automatically synchronized with the Plots tab**")
                 st.info("Configure retention plot parameters in the Plots tab, and they will be used in the export.")
             
             st.markdown("---")
             
             # Generate Preview Summary
-            st.subheader("📋 Slide Content Preview")
+            st.subheader("Slide Content Preview")
             
             content_items = []
             if include_summary_table:
@@ -2829,7 +3232,7 @@ if ready:
                         if formulation_data and len(formulation_data) > 0 and isinstance(formulation_data[0], dict):
                             st.write(f"**Keys in first item:** {list(formulation_data[0].keys())}")
                     else:
-                        st.warning("⚠️ No formulation data found in dfs or loaded_experiment")
+                        st.warning("No formulation data found in dfs or loaded_experiment")
             
             # Debug: Show summary table data and averages
             if include_summary_table and len(dfs) > 1:
@@ -2874,12 +3277,12 @@ if ready:
                 for item in content_items:
                     st.markdown(f"- {item}")
             else:
-                st.warning("⚠️ No content selected for export")
+                st.warning("No content selected for export")
             
             st.markdown("---")
             
             # PowerPoint Export
-            st.subheader("📤 Generate PowerPoint")
+            st.subheader("Generate PowerPoint")
             
             if content_items:  # Only show export if something is selected
                 from export import export_powerpoint
@@ -2924,9 +3327,9 @@ if ready:
                         hide_legend=st.session_state.get('hide_legend', False)
                     )
                     
-                    st.success("✅ PowerPoint generated successfully!")
+                    st.success("PowerPoint generated successfully!")
                     st.download_button(
-                        f"📥 Download PowerPoint: {pptx_file_name}",
+                        f"Download PowerPoint: {pptx_file_name}",
                         data=pptx_bytes,
                         file_name=pptx_file_name,
                         mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -2935,13 +3338,13 @@ if ready:
                     )
                     
                     # Show file details
-                    st.info(f"📄 **File:** {pptx_file_name}")
+                    st.info(f"**File:** {pptx_file_name}")
                     
                 except Exception as e:
-                    st.error(f"❌ Error generating PowerPoint: {str(e)}")
+                    st.error(f"Error generating PowerPoint: {str(e)}")
                     st.error("Please check your data and settings, then try again.")
             else:
-                st.info("👆 Please select at least one content item to include in the PowerPoint slide.")
+                st.info("Please select at least one content item to include in the PowerPoint slide.")
             
             st.markdown("---")
             
@@ -2951,7 +3354,7 @@ if ready:
                 st.subheader("📦 Export Entire Project")
                 st.markdown("*Export all experiments in the current project to a single PowerPoint file*")
                 
-                if st.button("🚀 Export Entire Project", type="secondary", use_container_width=True):
+                if st.button("Export Entire Project", type="secondary", use_container_width=True):
                     try:
                         from database import get_all_project_experiments_data, get_project_by_id
                         from export import export_powerpoint
@@ -2967,7 +3370,7 @@ if ready:
                         all_experiments_data = get_all_project_experiments_data(current_project_id)
                         
                         if not all_experiments_data:
-                            st.error("❌ No experiments found in this project.")
+                            st.error("No experiments found in this project.")
                         else:
                             # Sort by creation date (chronologically)
                             # Handle None values by using a far-future date for sorting
@@ -2989,7 +3392,7 @@ if ready:
                             
                             all_experiments_data.sort(key=get_sort_key)
                             
-                            st.info(f"📊 Found {len(all_experiments_data)} experiment(s). Generating slides...")
+                            st.info(f"Found {len(all_experiments_data)} experiment(s). Generating slides...")
                             
                             # Create a new presentation for the project
                             project_prs = Presentation()
@@ -3003,7 +3406,7 @@ if ready:
                             # Process each experiment
                             experiments_processed = 0
                             for exp_data in all_experiments_data:
-                                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes, cutoff_voltage_lower, cutoff_voltage_upper = exp_data
                                 
                                 try:
                                     # Parse experiment data
@@ -3066,7 +3469,7 @@ if ready:
                                         })
                                     
                                     if not exp_dfs:
-                                        st.warning(f"⚠️ Skipping {exp_name}: No valid cell data found.")
+                                        st.warning(f"Skipping {exp_name}: No valid cell data found.")
                                         continue
                                     
                                     # Add slides for this experiment to the project presentation
@@ -3109,7 +3512,7 @@ if ready:
                                     experiments_processed += 1
                                     
                                 except Exception as e:
-                                    st.warning(f"⚠️ Error processing experiment {exp_name}: {str(e)}")
+                                    st.warning(f"Error processing experiment {exp_name}: {str(e)}")
                                     import logging
                                     logging.error(f"Error processing experiment {exp_name}: {e}")
                                     continue
@@ -3120,9 +3523,9 @@ if ready:
                                 project_prs.save(project_bio)
                                 project_bio.seek(0)
                                 
-                                st.success(f"✅ Project export completed! Processed {experiments_processed} experiment(s).")
+                                st.success(f"Project export completed! Processed {experiments_processed} experiment(s).")
                                 st.download_button(
-                                    "📥 Download Project PowerPoint",
+                                    "Download Project PowerPoint",
                                     data=project_bio,
                                     file_name="project_summary.pptx",
                                     mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -3130,17 +3533,17 @@ if ready:
                                     use_container_width=True
                                 )
                             else:
-                                st.error("❌ No experiments could be processed for export.")
+                                st.error("No experiments could be processed for export.")
                     
                     except Exception as e:
-                        st.error(f"❌ Error exporting project: {str(e)}")
+                        st.error(f"Error exporting project: {str(e)}")
                         import traceback
                         st.error(traceback.format_exc())
             
             st.markdown("---")
             
             # Excel Export Section
-            st.subheader("📊 Excel Export")
+            st.subheader("Excel Export")
             st.markdown("*Download detailed data in Excel format*")
             
             from export import export_excel
@@ -3148,9 +3551,9 @@ if ready:
             try:
                 excel_bytes, excel_file_name = export_excel(dfs, show_average_performance, experiment_name)
                 
-                st.success("✅ Excel file ready for download!")
+                st.success("Excel file ready for download!")
                 st.download_button(
-                    f"📥 Download Excel: {excel_file_name}",
+                    f"Download Excel: {excel_file_name}",
                     data=excel_bytes,
                     file_name=excel_file_name,
                     mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -3158,13 +3561,13 @@ if ready:
                     use_container_width=True
                 )
                 
-                st.info(f"📄 **File:** {excel_file_name}")
+                st.info(f"**File:** {excel_file_name}")
                 
             except Exception as e:
-                st.error(f"❌ Error generating Excel file: {str(e)}")
+                st.error(f"Error generating Excel file: {str(e)}")
                 st.error("Please check your data and try again.")
         else:
-            st.info("📈 Upload and process data files to access export options.")
+            st.info("Upload and process data files to access export options.")
             st.markdown("""
             **Export Features:**
             - 📊 **PowerPoint:** Customizable slides with toggleable content
@@ -3191,7 +3594,7 @@ if tab_comparison and current_project_id:
             experiment_dict = {}
             
             for exp_data in all_experiments_data:
-                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes, cutoff_voltage_lower, cutoff_voltage_upper = exp_data
                 experiment_options.append(exp_name)
                 experiment_dict[exp_name] = exp_data
             
@@ -3214,7 +3617,7 @@ if tab_comparison and current_project_id:
                 
                 for exp_name in selected_experiments:
                     exp_data = experiment_dict[exp_name]
-                    exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                    exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes, cutoff_voltage_lower, cutoff_voltage_upper = exp_data
                     
                     try:
                         parsed_data = json.loads(data_json)
@@ -3395,7 +3798,7 @@ if tab_comparison and current_project_id:
                     experiments_plot_data = []
                     for exp_name in selected_experiments:
                         exp_data = experiment_dict[exp_name]
-                        exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                        exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes, cutoff_voltage_lower, cutoff_voltage_upper = exp_data
                         
                         try:
                             parsed_data = json.loads(data_json)
@@ -3771,7 +4174,7 @@ if tab_comparison and current_project_id:
                                         # Export option for table
                                         csv_data = filtered_df.to_csv(index=False)
                                         st.download_button(
-                                            label="📥 Download Table (CSV)",
+                                            label="Download Table (CSV)",
                                             data=csv_data,
                                             file_name=f"{selected_component.replace(' ', '_')}_comparison.csv",
                                             mime="text/csv"
@@ -3965,7 +4368,7 @@ if tab_comparison and current_project_id:
                                         # Export option for individual cells
                                         individual_csv = individual_df.to_csv(index=False)
                                         st.download_button(
-                                            label="📥 Download Individual Cells (CSV)",
+                                            label="Download Individual Cells (CSV)",
                                             data=individual_csv,
                                             file_name=f"{selected_component.replace(' ', '_')}_individual_cells.csv",
                                             mime="text/csv"
@@ -3997,7 +4400,7 @@ if tab_comparison and current_project_id:
 # --- Master Table Tab ---
 if tab_master and current_project_id:
     with tab_master:
-        st.header("📋 Master Table")
+        st.header("Master Table")
         current_project_name = st.session_state.get('current_project_name', 'Selected Project')
         st.markdown(f"**Project:** {current_project_name}")
         
@@ -4006,7 +4409,7 @@ if tab_master and current_project_id:
             update_time = st.session_state.get('update_timestamp')
             if update_time:
                 time_str = update_time.strftime("%H:%M:%S")
-                st.info(f"🔄 Data refreshed at {time_str} - Master table shows updated calculations!")
+                st.info(f"Data refreshed at {time_str} - Master table shows updated calculations!")
         
         st.markdown("---")
         
@@ -4014,14 +4417,14 @@ if tab_master and current_project_id:
         all_experiments_data = get_all_project_experiments_data(current_project_id)
         
         if not all_experiments_data:
-            st.info("📊 No experiments found in this project. Create experiments to see master table data.")
+            st.info("No experiments found in this project. Create experiments to see master table data.")
         else:
             # Process experiment data
             experiment_summaries = []
             individual_cells = []
             
             for exp_data in all_experiments_data:
-                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes = exp_data
+                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes, cutoff_voltage_lower, cutoff_voltage_upper = exp_data
                 
                 # If substrate or separator are None from database, we'll extract them from JSON data
                 extracted_substrate = substrate
@@ -4063,6 +4466,9 @@ if tab_master and current_project_id:
                                 cell_summary['electrolyte'] = cell_data.get('electrolyte', 'N/A')
                                 cell_summary['substrate'] = cell_data.get('substrate', 'N/A')
                                 cell_summary['separator'] = cell_data.get('separator', 'N/A')
+                                # Add cutoff voltages to cell summary
+                                cell_summary['cutoff_voltage_lower'] = cell_data.get('cutoff_voltage_lower')
+                                cell_summary['cutoff_voltage_upper'] = cell_data.get('cutoff_voltage_upper')
                                 # Add formulation data to cell summary
                                 if 'formulation' in cell_data:
                                     cell_summary['formulation_json'] = json.dumps(cell_data['formulation'])
@@ -4113,6 +4519,9 @@ if tab_master and current_project_id:
                                 exp_summary['electrolyte'] = experiment_cells[0].get('electrolyte', 'N/A')
                                 exp_summary['substrate'] = experiment_cells[0].get('substrate', 'N/A')
                                 exp_summary['separator'] = experiment_cells[0].get('separator', 'N/A')
+                                # Add cutoff voltages to experiment summary (use first cell's values as representative)
+                                exp_summary['cutoff_voltage_lower'] = experiment_cells[0].get('cutoff_voltage_lower')
+                                exp_summary['cutoff_voltage_upper'] = experiment_cells[0].get('cutoff_voltage_upper')
                             # Add experiment notes to experiment summary
                             exp_summary['experiment_notes'] = experiment_notes
                             experiment_summaries.append(exp_summary)
@@ -4142,6 +4551,9 @@ if tab_master and current_project_id:
                         cell_summary['electrolyte'] = electrolyte if electrolyte else 'N/A'
                         cell_summary['substrate'] = extracted_substrate if extracted_substrate else 'N/A'
                         cell_summary['separator'] = extracted_separator if extracted_separator else 'N/A'
+                        # Add cutoff voltages to cell summary
+                        cell_summary['cutoff_voltage_lower'] = cutoff_voltage_lower
+                        cell_summary['cutoff_voltage_upper'] = cutoff_voltage_upper
                         # Add formulation data to cell summary
                         if formulation_json:
                             cell_summary['formulation_json'] = formulation_json
@@ -4200,6 +4612,9 @@ if tab_master and current_project_id:
                         exp_summary['electrolyte'] = electrolyte if electrolyte else 'N/A'
                         exp_summary['substrate'] = extracted_substrate if extracted_substrate else 'N/A'
                         exp_summary['separator'] = extracted_separator if extracted_separator else 'N/A'
+                        # Add cutoff voltages to experiment summary
+                        exp_summary['cutoff_voltage_lower'] = cutoff_voltage_lower
+                        exp_summary['cutoff_voltage_upper'] = cutoff_voltage_upper
                         # Add porosity data from database if available, or recalculate if missing
                         if porosity is not None and porosity > 0:
                             exp_summary['porosity'] = porosity
@@ -4255,27 +4670,102 @@ if tab_master and current_project_id:
                     st.error(f"Error processing experiment {exp_name}: {str(e)}")
                     continue
             
+            # ===========================
+            # Automated Anomaly Detection & Flagging
+            # ===========================
+            from cell_flags import analyze_cell_for_flags, get_experiment_context
+            
+            all_flags = {}  # Dictionary mapping cell_name to list of flags
+            
+            if individual_cells:
+                # Build experiment context for statistical comparison
+                experiment_context = get_experiment_context(individual_cells)
+                
+                # Analyze each cell for anomalies
+                for exp_data in all_experiments_data:
+                    exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes, cutoff_voltage_lower, cutoff_voltage_upper = exp_data
+                    
+                    try:
+                        parsed_data = json.loads(data_json)
+                        
+                        # Check if this is a multi-cell experiment or single cell
+                        if 'cells' in parsed_data:
+                            # Multi-cell experiment
+                            cells_data = parsed_data['cells']
+                            disc_diameter = parsed_data.get('disc_diameter_mm', 15)
+                            disc_area_cm2 = np.pi * (disc_diameter / 2 / 10) ** 2
+                            
+                            for cell_data in cells_data:
+                                if cell_data.get('excluded', False):
+                                    continue
+                                try:
+                                    df = pd.read_json(StringIO(cell_data['data_json']))
+                                    cell_name = cell_data.get('test_number') or cell_data.get('cell_name', 'Unknown')
+                                    
+                                    # Find corresponding cell_summary from individual_cells
+                                    cell_summary = next((c for c in individual_cells if c['cell_name'] == cell_name), None)
+                                    
+                                    if cell_summary:
+                                        # Analyze cell for flags
+                                        flags = analyze_cell_for_flags(df, cell_summary, experiment_context)
+                                        all_flags[cell_name] = flags
+                                except Exception:
+                                    continue
+                        
+                        else:
+                            # Legacy single cell experiment
+                            df = pd.read_json(StringIO(data_json))
+                            cell_name = test_number or exp_name
+                            
+                            # Find corresponding cell_summary
+                            cell_summary = next((c for c in individual_cells if c['cell_name'] == cell_name), None)
+                            
+                            if cell_summary:
+                                # Analyze cell for flags
+                                flags = analyze_cell_for_flags(df, cell_summary, experiment_context)
+                                all_flags[cell_name] = flags
+                    
+                    except Exception:
+                        continue
+            
+            # Import flag display functions
+            from display_components import display_cell_flags_summary, display_detailed_flags_section
+            
             # Section 1: Average Cell Data per Experiment
-            with st.expander("### 📊 Section 1: Average Cell Data per Experiment", expanded=True):
-                if experiment_summaries:
-                    display_experiment_summaries_table(experiment_summaries)
-                else:
-                    st.info("No experiment summary data available.")
+            st.markdown("### 📊 Section 1: Experiment Summary")
+            if experiment_summaries:
+                exp_count = len(experiment_summaries)
+                st.markdown(f"**{exp_count} experiment(s)** in this project • Showing averaged data per experiment")
+                with st.expander("🎯 Customize & View Table", expanded=True):
+                    display_experiment_summaries_table(experiment_summaries, all_flags)
+            else:
+                st.info("💡 No experiment summary data available. Create experiments to see data here.")
             
             st.markdown("---")
             
             # Section 2: All Individual Cells Data
-            with st.expander("### 🧪 Section 2: All Individual Cells Data", expanded=False):
-                if individual_cells:
-                    display_individual_cells_table(individual_cells)
-                else:
-                    st.info("No individual cell data available.")
+            st.markdown("### 🧪 Section 2: Individual Cell Details")
+            if individual_cells:
+                cell_count = len(individual_cells)
+                st.markdown(f"**{cell_count} cell(s)** tracked • Detailed data for each individual cell")
+                with st.expander("🎯 Customize & View Table", expanded=False):
+                    display_individual_cells_table(individual_cells, all_flags)
+            else:
+                st.info("💡 No individual cell data available. Upload cell data to experiments to see details here.")
             
             st.markdown("---")
             
             # Section 3: Best Performing Cells Analysis
             with st.expander("### 🏅 Section 3: Best Performing Cells Analysis", expanded=True):
                 display_best_performers_analysis(individual_cells)
+            
+            st.markdown("---")
+            
+            # Automated Anomaly Detection & Flagging Section (at bottom for easy reference)
+            if all_flags:
+                display_cell_flags_summary(all_flags)
+                st.markdown("---")
+                display_detailed_flags_section(all_flags)
 
 # --- Data Preprocessing Section ---
 
