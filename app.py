@@ -61,6 +61,7 @@ from dashboard_plots import (
     plot_multi_project_retention, plot_fade_rate_scatter,
     plot_project_comparison_bar, plot_activity_timeline
 )
+from interactive_plots import plot_interactive_capacity, plot_interactive_retention
 
 # =============================
 # Battery Data Gravimetric Capacity Calculator App
@@ -2643,6 +2644,22 @@ if ready:
         group_curves = [compute_group_avg_curve(group_dfs[idx]) for idx in range(3)]
     # --- Main Tabs Content ---
     with tab1:
+        st.subheader("📈 Cycling Performance Plots")
+        
+        # Plot Style Toggle - Prominent at top
+        col_toggle, col_spacer = st.columns([3, 7])
+        with col_toggle:
+            plot_style = st.radio(
+                "Plot Style",
+                options=["📊 Interactive (Plotly)", "📉 Static (Matplotlib)"],
+                index=0,
+                horizontal=True,
+                help="Interactive plots allow zooming, panning, and hovering for details. Static plots are the traditional matplotlib charts.",
+                key="plot_style_toggle"
+            )
+        
+        use_interactive = plot_style.startswith("📊")
+        
         # Get formation cycles for reference cycle calculation
         formation_cycles = st.session_state.get('current_formation_cycles', 4)
         if ready and datasets:
@@ -2650,14 +2667,16 @@ if ready:
             if 'formation_cycles' in datasets[0]:
                 formation_cycles = datasets[0]['formation_cycles']
         
-        # Plot Controls
-        show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles, cycle_filter, y_axis_limits = render_toggle_section(dfs, enable_grouping=enable_grouping)
-        
-        # Color customization UI
-        custom_colors = render_experiment_color_customization(
-            dfs, experiment_name, show_average_performance, 
-            enable_grouping, group_names
-        )
+        # Simplified Plot Controls in expanders
+        with st.expander("🎛️ Plot Controls & Customization", expanded=False):
+            # Plot Controls
+            show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles, cycle_filter, y_axis_limits = render_toggle_section(dfs, enable_grouping=enable_grouping)
+            
+            # Color customization UI
+            custom_colors = render_experiment_color_customization(
+                dfs, experiment_name, show_average_performance, 
+                enable_grouping, group_names
+            )
         
         # Combined plot toggle
         show_combined_plot = st.checkbox(
@@ -2797,24 +2816,38 @@ if ready:
                 st.warning("No cycle data available. Please upload data files first.")
         else:
             # Separate plots (when combined toggle is disabled)
-            fig = plot_capacity_graph(
-                dfs, show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name,
-                show_average_performance, avg_line_toggles, remove_markers, hide_legend,
-                group_a_curve=(group_curves[0][0], group_curves[0][1]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][1] and group_plot_toggles.get("Group Q Dis", False) else None,
-                group_b_curve=(group_curves[1][0], group_curves[1][1]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][1] and group_plot_toggles.get("Group Q Dis", False) else None,
-                group_c_curve=(group_curves[2][0], group_curves[2][1]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][1] and group_plot_toggles.get("Group Q Dis", False) else None,
-                group_a_qchg=(group_curves[0][0], group_curves[0][2]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][2] and group_plot_toggles.get("Group Q Chg", False) else None,
-                group_b_qchg=(group_curves[1][0], group_curves[1][2]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][2] and group_plot_toggles.get("Group Q Chg", False) else None,
-                group_c_qchg=(group_curves[2][0], group_curves[2][2]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][2] and group_plot_toggles.get("Group Q Chg", False) else None,
-                group_a_eff=(group_curves[0][0], group_curves[0][3]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][3] and group_plot_toggles.get("Group Efficiency", False) else None,
-                group_b_eff=(group_curves[1][0], group_curves[1][3]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][3] and group_plot_toggles.get("Group Efficiency", False) else None,
-                group_c_eff=(group_curves[2][0], group_curves[2][3]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][3] and group_plot_toggles.get("Group Efficiency", False) else None,
-                group_names=group_names,
-                cycle_filter=cycle_filter,
-                custom_colors=custom_colors,
-                y_axis_limits=y_axis_limits
-            )
-            st.pyplot(fig)
+            if use_interactive and ready and dfs:
+                # Interactive Plotly plots
+                st.markdown("### Capacity Plot")
+                interactive_cap_fig = plot_interactive_capacity(
+                    dfs, show_lines, show_efficiency_lines, remove_last_cycle, 
+                    experiment_name, show_average_performance, avg_line_toggles, 
+                    group_names, custom_colors
+                )
+                st.plotly_chart(interactive_cap_fig, use_container_width=True)
+                
+                # Add info about interactive features
+                st.info("💡 **Tip**: Hover over data points for details, click-drag to zoom, double-click to reset view.")
+            else:
+                # Static matplotlib plot
+                fig = plot_capacity_graph(
+                    dfs, show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, experiment_name,
+                    show_average_performance, avg_line_toggles, remove_markers, hide_legend,
+                    group_a_curve=(group_curves[0][0], group_curves[0][1]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][1] and group_plot_toggles.get("Group Q Dis", False) else None,
+                    group_b_curve=(group_curves[1][0], group_curves[1][1]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][1] and group_plot_toggles.get("Group Q Dis", False) else None,
+                    group_c_curve=(group_curves[2][0], group_curves[2][1]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][1] and group_plot_toggles.get("Group Q Dis", False) else None,
+                    group_a_qchg=(group_curves[0][0], group_curves[0][2]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][2] and group_plot_toggles.get("Group Q Chg", False) else None,
+                    group_b_qchg=(group_curves[1][0], group_curves[1][2]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][2] and group_plot_toggles.get("Group Q Chg", False) else None,
+                    group_c_qchg=(group_curves[2][0], group_curves[2][2]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][2] and group_plot_toggles.get("Group Q Chg", False) else None,
+                    group_a_eff=(group_curves[0][0], group_curves[0][3]) if enable_grouping and group_curves and group_curves[0][0] and group_curves[0][3] and group_plot_toggles.get("Group Efficiency", False) else None,
+                    group_b_eff=(group_curves[1][0], group_curves[1][3]) if enable_grouping and group_curves and group_curves[1][0] and group_curves[1][3] and group_plot_toggles.get("Group Efficiency", False) else None,
+                    group_c_eff=(group_curves[2][0], group_curves[2][3]) if enable_grouping and group_curves and group_curves[2][0] and group_curves[2][3] and group_plot_toggles.get("Group Efficiency", False) else None,
+                    group_names=group_names,
+                    cycle_filter=cycle_filter,
+                    custom_colors=custom_colors,
+                    y_axis_limits=y_axis_limits
+                )
+                st.pyplot(fig)
             
             if ready and dfs:
                 # Get available cycles from the data to determine valid range for reference cycle
@@ -2859,74 +2892,89 @@ if ready:
                     with col3:
                         st.metric("Available Cycles", f"{int(min_cycle)} - {int(max_cycle)}")
                     
-                    # Retention plot controls
-                    control_col1, control_col2, control_col3 = st.columns([1, 1, 1])
+                    # Retention Plot Section - Organize controls in expander
+                    st.markdown("---")
+                    st.markdown("### Capacity Retention Analysis")
                     
-                    with control_col1:
-                        retention_threshold = st.slider(
-                            "Retention Threshold (%)",
-                            min_value=0.0,
-                            max_value=100.0,
-                            value=80.0,
-                            step=5.0,
-                            key="retention_threshold"
-                        )
-                    
-                    with control_col2:
-                        y_axis_preset = st.selectbox(
-                            "Y-Axis Range",
-                            options=["Full Range (0-110%)", "Focused View (70-110%)", "Standard View (50-110%)", "Custom Range"],
-                            index=0,
-                            key="y_axis_preset"
-                        )
-                    
-                    with control_col3:
-                        if y_axis_preset == "Custom Range":
-                            custom_min = st.number_input("Min Y (%)", min_value=0.0, max_value=100.0, value=st.session_state.get('retention_y_axis_min', 0.0), step=5.0, key="retention_y_axis_min")
-                            custom_max = st.number_input("Max Y (%)", min_value=50.0, max_value=200.0, value=st.session_state.get('retention_y_axis_max', 110.0), step=5.0, key="retention_y_axis_max")
-                            y_axis_min, y_axis_max = custom_min, custom_max
-                        else:
-                            if y_axis_preset == "Full Range (0-110%)":
-                                y_axis_min, y_axis_max = 0.0, 110.0
-                            elif y_axis_preset == "Focused View (70-110%)":
-                                y_axis_min, y_axis_max = 70.0, 110.0
-                            elif y_axis_preset == "Standard View (50-110%)":
-                                y_axis_min, y_axis_max = 50.0, 110.0
-                            st.metric("Y-Axis Range", f"{y_axis_min:.0f}% - {y_axis_max:.0f}%")
-                    
-                    # Retention plot specific options
+                    with st.expander("⚙️ Retention Plot Settings", expanded=False):
+                        # Retention plot controls
+                        control_col1, control_col2, control_col3 = st.columns([1, 1, 1])
+                        
+                        with control_col1:
+                            retention_threshold = st.slider(
+                                "Retention Threshold (%)",
+                                min_value=0.0,
+                                max_value=100.0,
+                                value=80.0,
+                                step=5.0,
+                                key="retention_threshold"
+                            )
+                        
+                        with control_col2:
+                            y_axis_preset = st.selectbox(
+                                "Y-Axis Range",
+                                options=["Full Range (0-110%)", "Focused View (70-110%)", "Standard View (50-110%)", "Custom Range"],
+                                index=0,
+                                key="y_axis_preset"
+                            )
+                        
+                        with control_col3:
+                            if y_axis_preset == "Custom Range":
+                                custom_min = st.number_input("Min Y (%)", min_value=0.0, max_value=100.0, value=st.session_state.get('retention_y_axis_min', 0.0), step=5.0, key="retention_y_axis_min")
+                                custom_max = st.number_input("Max Y (%)", min_value=50.0, max_value=200.0, value=st.session_state.get('retention_y_axis_max', 110.0), step=5.0, key="retention_y_axis_max")
+                                y_axis_min, y_axis_max = custom_min, custom_max
+                            else:
+                                if y_axis_preset == "Full Range (0-110%)":
+                                    y_axis_min, y_axis_max = 0.0, 110.0
+                                elif y_axis_preset == "Focused View (70-110%)":
+                                    y_axis_min, y_axis_max = 70.0, 110.0
+                                elif y_axis_preset == "Standard View (50-110%)":
+                                    y_axis_min, y_axis_max = 50.0, 110.0
+                                st.metric("Y-Axis Range", f"{y_axis_min:.0f}% - {y_axis_max:.0f}%")
+                        
+                        # Retention plot specific options
                         retention_col1, retention_col2 = st.columns(2)
                         with retention_col1:
                             show_baseline_line = st.checkbox(
-                            'Show baseline (100%)',
+                                'Show baseline (100%)',
                                 value=True,
-                            key='retention_baseline'
+                                key='retention_baseline'
                             )
                         with retention_col2:
                             show_threshold_line = st.checkbox(
-                            f'Show threshold ({retention_threshold:.0f}%)',
+                                f'Show threshold ({retention_threshold:.0f}%)',
                                 value=True,
-                            key='retention_threshold_line'
+                                key='retention_threshold_line'
                             )
                     
-                    # Generate capacity retention plot using unified settings
-                    retention_fig = plot_capacity_retention_graph(
-                        dfs, show_lines, reference_cycle, formation_cycles, remove_last_cycle, 
-                        show_graph_title, experiment_name, show_average_performance, 
-                        avg_line_toggles, remove_markers, hide_legend,
-                        group_a_curve=None,  # Can be extended later for group retention
-                        group_b_curve=None,
-                        group_c_curve=None,
-                        group_names=group_names,
-                        retention_threshold=retention_threshold,
-                        y_axis_min=y_axis_min,
-                        y_axis_max=y_axis_max,
-                        show_baseline_line=show_baseline_line,
-                        show_threshold_line=show_threshold_line,
-                        cycle_filter=cycle_filter,
-                        custom_colors=custom_colors
-                    )
-                    st.pyplot(retention_fig)
+                    # Generate capacity retention plot
+                    if use_interactive:
+                        # Interactive Plotly retention plot
+                        interactive_ret_fig = plot_interactive_retention(
+                            dfs, show_lines, reference_cycle, remove_last_cycle, 
+                            experiment_name, show_average_performance, custom_colors,
+                            retention_threshold
+                        )
+                        st.plotly_chart(interactive_ret_fig, use_container_width=True)
+                    else:
+                        # Static matplotlib retention plot
+                        retention_fig = plot_capacity_retention_graph(
+                            dfs, show_lines, reference_cycle, formation_cycles, remove_last_cycle, 
+                            show_graph_title, experiment_name, show_average_performance, 
+                            avg_line_toggles, remove_markers, hide_legend,
+                            group_a_curve=None,  # Can be extended later for group retention
+                            group_b_curve=None,
+                            group_c_curve=None,
+                            group_names=group_names,
+                            retention_threshold=retention_threshold,
+                            y_axis_min=y_axis_min,
+                            y_axis_max=y_axis_max,
+                            show_baseline_line=show_baseline_line,
+                            show_threshold_line=show_threshold_line,
+                            cycle_filter=cycle_filter,
+                            custom_colors=custom_colors
+                        )
+                        st.pyplot(retention_fig)
                 else:
                     st.warning("No cycle data available. Please upload data files first.")
             else:
