@@ -192,8 +192,9 @@ def get_project_summaries(user_id: str, filter_params: Optional[Dict] = None) ->
                             df = pd.read_json(cell_data_json)
                             
                             # Get max cycle
-                            if 'Cycle' in df.columns:
-                                cell_max_cycle = df['Cycle'].max()
+                            cycle_col = 'Cycle' if 'Cycle' in df.columns else 'Cycle number'
+                            if cycle_col in df.columns:
+                                cell_max_cycle = df[cycle_col].max()
                                 max_cycles = max(max_cycles, cell_max_cycle)
                             
                             # Check retention
@@ -302,10 +303,11 @@ def get_top_performers(
                     df = pd.read_json(cell_data_json)
                     
                     # Check minimum cycles
-                    if 'Cycle' not in df.columns:
+                    cycle_col = 'Cycle' if 'Cycle' in df.columns else 'Cycle number'
+                    if cycle_col not in df.columns:
                         continue
                     
-                    cycles_tested = df['Cycle'].max()
+                    cycles_tested = df[cycle_col].max()
                     if cycles_tested < min_cycles:
                         continue
                     
@@ -350,10 +352,26 @@ def get_top_performers(
 
 def calculate_retention_percent(df: pd.DataFrame) -> Optional[float]:
     """Calculate capacity retention percentage."""
-    if 'Qdis' not in df.columns and 'discharge_capacity' not in df.columns:
+    # Handle multiple column naming conventions
+    cap_col = None
+    if 'Qdis' in df.columns:
+        cap_col = 'Qdis'
+    elif 'Q discharge (mA.h)' in df.columns:
+        cap_col = 'Q discharge (mA.h)'
+    elif 'Q Dis (mAh/g)' in df.columns:
+        cap_col = 'Q Dis (mAh/g)'
+    elif 'discharge_capacity' in df.columns:
+        cap_col = 'discharge_capacity'
+    
+    if cap_col is None:
         return None
     
-    cap_col = 'Qdis' if 'Qdis' in df.columns else 'discharge_capacity'
+    # Handle cycle column naming
+    cycle_col = None
+    if 'Cycle' in df.columns:
+        cycle_col = 'Cycle'
+    elif 'Cycle number' in df.columns:
+        cycle_col = 'Cycle number'
     
     # Get initial capacity (first non-zero value, skip formation cycles if possible)
     valid_caps = df[df[cap_col] > 0][cap_col]
@@ -361,8 +379,8 @@ def calculate_retention_percent(df: pd.DataFrame) -> Optional[float]:
         return None
     
     # Use capacity at cycle 5-10 as "initial" to skip formation variability
-    if 'Cycle' in df.columns:
-        initial_df = df[(df['Cycle'] >= 5) & (df['Cycle'] <= 10) & (df[cap_col] > 0)]
+    if cycle_col is not None:
+        initial_df = df[(df[cycle_col] >= 5) & (df[cycle_col] <= 10) & (df[cap_col] > 0)]
         if not initial_df.empty:
             initial_capacity = initial_df[cap_col].mean()
         else:
@@ -381,15 +399,32 @@ def calculate_fade_rate(df: pd.DataFrame) -> Optional[float]:
     """
     Calculate capacity fade rate in % per 100 cycles using linear regression.
     """
-    if 'Qdis' not in df.columns and 'discharge_capacity' not in df.columns:
-        return None
-    if 'Cycle' not in df.columns:
+    # Handle multiple column naming conventions
+    cap_col = None
+    if 'Qdis' in df.columns:
+        cap_col = 'Qdis'
+    elif 'Q discharge (mA.h)' in df.columns:
+        cap_col = 'Q discharge (mA.h)'
+    elif 'Q Dis (mAh/g)' in df.columns:
+        cap_col = 'Q Dis (mAh/g)'
+    elif 'discharge_capacity' in df.columns:
+        cap_col = 'discharge_capacity'
+    
+    if cap_col is None:
         return None
     
-    cap_col = 'Qdis' if 'Qdis' in df.columns else 'discharge_capacity'
+    # Handle cycle column naming
+    cycle_col = None
+    if 'Cycle' in df.columns:
+        cycle_col = 'Cycle'
+    elif 'Cycle number' in df.columns:
+        cycle_col = 'Cycle number'
+    
+    if cycle_col is None:
+        return None
     
     # Filter valid data
-    valid_data = df[(df[cap_col] > 0) & (df['Cycle'] > 0)].copy()
+    valid_data = df[(df[cap_col] > 0) & (df[cycle_col] > 0)].copy()
     if len(valid_data) < 10:
         return None
     
@@ -401,7 +436,7 @@ def calculate_fade_rate(df: pd.DataFrame) -> Optional[float]:
     try:
         from scipy.stats import linregress
         slope, intercept, r_value, p_value, std_err = linregress(
-            valid_data['Cycle'], valid_data['retention']
+            valid_data[cycle_col], valid_data['retention']
         )
         
         # Convert slope to % fade per 100 cycles (negative of slope)
@@ -412,7 +447,7 @@ def calculate_fade_rate(df: pd.DataFrame) -> Optional[float]:
         # Fallback: simple first-last calculation
         first_retention = valid_data['retention'].iloc[0]
         last_retention = valid_data['retention'].iloc[-1]
-        cycles = valid_data['Cycle'].iloc[-1] - valid_data['Cycle'].iloc[0]
+        cycles = valid_data[cycle_col].iloc[-1] - valid_data[cycle_col].iloc[0]
         
         if cycles > 0:
             fade_per_100_cycles = ((first_retention - last_retention) / cycles) * 100
@@ -423,7 +458,19 @@ def calculate_fade_rate(df: pd.DataFrame) -> Optional[float]:
 
 def get_capacity_values(df: pd.DataFrame) -> Tuple[float, float]:
     """Get initial and current capacity values."""
-    cap_col = 'Qdis' if 'Qdis' in df.columns else 'discharge_capacity'
+    # Handle multiple column naming conventions
+    cap_col = None
+    if 'Qdis' in df.columns:
+        cap_col = 'Qdis'
+    elif 'Q discharge (mA.h)' in df.columns:
+        cap_col = 'Q discharge (mA.h)'
+    elif 'Q Dis (mAh/g)' in df.columns:
+        cap_col = 'Q Dis (mAh/g)'
+    elif 'discharge_capacity' in df.columns:
+        cap_col = 'discharge_capacity'
+    
+    if cap_col is None:
+        return 0.0, 0.0
     
     valid_caps = df[df[cap_col] > 0][cap_col]
     if len(valid_caps) < 2:
@@ -437,10 +484,17 @@ def get_capacity_values(df: pd.DataFrame) -> Tuple[float, float]:
 
 def calculate_avg_efficiency(df: pd.DataFrame) -> Optional[float]:
     """Calculate average coulombic efficiency."""
-    if 'Efficiency' not in df.columns and 'coulombic_efficiency' not in df.columns:
-        return None
+    # Handle multiple column naming conventions
+    eff_col = None
+    if 'Efficiency' in df.columns:
+        eff_col = 'Efficiency'
+    elif 'Efficiency (-)' in df.columns:
+        eff_col = 'Efficiency (-)'
+    elif 'coulombic_efficiency' in df.columns:
+        eff_col = 'coulombic_efficiency'
     
-    eff_col = 'Efficiency' if 'Efficiency' in df.columns else 'coulombic_efficiency'
+    if eff_col is None:
+        return None
     
     valid_eff = df[(df[eff_col] > 0) & (df[eff_col] <= 100)][eff_col]
     if len(valid_eff) == 0:
@@ -557,8 +611,9 @@ def get_cells_with_cycle_data(user_id: str, min_cycles: int = 0, filter_params: 
                     df = pd.read_json(cell_data_json)
                     
                     # Check minimum cycles
-                    if 'Cycle' in df.columns:
-                        max_cycle = df['Cycle'].max()
+                    cycle_col = 'Cycle' if 'Cycle' in df.columns else 'Cycle number'
+                    if cycle_col in df.columns:
+                        max_cycle = df[cycle_col].max()
                         if max_cycle < min_cycles:
                             continue
                     

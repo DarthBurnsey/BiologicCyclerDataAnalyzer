@@ -83,16 +83,31 @@ def plot_multi_project_retention(
             try:
                 df = pd.read_json(cell['data_json'])
                 
+                # Detect column names
+                cap_col = None
+                if 'Qdis' in df.columns:
+                    cap_col = 'Qdis'
+                elif 'Q discharge (mA.h)' in df.columns:
+                    cap_col = 'Q discharge (mA.h)'
+                elif 'Q Dis (mAh/g)' in df.columns:
+                    cap_col = 'Q Dis (mAh/g)'
+                
+                cycle_col = None
+                if 'Cycle' in df.columns:
+                    cycle_col = 'Cycle'
+                elif 'Cycle number' in df.columns:
+                    cycle_col = 'Cycle number'
+                
                 # Calculate retention
-                if 'Qdis' in df.columns and 'Cycle' in df.columns:
-                    valid_data = df[df['Qdis'] > 0].copy()
+                if cap_col and cycle_col:
+                    valid_data = df[df[cap_col] > 0].copy()
                     if len(valid_data) < 2:
                         continue
                     
-                    initial_cap = valid_data['Qdis'].iloc[0]
-                    valid_data['retention'] = (valid_data['Qdis'] / initial_cap) * 100
+                    initial_cap = valid_data[cap_col].iloc[0]
+                    valid_data['retention'] = (valid_data[cap_col] / initial_cap) * 100
                     
-                    cycles = valid_data['Cycle'].values
+                    cycles = valid_data[cycle_col].values
                     retention = valid_data['retention'].values
                     
                     all_cycles.append(cycles)
@@ -210,8 +225,23 @@ def plot_fade_rate_scatter(
         try:
             df = pd.read_json(cell['data_json'])
             
+            # Detect column names
+            cap_col = None
+            if 'Qdis' in df.columns:
+                cap_col = 'Qdis'
+            elif 'Q discharge (mA.h)' in df.columns:
+                cap_col = 'Q discharge (mA.h)'
+            elif 'Q Dis (mAh/g)' in df.columns:
+                cap_col = 'Q Dis (mAh/g)'
+            
+            cycle_col = None
+            if 'Cycle' in df.columns:
+                cycle_col = 'Cycle'
+            elif 'Cycle number' in df.columns:
+                cycle_col = 'Cycle number'
+            
             # Calculate fade rate
-            if 'Qdis' in df.columns and 'Cycle' in df.columns:
+            if cap_col and cycle_col:
                 fade_rate = calculate_fade_rate(df)
                 
                 if fade_rate is None:
@@ -219,7 +249,7 @@ def plot_fade_rate_scatter(
                 
                 # Get x-axis value
                 if x_axis == 'initial_capacity':
-                    x_val = df['Qdis'].iloc[0] if len(df) > 0 else None
+                    x_val = df[cap_col].iloc[0] if len(df) > 0 else None
                 elif x_axis == 'temperature':
                     x_val = cell.get('temperature', 25)  # Default 25C
                 elif x_axis == 'c_rate':
@@ -231,13 +261,13 @@ def plot_fade_rate_scatter(
                     continue
                 
                 # Calculate retention for hover info
-                valid_caps = df[df['Qdis'] > 0]['Qdis']
+                valid_caps = df[df[cap_col] > 0][cap_col]
                 if len(valid_caps) < 2:
                     retention = 0
                 else:
                     retention = (valid_caps.iloc[-1] / valid_caps.iloc[0]) * 100
                 
-                cycles_tested = df['Cycle'].max()
+                cycles_tested = df[cycle_col].max()
                 
                 plot_data.append({
                     'cell_id': cell.get('cell_id', 'Unknown'),
