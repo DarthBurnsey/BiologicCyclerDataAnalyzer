@@ -5,4 +5,5 @@ matplotlib
 pillow 
 python-pptx
 plotly
-scipy 
+scipy
+pyarrow 

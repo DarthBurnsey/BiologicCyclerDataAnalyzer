@@ -12,6 +12,8 @@ COMMON_THEORETICAL_DENSITIES = {
     'Lithium Nickel Manganese Cobalt Oxide (NMC)': 4.7,
     'NMC': 4.7,  # Generic NMC
     'NMC811': 4.75,  # Li[Ni0.8Mn0.1Co0.1]O2
+    'NMC811 (MSE)': 4.75,  # Li[Ni0.8Mn0.1Co0.1]O2 - MSE variant
+    'NMC811 (BASF)': 4.75,  # Li[Ni0.8Mn0.1Co0.1]O2 - BASF variant
     'NMC622': 4.65,  # Li[Ni0.6Mn0.2Co0.2]O2
     'NMC532': 4.6,   # Li[Ni0.5Mn0.3Co0.2]O2
     'NMC111': 4.7,   # Li[Ni0.33Mn0.33Co0.33]O2

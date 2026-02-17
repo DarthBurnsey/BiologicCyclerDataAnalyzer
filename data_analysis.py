@@ -101,6 +101,16 @@ def calculate_cell_summary(df, cell_data, disc_area_cm2, project_type="Full Cell
         except:
             pass
         
+        # Calculate N/P ratio if Full Cell data is available
+        np_ratio = None
+        if cell_data.get('anode_mass') and cell_data.get('cathode_mass'):
+            np_ratio = calculate_np_ratio_from_formation(
+                df,
+                formation_cycles=formation_cycles,
+                anode_mass=cell_data.get('anode_mass'),
+                cathode_mass=cell_data.get('cathode_mass')
+            )
+        
         return {
             'cell_name': cell_name,
             'loading': loading,
@@ -112,7 +122,9 @@ def calculate_cell_summary(df, cell_data, disc_area_cm2, project_type="Full Cell
             'areal_capacity': areal_capacity,
             'reversible_capacity': reversible_capacity,
             'coulombic_efficiency': ceff_avg,
-            'porosity': cell_data.get('porosity', None)
+            'porosity': cell_data.get('porosity', None),
+            'np_ratio': np_ratio,
+            'overhang_ratio': cell_data.get('overhang_ratio', None)
         }
     except Exception as e:
         # Return basic info if calculation fails
@@ -127,7 +139,9 @@ def calculate_cell_summary(df, cell_data, disc_area_cm2, project_type="Full Cell
             'areal_capacity': None,
             'reversible_capacity': None,
             'coulombic_efficiency': None,
-            'porosity': None
+            'porosity': None,
+            'np_ratio': None,
+            'overhang_ratio': None
         }
 
 def calculate_experiment_average(experiment_cells, exp_name, exp_date):
@@ -206,3 +220,92 @@ def get_qdis_series(df_cell):
         return pd.Series([qdis_raw]).dropna()
     else:
         return pd.Series(qdis_raw).dropna()
+
+
+def calculate_np_ratio_from_formation(df, formation_cycles=4, anode_mass=None, cathode_mass=None):
+    """
+    Calculate N/P ratio from formation cycle capacities.
+    
+    N/P Ratio = (Anode Capacity) / (Cathode Capacity)
+    
+    For Full Cells:
+    - Anode Capacity = Discharge capacity of first formation cycle * anode mass
+    - Cathode Capacity = Charge capacity of first formation cycle * cathode mass
+    
+    Args:
+        df: DataFrame with cycling data
+        formation_cycles: Number of formation cycles (default 4)
+        anode_mass: Mass of anode active material (mg), if available
+        cathode_mass: Mass of cathode active material (mg), if available
+    
+    Returns:
+        float: N/P ratio, or None if calculation fails
+    """
+    try:
+        if len(df) < 1:
+            return None
+        
+        # Get first formation cycle data (typically cycle 1 or 2)
+        # Use the cycle with highest discharge capacity in first few cycles
+        formation_data = df.head(min(formation_cycles, len(df)))
+        
+        # Find cycle with max discharge capacity (represents full formation)
+        max_discharge_idx = formation_data['Q Dis (mAh/g)'].idxmax()
+        formation_cycle = df.loc[max_discharge_idx]
+        
+        # Get discharge and charge capacities for this cycle
+        discharge_capacity = pd.to_numeric(formation_cycle['Q Dis (mAh/g)'], errors='coerce')
+        charge_capacity = pd.to_numeric(formation_cycle['Q Chg (mAh/g)'], errors='coerce')
+        
+        if pd.isna(discharge_capacity) or pd.isna(charge_capacity):
+            return None
+        
+        if discharge_capacity <= 0 or charge_capacity <= 0:
+            return None
+        
+        # Calculate N/P ratio
+        # For Full Cell: N/P = Anode Capacity / Cathode Capacity
+        # Assuming anode is lithiated during discharge and cathode during charge
+        # N/P = (Discharge capacity * anode utilization) / (Charge capacity * cathode utilization)
+        
+        # Simplified calculation: Use ratio of discharge to charge capacities
+        # This gives an approximate N/P ratio
+        np_ratio = discharge_capacity / charge_capacity
+        
+        # If electrode masses are provided, calculate more accurate N/P ratio
+        if anode_mass and cathode_mass and anode_mass > 0 and cathode_mass > 0:
+            # More accurate: N/P = (anode_mass * specific_capacity_anode) / (cathode_mass * specific_capacity_cathode)
+            # Using measured formation capacities as proxy for specific capacities
+            anode_capacity_total = discharge_capacity * anode_mass  # mAh
+            cathode_capacity_total = charge_capacity * cathode_mass  # mAh
+            np_ratio = anode_capacity_total / cathode_capacity_total
+        
+        return float(np_ratio)
+    
+    except Exception as e:
+        return None
+
+
+def validate_np_ratio(np_ratio):
+    """
+    Validate N/P ratio and return warning level.
+    
+    Args:
+        np_ratio: N/P ratio value
+    
+    Returns:
+        tuple: (warning_level, message)
+            warning_level: 'critical', 'warning', 'safe', or None
+            message: Warning message string
+    """
+    if np_ratio is None:
+        return (None, "N/P ratio not available")
+    
+    if np_ratio < 1.0:
+        return ('critical', f"🚨 CRITICAL: N/P ratio {np_ratio:.3f} < 1.0 - High lithium plating risk!")
+    elif np_ratio < 1.05:
+        return ('warning', f"⚠️ WARNING: N/P ratio {np_ratio:.3f} < 1.05 - Low safety margin")
+    elif np_ratio < 1.10:
+        return ('safe', f"✅ N/P ratio {np_ratio:.3f} is acceptable (1.05-1.10 range)")
+    else:
+        return ('safe', f"✅ N/P ratio {np_ratio:.3f} is in safe range (>1.10)")

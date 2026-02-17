@@ -10,7 +10,9 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import json
-from database import get_db_connection, TEST_USER_ID
+import os
+from io import StringIO
+from database import get_db_connection, TEST_USER_ID, hydrate_data_json
 
 
 def get_global_statistics(user_id: str, filter_params: Optional[Dict] = None) -> Dict:
@@ -70,29 +72,33 @@ def get_global_statistics(user_id: str, filter_params: Optional[Dict] = None) ->
         
         # Get all cells with cycling data to calculate best retention and avg fade
         cursor.execute(f"""
-            SELECT ce.data_json
+            SELECT ce.data_json, ce.parquet_path, ce.id
             FROM cell_experiments ce
             JOIN projects p ON ce.project_id = p.id
-            WHERE {where_clause} AND ce.data_json IS NOT NULL
+            WHERE {where_clause} AND (ce.data_json IS NOT NULL OR ce.parquet_path IS NOT NULL)
         """, params)
         
         all_retentions = []
         all_fade_rates = []
         
-        for (data_json_str,) in cursor.fetchall():
+        for data_json_str, p_path, exp_id in cursor.fetchall():
+            data_json_str = hydrate_data_json(data_json_str, p_path, exp_id)
+            if not data_json_str:
+                continue
+                
             try:
                 data = json.loads(data_json_str)
                 cells = data.get('cells', [])
                 
                 for cell in cells:
+                    df = None
                     if cell.get('excluded', False):
-                        continue
-                    
-                    # Parse cycling data
-                    cell_data_json = cell.get('data_json')
-                    if cell_data_json:
-                        df = pd.read_json(cell_data_json)
+                        pass
+                    elif cell.get('data_json'):
+                        cell_data_json = cell.get('data_json')
+                        df = pd.read_json(StringIO(cell_data_json))
                         
+                    if df is not None:
                         # Calculate retention
                         retention = calculate_retention_percent(df)
                         if retention is not None:
@@ -155,7 +161,7 @@ def get_project_summaries(user_id: str, filter_params: Optional[Dict] = None) ->
             
             # Get all experiments for this project
             cursor.execute("""
-                SELECT data_json, created_date
+                SELECT data_json, created_date, parquet_path, id
                 FROM cell_experiments
                 WHERE project_id = ?
             """, (project_id,))
@@ -168,7 +174,7 @@ def get_project_summaries(user_id: str, filter_params: Optional[Dict] = None) ->
             best_retention = 0.0
             all_fade_rates = []
             
-            for data_json_str, created_date in experiments:
+            for data_json_str, created_date, p_path, exp_id in experiments:
                 # Apply date filter
                 if filter_params and filter_params.get('date_range'):
                     start_date, end_date = filter_params['date_range']
@@ -176,20 +182,25 @@ def get_project_summaries(user_id: str, filter_params: Optional[Dict] = None) ->
                     if exp_date:
                         if exp_date < start_date or exp_date > end_date:
                             continue
+                            
+                data_json_str = hydrate_data_json(data_json_str, p_path, exp_id)
+                if not data_json_str:
+                    continue
                 
                 try:
                     data = json.loads(data_json_str)
                     cells = data.get('cells', [])
                     
                     for cell in cells:
+                        df = None
                         if cell.get('excluded', False):
-                            continue
+                            pass
+                        elif cell.get('data_json'):
+                            cell_data_json = cell.get('data_json')
+                            df = pd.read_json(StringIO(cell_data_json))
                         
-                        cell_count += 1
-                        cell_data_json = cell.get('data_json')
-                        
-                        if cell_data_json:
-                            df = pd.read_json(cell_data_json)
+                        if df is not None:
+                            cell_count += 1
                             
                             # Get max cycle
                             cycle_col = 'Cycle' if 'Cycle' in df.columns else 'Cycle number'
@@ -281,13 +292,17 @@ def get_top_performers(
         where_clause = " AND ".join(where_conditions)
         
         cursor.execute(f"""
-            SELECT p.id, p.name, ce.data_json
+            SELECT p.id, p.name, ce.data_json, ce.parquet_path, ce.id
             FROM cell_experiments ce
             JOIN projects p ON ce.project_id = p.id
-            WHERE {where_clause} AND ce.data_json IS NOT NULL
+            WHERE {where_clause} AND (ce.data_json IS NOT NULL OR ce.parquet_path IS NOT NULL)
         """, params)
         
-        for project_id, project_name, data_json_str in cursor.fetchall():
+        for project_id, project_name, data_json_str, p_path, exp_id in cursor.fetchall():
+            data_json_str = hydrate_data_json(data_json_str, p_path, exp_id)
+            if not data_json_str:
+                continue
+                
             try:
                 data = json.loads(data_json_str)
                 cells = data.get('cells', [])
@@ -298,8 +313,8 @@ def get_top_performers(
                     
                     cell_data_json = cell.get('data_json')
                     if not cell_data_json:
-                        continue
-                    
+                         continue
+                         
                     df = pd.read_json(cell_data_json)
                     
                     # Check minimum cycles
@@ -589,13 +604,17 @@ def get_cells_with_cycle_data(user_id: str, min_cycles: int = 0, filter_params: 
         where_clause = " AND ".join(where_conditions)
         
         cursor.execute(f"""
-            SELECT p.id, p.name, ce.data_json
+            SELECT p.id, p.name, ce.data_json, ce.parquet_path, ce.id
             FROM cell_experiments ce
             JOIN projects p ON ce.project_id = p.id
-            WHERE {where_clause} AND ce.data_json IS NOT NULL
+            WHERE {where_clause} AND (ce.data_json IS NOT NULL OR ce.parquet_path IS NOT NULL)
         """, params)
         
-        for project_id, project_name, data_json_str in cursor.fetchall():
+        for project_id, project_name, data_json_str, p_path, exp_id in cursor.fetchall():
+            data_json_str = hydrate_data_json(data_json_str, p_path, exp_id)
+            if not data_json_str:
+                continue
+                
             try:
                 data = json.loads(data_json_str)
                 cells = data.get('cells', [])
@@ -608,7 +627,7 @@ def get_cells_with_cycle_data(user_id: str, min_cycles: int = 0, filter_params: 
                     if not cell_data_json:
                         continue
                     
-                    df = pd.read_json(cell_data_json)
+                    df = pd.read_json(StringIO(cell_data_json))
                     
                     # Check minimum cycles
                     cycle_col = 'Cycle' if 'Cycle' in df.columns else 'Cycle number'

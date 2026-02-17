@@ -5,6 +5,9 @@ import logging
 import time
 import random
 import os
+import uuid
+import pandas as pd
+from pathlib import Path
 
 DATABASE_PATH = 'cellscope.db'
 SQLITE_TIMEOUT = 60
@@ -43,6 +46,72 @@ def get_db_connection():
             except:
                 pass
 
+
+DATA_DIR = Path('data/experiments')
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+def _save_df_to_parquet(df, prefix="exp"):
+    """Helper to save DataFrame to Parquet and return path."""
+    if df is None or df.empty:
+        return None
+    
+    filename = f"{prefix}_{uuid.uuid4().hex}.parquet"
+    filepath = DATA_DIR / filename
+    
+    # Ensure columns are compatible (convert complex types to string if needed)
+    # Parquet handles most types well, but mixed types can be tricky.
+    # We'll save using pyarrow engine.
+    try:
+        df.to_parquet(filepath, engine='pyarrow', index=False)
+        return str(filepath)
+    except Exception as e:
+        logger.error(f"Failed to save parquet file: {e}")
+        # Fallback or re-raise? Re-raise to prevent data loss mock-save
+        raise e
+
+def _load_df_from_parquet(filepath):
+    """Helper to load DataFrame from Parquet."""
+    if not filepath or not os.path.exists(filepath):
+        return None
+    return pd.read_parquet(filepath)
+
+def hydrate_data_json(d_json, p_path, row_id=None):
+    """Helper to hydrate data_json from parquet path(s)."""
+    # Hydrate from main parquet
+    if p_path and os.path.exists(p_path):
+         try:
+             df = _load_df_from_parquet(p_path)
+             if df is not None:
+                 return df.to_json()
+         except Exception as e:
+             if row_id:
+                 logger.error(f"Error hydrating parquet data for {row_id}: {e}")
+             # fall through to check d_json or return existing d_json
+
+    # Hydrate embedded parquet (multi-cell)
+    if d_json:
+        try:
+             # Fast check: does it contain "parquet_path"?
+             if "parquet_path" in d_json:
+                 data = json.loads(d_json)
+                 if isinstance(data, dict) and 'cells' in data:
+                     modified = False
+                     for cell in data['cells']:
+                         if cell.get('parquet_path') and os.path.exists(cell.get('parquet_path')):
+                              try:
+                                  cell_df = _load_df_from_parquet(cell['parquet_path'])
+                                  if cell_df is not None:
+                                      cell['data_json'] = cell_df.to_json()
+                                      modified = True
+                              except:
+                                  pass
+                     if modified:
+                         return json.dumps(data)
+        except:
+             pass
+    
+    return d_json
+
 def save_cell_experiment(project_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, df, electrolyte=None, substrate=None, separator=None, group_assignment=None, formulation_json=None, max_retries=3):
     """Simple, reliable cell experiment saving with minimal complexity."""
     for attempt in range(max_retries):
@@ -50,15 +119,16 @@ def save_cell_experiment(project_id, cell_name, file_name, loading, active_mater
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 
-                # Convert DataFrame to JSON for storage
-                data_json = df.to_json()
+                # Save to Parquet
+                parquet_path = _save_df_to_parquet(df, prefix="cell")
+                data_json = None # Clear data_json to save space
                 
                 # Simple single transaction
                 cursor.execute('''
                     INSERT INTO cell_experiments 
-                    (project_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, group_assignment, formulation_json, data_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (project_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, group_assignment, formulation_json, data_json))
+                    (project_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, group_assignment, formulation_json, data_json, parquet_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (project_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, group_assignment, formulation_json, data_json, parquet_path))
                 
                 experiment_id = cursor.lastrowid
                 
@@ -182,6 +252,19 @@ def migrate_database():
             ('pressed_thickness', 'ALTER TABLE cell_experiments ADD COLUMN pressed_thickness REAL'),
             ('experiment_notes', 'ALTER TABLE cell_experiments ADD COLUMN experiment_notes TEXT'),
             ("porosity", "ALTER TABLE cell_experiments ADD COLUMN porosity REAL"),
+            ('cutoff_voltage_lower', 'ALTER TABLE cell_experiments ADD COLUMN cutoff_voltage_lower REAL'),
+            ('cutoff_voltage_upper', 'ALTER TABLE cell_experiments ADD COLUMN cutoff_voltage_upper REAL'),
+            # Full Cell specific columns
+            ('anode_mass', 'ALTER TABLE cell_experiments ADD COLUMN anode_mass REAL'),
+            ('cathode_mass', 'ALTER TABLE cell_experiments ADD COLUMN cathode_mass REAL'),
+            ('anode_loading', 'ALTER TABLE cell_experiments ADD COLUMN anode_loading REAL'),
+            ('cathode_loading', 'ALTER TABLE cell_experiments ADD COLUMN cathode_loading REAL'),
+            ('anode_thickness', 'ALTER TABLE cell_experiments ADD COLUMN anode_thickness REAL'),
+            ('cathode_thickness', 'ALTER TABLE cell_experiments ADD COLUMN cathode_thickness REAL'),
+            ('anode_area', 'ALTER TABLE cell_experiments ADD COLUMN anode_area REAL'),
+            ('cathode_area', 'ALTER TABLE cell_experiments ADD COLUMN cathode_area REAL'),
+            ('np_ratio', 'ALTER TABLE cell_experiments ADD COLUMN np_ratio REAL'),
+            ('overhang_ratio', 'ALTER TABLE cell_experiments ADD COLUMN overhang_ratio REAL'),
         ]
         for column_name, migration_sql in migrations:
             if column_name not in columns:
@@ -190,6 +273,14 @@ def migrate_database():
                     print(f"Added {column_name} column to cell_experiments table")
                 except sqlite3.OperationalError as e:
                     print(f"Error adding {column_name} column: {e}")
+
+        # Add parquet_path column if it doesn't exist
+        if 'parquet_path' not in columns:
+            try:
+                cursor.execute('ALTER TABLE cell_experiments ADD COLUMN parquet_path TEXT')
+                print("Added parquet_path column to cell_experiments table")
+            except sqlite3.OperationalError as e:
+                print(f"Error adding parquet_path column: {e}")
         
         # Check if project_type column exists in projects table
         cursor.execute("PRAGMA table_info(projects)")
@@ -229,14 +320,17 @@ def get_project_components(project_id):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT formulation_json, data_json FROM cell_experiments 
-            WHERE project_id = ? AND (formulation_json IS NOT NULL OR data_json IS NOT NULL)
+            SELECT formulation_json, data_json, parquet_path, id FROM cell_experiments 
+            WHERE project_id = ? AND (formulation_json IS NOT NULL OR data_json IS NOT NULL OR parquet_path IS NOT NULL)
         ''', (project_id,))
         results = cursor.fetchall()
         
         components = set()
         
-        for formulation_json, data_json in results:
+        for formulation_json, data_json, p_path, exp_id in results:
+            d_json = _hydrate_data_json(data_json, p_path, exp_id)
+            data_json = d_json
+            
             # Check formulation_json field first
             if formulation_json:
                 try:
@@ -296,15 +390,16 @@ def update_cell_experiment(experiment_id, cell_name, file_name, loading, active_
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
-        # Convert DataFrame to JSON for storage
-        data_json = df.to_json()
-        
+        # Save to Parquet
+        parquet_path = _save_df_to_parquet(df, prefix="cell")
+        data_json = None
+
         cursor.execute('''
             UPDATE cell_experiments 
             SET cell_name = ?, file_name = ?, loading = ?, active_material = ?, 
-                formation_cycles = ?, test_number = ?, electrolyte = ?, substrate = ?, separator = ?, formulation_json = ?, data_json = ?
+                formation_cycles = ?, test_number = ?, electrolyte = ?, substrate = ?, separator = ?, formulation_json = ?, data_json = ?, parquet_path = ?
             WHERE id = ?
-        ''', (cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, experiment_id))
+        ''', (cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, parquet_path, experiment_id))
         
         # Update project last_modified
         cursor.execute('''
@@ -332,12 +427,21 @@ def get_project_experiments(project_id):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT id, cell_name, file_name, data_json, created_date
+            SELECT id, cell_name, file_name, data_json, created_date, parquet_path
             FROM cell_experiments 
             WHERE project_id = ? 
             ORDER BY created_date DESC
         ''', (project_id,))
-        return cursor.fetchall()
+        results = cursor.fetchall()
+        
+        # Hydrate
+        hydrated_results = []
+        for row in results:
+            exp_id, cname, fname, d_json, cdate, p_path = row
+            d_json = hydrate_data_json(d_json, p_path, exp_id)
+            hydrated_results.append((exp_id, cname, fname, d_json, cdate))
+            
+        return hydrated_results
 
 def check_experiment_exists(project_id, cell_name, file_name):
     """Check if an experiment already exists in the project."""
@@ -357,17 +461,58 @@ def get_experiment_data(experiment_id):
         cursor = conn.cursor()
         cursor.execute('''
             SELECT id, project_id, cell_name, file_name, loading, active_material, 
-                   formation_cycles, test_number, electrolyte, substrate, separator, data_json, created_date
+                   formation_cycles, test_number, electrolyte, substrate, separator, data_json, created_date, parquet_path
             FROM cell_experiments 
             WHERE id = ?
         ''', (experiment_id,))
-        return cursor.fetchone()
+        row = cursor.fetchone()
+        
+        if not row:
+            return None
+            
+        # Unpack row
+        row_id, pid, cname, fname, loading, active, form, testnum, elec, sub, sep, d_json, cdate, p_path = row
+        
+        # Hydrate
+        d_json = hydrate_data_json(d_json, p_path, row_id)
+        
+        return (row_id, pid, cname, fname, loading, active, form, testnum, elec, sub, sep, d_json, cdate)
 
 def delete_cell_experiment(experiment_id):
     """Delete a cell experiment from the database."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
+        # Get file paths to delete
+        cursor.execute('''
+            SELECT parquet_path, data_json FROM cell_experiments WHERE id = ?
+        ''', (experiment_id,))
+        result = cursor.fetchone()
+        
+        if result:
+            p_path, d_json = result
+            # Delete primary parquet file
+            if p_path and os.path.exists(p_path):
+                try:
+                    os.remove(p_path)
+                except OSError as e:
+                    logger.error(f"Error deleting parquet file {p_path}: {e}")
+            
+            # Check for embedded parquet files in multi-cell experiments
+            if d_json:
+                try:
+                    data = json.loads(d_json)
+                    if isinstance(data, dict) and 'cells' in data:
+                        for cell in data['cells']:
+                            cell_p_path = cell.get('parquet_path')
+                            if cell_p_path and os.path.exists(cell_p_path):
+                                try:
+                                    os.remove(cell_p_path)
+                                except OSError:
+                                    pass
+                except Exception:
+                    pass
+
         # Get project_id before deleting
         cursor.execute('''
             SELECT project_id FROM cell_experiments WHERE id = ?
@@ -479,11 +624,31 @@ def save_experiment(project_id, experiment_name, experiment_date, disc_diameter_
         representative_substrate = cells_data[0].get('substrate', 'Copper') if cells_data else 'Copper'
         representative_separator = cells_data[0].get('separator', '25um PP') if cells_data else '25um PP'
         
+        # Extract cutoff voltages from first cell
+        cutoff_voltage_lower = cells_data[0].get('cutoff_voltage_lower') if cells_data else None
+        cutoff_voltage_upper = cells_data[0].get('cutoff_voltage_upper') if cells_data else None
+        
         # Extract formulation from first cell for formulation_json field
         representative_formulation = None
         if cells_data and cells_data[0].get('formulation'):
             representative_formulation = json.dumps(cells_data[0]['formulation'])
         
+        # Process cells to extract data to parquet
+        if cells_data:
+            for cell in cells_data:
+                d_json = cell.get('data_json')
+                # If d_json is present and substantial (looks like a dataframe json)
+                if d_json and len(str(d_json)) > 100: 
+                    try:
+                        # Convert to DF and save
+                        df = pd.read_json(StringIO(d_json)) if isinstance(d_json, str) else pd.DataFrame(d_json)
+                        if not df.empty:
+                            path = _save_df_to_parquet(df, prefix="cell_multi")
+                            cell['parquet_path'] = path
+                            cell['data_json'] = None # Clear embedded data
+                    except Exception as e:
+                        logger.error(f"Error converting cell data to parquet: {e}")
+
         # Prepare experiment data including cell format information
         experiment_data = {
             'experiment_date': experiment_date.isoformat() if experiment_date else None,
@@ -502,13 +667,13 @@ def save_experiment(project_id, experiment_name, experiment_date, disc_diameter_
         
         cursor.execute('''
             INSERT INTO cell_experiments 
-            (project_id, cell_name, file_name, electrolyte, substrate, separator, formulation_json, data_json, solids_content, pressed_thickness, experiment_notes, porosity)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (project_id, cell_name, file_name, electrolyte, substrate, separator, formulation_json, data_json, solids_content, pressed_thickness, experiment_notes, porosity, cutoff_voltage_lower, cutoff_voltage_upper)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (project_id, experiment_name, f"{experiment_name}.json", representative_electrolyte, representative_substrate, representative_separator, representative_formulation, json.dumps(experiment_data), solids_content, pressed_thickness, experiment_notes, 
         # Calculate average porosity only from cells with valid porosity values
         sum(cell.get("porosity", 0) for cell in cells_data if cell.get("porosity") is not None and cell.get("porosity") > 0) / 
         len([cell for cell in cells_data if cell.get("porosity") is not None and cell.get("porosity") > 0]) 
-        if cells_data and any(cell.get("porosity") is not None and cell.get("porosity") > 0 for cell in cells_data) else 0))
+        if cells_data and any(cell.get("porosity") is not None and cell.get("porosity") > 0 for cell in cells_data) else 0, cutoff_voltage_lower, cutoff_voltage_upper))
         # Update project last_modified
         cursor.execute('''
             UPDATE projects 
@@ -554,6 +719,10 @@ def update_experiment(experiment_id, project_id, experiment_name, experiment_dat
         representative_substrate = cells_data[0].get('substrate', 'Copper') if cells_data else 'Copper'
         representative_separator = cells_data[0].get('separator', '25um PP') if cells_data else '25um PP'
         
+        # Extract cutoff voltages from first cell
+        cutoff_voltage_lower = cells_data[0].get('cutoff_voltage_lower') if cells_data else None
+        cutoff_voltage_upper = cells_data[0].get('cutoff_voltage_upper') if cells_data else None
+        
         # Extract formulation from first cell for formulation_json field
         representative_formulation = None
         if cells_data and cells_data[0].get('formulation'):
@@ -575,15 +744,39 @@ def update_experiment(experiment_id, project_id, experiment_name, experiment_dat
         if cell_format_data:
             experiment_data.update(cell_format_data)
         
+        # Process cells to extract data to parquet
+        if cells_data:
+            for cell in cells_data:
+                d_json = cell.get('data_json')
+                if d_json and len(str(d_json)) > 100:
+                    try:
+                         # Check if it's already a path? No, assuming input is full data from frontend
+                         # But wait, if we load -> edit -> save, 
+                         # 'data_json' from frontend might be a huge JSON string.
+                         
+                         df = pd.read_json(StringIO(d_json)) if isinstance(d_json, str) else pd.DataFrame(d_json)
+                         if not df.empty:
+                            path = _save_df_to_parquet(df, prefix="cell_multi")
+                            cell['parquet_path'] = path
+                            cell['data_json'] = None
+                            
+                            # Clean up old file if there was one? 
+                            # Hard to track unless we kept the old path in the cell data passed from frontend.
+                            # The frontend hydrates it, so 'parquet_path' key might be lost/overwritten?
+                            # If frontend preserves unknown keys, 'parquet_path' might be there.
+                            # If we overwrite it, we orphan the old file. Minimal issue for now.
+                    except Exception as e:
+                        logger.error(f"Error in update_experiment parquet conversion: {e}")
+
         cursor.execute('''
             UPDATE cell_experiments 
-            SET cell_name = ?, file_name = ?, electrolyte = ?, substrate = ?, separator = ?, formulation_json = ?, data_json = ?, solids_content = ?, pressed_thickness = ?, experiment_notes = ?, porosity = ?
+            SET cell_name = ?, file_name = ?, electrolyte = ?, substrate = ?, separator = ?, formulation_json = ?, data_json = ?, solids_content = ?, pressed_thickness = ?, experiment_notes = ?, porosity = ?, cutoff_voltage_lower = ?, cutoff_voltage_upper = ?
             WHERE id = ?
         ''', (experiment_name, f"{experiment_name}.json", representative_electrolyte, representative_substrate, representative_separator, representative_formulation, json.dumps(experiment_data), solids_content, pressed_thickness, experiment_notes, 
         # Calculate average porosity only from cells with valid porosity values
         sum(cell.get("porosity", 0) for cell in cells_data if cell.get("porosity") is not None and cell.get("porosity") > 0) / 
         len([cell for cell in cells_data if cell.get("porosity") is not None and cell.get("porosity") > 0]) 
-        if cells_data and any(cell.get("porosity") is not None and cell.get("porosity") > 0 for cell in cells_data) else 0, experiment_id))
+        if cells_data and any(cell.get("porosity") is not None and cell.get("porosity") > 0 for cell in cells_data) else 0, cutoff_voltage_lower, cutoff_voltage_upper, experiment_id))
         # Update project last_modified
         cursor.execute('''
             UPDATE projects 
@@ -600,11 +793,31 @@ def get_experiment_by_id(experiment_id):
             SELECT id, project_id, cell_name, file_name, loading, active_material, 
                    formation_cycles, test_number, electrolyte, substrate, separator, 
                    formulation_json, data_json, solids_content, pressed_thickness, 
-                   experiment_notes, created_date, porosity
+                   experiment_notes, created_date, porosity, parquet_path
             FROM cell_experiments 
             WHERE id = ?
         ''', (experiment_id,))
-        return cursor.fetchone()
+        row = cursor.fetchone()
+        if not row:
+            return None
+            
+        # Unpack up to porosity (first 18 items)
+        # We need to handle the tuple carefully.
+        # Original caller expects 18 items.
+        # We have 19 items in select.
+        
+        # Hydrate
+        # row indexes: 0=id, 12=data_json, 18=parquet_path
+        d_json = row[12]
+        p_path = row[18]
+        
+        d_json = hydrate_data_json(d_json, p_path, row[0])
+        
+        # Return tuple with hydrated d_json, WITHOUT parquet_path appended 
+        # to maintain backward compatibility with caller unpacking
+        result = list(row[:18])
+        result[12] = d_json
+        return tuple(result)
 
 def generate_duplicate_experiment_name(project_id, base_name):
     """Generate a unique experiment name for duplication by appending (1), (2), etc."""
@@ -753,12 +966,27 @@ def get_all_project_experiments_data(project_id):
         cursor = conn.cursor()
         cursor.execute('''
             SELECT id, cell_name, file_name, loading, active_material, formation_cycles, 
-                   test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes
+                   test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes, cutoff_voltage_lower, cutoff_voltage_upper, parquet_path
             FROM cell_experiments 
             WHERE project_id = ? 
             ORDER BY created_date DESC
         ''', (project_id,))
-        return cursor.fetchall()
+        results = cursor.fetchall()
+        
+        hydrated_results = []
+        for row in results:
+            # row: 0=id, 11=data_json, 17=parquet_path
+            d_json = row[11]
+            p_path = row[17]
+            
+            d_json = hydrate_data_json(d_json, p_path, row[0])
+            
+            # Reconstruct row without parquet_path (length 17)
+            new_row = list(row[:17])
+            new_row[11] = d_json
+            hydrated_results.append(tuple(new_row))
+            
+        return hydrated_results
 
 def get_project_preferences(project_id):
     """Get all preferences for a project."""
@@ -824,17 +1052,28 @@ def get_experiments_by_formulation_component(project_id, component_name, min_per
             SELECT id, project_id, cell_name, file_name, loading, active_material, 
                    formation_cycles, test_number, electrolyte, substrate, separator, 
                    formulation_json, data_json, solids_content, pressed_thickness, 
-                   experiment_notes, created_date, porosity
+                   experiment_notes, created_date, porosity, parquet_path
             FROM cell_experiments 
-            WHERE project_id = ? AND (formulation_json IS NOT NULL OR data_json IS NOT NULL)
+            WHERE project_id = ? AND (formulation_json IS NOT NULL OR data_json IS NOT NULL OR parquet_path IS NOT NULL)
         ''', (project_id,))
         
         all_experiments = cursor.fetchall()
         matching_experiments = []
         
         for exp in all_experiments:
+            # Hydrate first
+            # exp: 0=id, 12=data_json, 18=parquet_path
+            d_json = exp[12]
+            p_path = exp[18]
+            d_json = hydrate_data_json(d_json, p_path, exp[0])
+            
+            # Construct hydrated experiment tuple (18 elements)
+            hydrated_exp = list(exp[:18])
+            hydrated_exp[12] = d_json
+            exp = tuple(hydrated_exp)
+            
             formulation_json = exp[11]  # formulation_json is at index 11
-            data_json = exp[12]  # data_json is at index 12
+            data_json = exp[12]  # data_json is at index 12 (now hydrated)
             formulations_to_check = []
             
             # Check formulation_json field
@@ -899,15 +1138,18 @@ def get_formulation_summary(project_id):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT formulation_json, data_json
+            SELECT formulation_json, data_json, parquet_path, id
             FROM cell_experiments 
-            WHERE project_id = ? AND (formulation_json IS NOT NULL OR data_json IS NOT NULL)
+            WHERE project_id = ?
         ''', (project_id,))
         
         results = cursor.fetchall()
         component_summary = {}
         
-        for formulation_json, data_json in results:
+        for formulation_json, data_json, p_path, exp_id in results:
+            d_json = hydrate_data_json(data_json, p_path, exp_id)
+            data_json = d_json
+            
             formulations_to_check = []
             
             # Check formulation_json field

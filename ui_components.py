@@ -4,6 +4,30 @@ from typing import List, Dict, Any, Tuple
 import pandas as pd
 import uuid
 import numpy as np
+import math
+
+def int_to_roman(num: int) -> str:
+    """Convert an integer to lowercase roman numeral."""
+    val = [
+        1000, 900, 500, 400,
+        100, 90, 50, 40,
+        10, 9, 5, 4,
+        1
+    ]
+    syms = [
+        'm', 'cm', 'd', 'cd',
+        'c', 'xc', 'l', 'xl',
+        'x', 'ix', 'v', 'iv',
+        'i'
+    ]
+    roman_num = ''
+    i = 0
+    while num > 0:
+        for _ in range(num // val[i]):
+            roman_num += syms[i]
+            num -= val[i]
+        i += 1
+    return roman_num
 
 # Comprehensive Separator Database
 COMPREHENSIVE_SEPARATORS = [
@@ -73,6 +97,7 @@ COMPREHENSIVE_ELECTROLYTES = [
     "1M LiPF6 EC:DMC:EMC (1:1:1)",
     "1M LiPF6 EC:DMC:EMC (3:3:4)",
     "1M LiPF6 EC:DMC:EMC (1:1:1) + 2% VC",
+    "1M LiPF6 EC:EMC:DMC 1:1:1 + 2% LiDFOB",
     "1M LiPF6 EC:DMC:EMC (1:1:1) + 5% FEC",
     "1M LiPF6 EC:DMC:EMC (1:1:1) + 10% FEC",
     "1M LiPF6 EC:DMC:EMC (1:1:1) + 2% VC + 5% FEC",
@@ -147,7 +172,9 @@ BATTERY_MATERIALS = {
         "Lithium Nickel Manganese Cobalt Oxide (NMC)", "Lithium Nickel Cobalt Aluminum Oxide (NCA)",
         "Lithium Manganese Oxide (LMO)", "Lithium Titanate (LTO)", "Lithium Metal",
         "Sulfur", "Oxygen", "Lithium Nickel Oxide", "Lithium Manganese Spinel",
-        "Lithium Vanadium Phosphate", "Lithium Iron Sulfate", "Lithium Cobalt Phosphate"
+        "Lithium Vanadium Phosphate", "Lithium Iron Sulfate", "Lithium Cobalt Phosphate",
+        "NMC811", "NMC811 (MSE)", "NMC811 (BASF)", "NMC811DASF", "NMC811 MSC",
+        "NMC622", "NMC532", "NMC111"
     ],
     "Binders": [
         "Polyvinylidene Fluoride (PVDF)", "Carboxymethyl Cellulose (CMC)", "Styrene Butadiene Rubber (SBR)",
@@ -611,30 +638,78 @@ def calculate_cell_metrics(df_cell, formation_cycles, disc_area_cm2):
     # Coulombic Efficiency (post-formation)
     eff_col = 'Efficiency (-)'
     qdis_col = 'Q Dis (mAh/g)'
+    qch_col = 'Q Ch (mAh/g)'
     n_cycles = len(df_cell)
     ceff_values = []
-    if eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
-        prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
-        prev_eff = df_cell[eff_col].iloc[formation_cycles]
-        for i in range(formation_cycles+1, n_cycles):
-            curr_qdis = df_cell[qdis_col].iloc[i]
-            curr_eff = df_cell[eff_col].iloc[i]
-            try:
-                pq = float(prev_qdis)
-                cq = float(curr_qdis)
-                pe = float(prev_eff)
-                ce = float(curr_eff)
-                if pq > 0 and (cq < 0.95 * pq or ce < 0.95 * pe):
-                    break
-                ceff_values.append(ce)
-                prev_qdis = cq
-                prev_eff = ce
-            except (ValueError, TypeError):
-                continue
     
-    if ceff_values:
-        metrics['coulombic_eff'] = sum(ceff_values) / len(ceff_values) * 100
-    else:
+    try:
+        start_idx = formation_cycles if n_cycles > formation_cycles else 0
+        
+        # Prefer calculating from Q Dis / Q Ch per cycle; fall back to provided efficiency column
+        if qdis_col in df_cell.columns and qch_col in df_cell.columns:
+            qdis_series = pd.to_numeric(df_cell[qdis_col], errors='coerce')
+            qch_series = pd.to_numeric(df_cell[qch_col], errors='coerce')
+            
+            # Use degradation check logic: stop if capacity drops significantly
+            if n_cycles > formation_cycles + 1:
+                prev_qdis = qdis_series.iloc[formation_cycles]
+                for i in range(formation_cycles + 1, n_cycles):
+                    qdis = qdis_series.iloc[i]
+                    qch = qch_series.iloc[i]
+                    try:
+                        pq = float(prev_qdis) if pd.notna(prev_qdis) else 0
+                        qd = float(qdis) if pd.notna(qdis) else 0
+                        qc = float(qch) if pd.notna(qch) else 0
+                        
+                        # Stop if capacity drops significantly
+                        if pq > 0 and qd < 0.95 * pq:
+                            break
+                        
+                        # Calculate efficiency if we have valid data
+                        if pd.notna(qdis) and pd.notna(qch) and qc > 0:
+                            ceff_values.append((qd / qc) * 100)
+                            prev_qdis = qd
+                    except (ValueError, TypeError):
+                        continue
+            else:
+                # Simple calculation without degradation check if not enough cycles
+                for i in range(start_idx, n_cycles):
+                    qdis = qdis_series.iloc[i]
+                    qch = qch_series.iloc[i]
+                    if pd.notna(qdis) and pd.notna(qch) and qch > 0:
+                        ceff_values.append((qdis / qch) * 100)
+        
+        elif eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
+            # Fallback to efficiency column with degradation check
+            prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
+            prev_eff = df_cell[eff_col].iloc[formation_cycles]
+            for i in range(formation_cycles+1, n_cycles):
+                curr_qdis = df_cell[qdis_col].iloc[i]
+                curr_eff = df_cell[eff_col].iloc[i]
+                try:
+                    pq = float(prev_qdis)
+                    cq = float(curr_qdis)
+                    pe = float(prev_eff)
+                    ce = float(curr_eff)
+                    if pq > 0 and (cq < 0.95 * pq or ce < 0.95 * pe):
+                        break
+                    # Convert efficiency from decimal (0-1) to percentage
+                    ceff_values.append(ce * 100)
+                    prev_qdis = cq
+                    prev_eff = ce
+                except (ValueError, TypeError):
+                    continue
+        
+        elif eff_col in df_cell.columns:
+            # Simple fallback: just use efficiency column without degradation check
+            eff_series = pd.to_numeric(df_cell[eff_col], errors='coerce')
+            ceff_values = [val * 100 for val in eff_series.iloc[start_idx:n_cycles] if pd.notna(val) and val > 0]
+        
+        if ceff_values:
+            metrics['coulombic_eff'] = sum(ceff_values) / len(ceff_values)
+        else:
+            metrics['coulombic_eff'] = None
+    except Exception as e:
         metrics['coulombic_eff'] = None
     
     return metrics
@@ -1065,8 +1140,251 @@ def render_comparison_plot_options(experiments_data: List[Dict[str, Any]]) -> Tu
     
     return show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, cycle_filter, y_axis_limits
 
-def render_cell_inputs(context_key=None, project_id=None, get_components_func=None):
-    """Render multi-file upload and per-file inputs for each cell. Returns datasets list."""
+
+def render_full_cell_mass_balance_inputs(context_key=None, cell_format="Coin"):
+    """Render Full Cell specific Mass Balance & Geometry inputs.
+    
+    Args:
+        context_key: Unique key for this render context
+        cell_format: Cell format ("Coin", "Pouch", "Cylindrical", "Prismatic")
+    
+    Returns:
+        dict: Full cell parameters including anode/cathode specifications and calculated metrics
+    """
+    if context_key is None:
+        context_key = str(uuid.uuid4())
+    
+    st.markdown("### ⚖️ Mass Balance & Geometry Configuration")
+    st.info("📌 Full Cell Project: Configure anode and cathode specifications for N/P ratio and overhang calculations")
+    
+    # Determine default diameters for coin cells
+    if cell_format == "Coin":
+        default_anode_diameter = 16.0  # mm
+        default_cathode_diameter = 15.0  # mm
+    else:
+        # For other formats, use defaults that convert to reasonable areas
+        default_anode_diameter = 16.0  # mm
+        default_cathode_diameter = 15.0  # mm
+    
+    # Get current values or use defaults
+    anode_diameter_key = f'anode_diameter_{context_key}'
+    cathode_diameter_key = f'cathode_diameter_{context_key}'
+    anode_loading_manual_key = f'anode_loading_manual_{context_key}'
+    cathode_loading_manual_key = f'cathode_loading_manual_{context_key}'
+    
+    # Initialize diameter values
+    if anode_diameter_key not in st.session_state:
+        st.session_state[anode_diameter_key] = default_anode_diameter
+    if cathode_diameter_key not in st.session_state:
+        st.session_state[cathode_diameter_key] = default_cathode_diameter
+    
+    # Create two columns for Anode and Cathode
+    col_anode, col_cathode = st.columns(2)
+    
+    with col_anode:
+        st.markdown("#### 🔋 Anode Specifications")
+        anode_mass = st.number_input(
+            'Active Material Mass (mg)',
+            min_value=0.0,
+            step=0.1,
+            value=st.session_state.get(f'anode_mass_{context_key}', 10.0),
+            key=f'anode_mass_{context_key}',
+            help="Mass of anode active material"
+        )
+        
+        # Calculate diameter from area if area was previously stored, otherwise use diameter
+        anode_diameter = st.number_input(
+            'Diameter (mm)',
+            min_value=0.1,
+            step=0.1,
+            value=st.session_state[anode_diameter_key],
+            key=anode_diameter_key,
+            help="Diameter of anode electrode disc"
+        )
+        
+        # Calculate area from diameter (in cm²)
+        anode_area = math.pi * (anode_diameter / 20.0) ** 2  # Convert mm to cm: diameter/2/10 = diameter/20
+        
+        # Calculate loading from mass and area
+        calculated_anode_loading = anode_mass / anode_area if anode_area > 0 else 0.0
+        
+        # Check if user has manually set loading (track in session state)
+        if anode_loading_manual_key not in st.session_state:
+            st.session_state[anode_loading_manual_key] = False
+        
+        # If user changes loading manually, mark it as manual
+        # Use calculated value unless user has manually overridden
+        if st.session_state[anode_loading_manual_key]:
+            default_loading = st.session_state.get(f'anode_loading_{context_key}', calculated_anode_loading)
+        else:
+            default_loading = calculated_anode_loading
+            st.session_state[f'anode_loading_{context_key}'] = calculated_anode_loading
+        
+        anode_loading = st.number_input(
+            'Loading (mg/cm²)',
+            min_value=0.0,
+            step=0.1,
+            value=default_loading,
+            key=f'anode_loading_{context_key}',
+            help="Anode active material loading per unit area (calculated from mass and area, can be overwritten)"
+        )
+        
+        # Detect if user manually changed loading
+        if abs(anode_loading - calculated_anode_loading) > 0.001:  # Small tolerance for floating point
+            st.session_state[anode_loading_manual_key] = True
+        elif anode_mass == 0 or anode_area == 0:
+            # Reset manual flag if mass or area is zero
+            st.session_state[anode_loading_manual_key] = False
+        
+        anode_thickness = st.number_input(
+            'Electrode Thickness (μm)',
+            min_value=0.0,
+            step=1.0,
+            value=st.session_state.get(f'anode_thickness_{context_key}', 50.0),
+            key=f'anode_thickness_{context_key}',
+            help="Total thickness of anode electrode"
+        )
+    
+    with col_cathode:
+        st.markdown("#### 🔋 Cathode Specifications")
+        cathode_mass = st.number_input(
+            'Active Material Mass (mg)',
+            min_value=0.0,
+            step=0.1,
+            value=st.session_state.get(f'cathode_mass_{context_key}', 12.0),
+            key=f'cathode_mass_{context_key}',
+            help="Mass of cathode active material"
+        )
+        
+        cathode_diameter = st.number_input(
+            'Diameter (mm)',
+            min_value=0.1,
+            step=0.1,
+            value=st.session_state[cathode_diameter_key],
+            key=cathode_diameter_key,
+            help="Diameter of cathode electrode disc"
+        )
+        
+        # Calculate area from diameter (in cm²)
+        cathode_area = math.pi * (cathode_diameter / 20.0) ** 2  # Convert mm to cm: diameter/2/10 = diameter/20
+        
+        # Calculate loading from mass and area
+        calculated_cathode_loading = cathode_mass / cathode_area if cathode_area > 0 else 0.0
+        
+        # Check if user has manually set loading (track in session state)
+        if cathode_loading_manual_key not in st.session_state:
+            st.session_state[cathode_loading_manual_key] = False
+        
+        # If user changes loading manually, mark it as manual
+        # Use calculated value unless user has manually overridden
+        if st.session_state[cathode_loading_manual_key]:
+            default_loading = st.session_state.get(f'cathode_loading_{context_key}', calculated_cathode_loading)
+        else:
+            default_loading = calculated_cathode_loading
+            st.session_state[f'cathode_loading_{context_key}'] = calculated_cathode_loading
+        
+        cathode_loading = st.number_input(
+            'Loading (mg/cm²)',
+            min_value=0.0,
+            step=0.1,
+            value=default_loading,
+            key=f'cathode_loading_{context_key}',
+            help="Cathode active material loading per unit area (calculated from mass and area, can be overwritten)"
+        )
+        
+        # Detect if user manually changed loading
+        if abs(cathode_loading - calculated_cathode_loading) > 0.001:  # Small tolerance for floating point
+            st.session_state[cathode_loading_manual_key] = True
+        elif cathode_mass == 0 or cathode_area == 0:
+            # Reset manual flag if mass or area is zero
+            st.session_state[cathode_loading_manual_key] = False
+        
+        cathode_thickness = st.number_input(
+            'Electrode Thickness (μm)',
+            min_value=0.0,
+            step=1.0,
+            value=st.session_state.get(f'cathode_thickness_{context_key}', 60.0),
+            key=f'cathode_thickness_{context_key}',
+            help="Total thickness of cathode electrode"
+        )
+    
+    # Calculate derived metrics
+    st.markdown("---")
+    st.markdown("#### 📊 Calculated Key Metrics")
+    
+    # Calculate overhang ratio (Anode-to-Cathode area ratio)
+    overhang_ratio = anode_area / cathode_area if cathode_area > 0 else 0
+    
+    # Display calculated metrics in columns
+    metric_col1, metric_col2, metric_col3 = st.columns(3)
+    
+    with metric_col1:
+        st.metric(
+            "Overhang Ratio (A/C)",
+            f"{overhang_ratio:.3f}",
+            help="Ratio of anode to cathode areal dimensions"
+        )
+        if overhang_ratio < 1.0:
+            st.warning("⚠️ Overhang < 1.0: Anode is smaller than cathode")
+    
+    with metric_col2:
+        # N/P ratio will be calculated from formation capacities - show placeholder
+        st.metric(
+            "N/P Ratio",
+            "To be calculated",
+            help="Negative/Positive capacity ratio (calculated from formation data)"
+        )
+        st.caption("📝 N/P ratio calculated after uploading cycling data")
+    
+    with metric_col3:
+        # Show anode/cathode capacity balance estimate
+        anode_specific_capacity = 372.0  # Typical graphite capacity (mAh/g)
+        cathode_specific_capacity = 180.0  # Typical NMC capacity (mAh/g)
+        
+        anode_capacity_est = anode_mass * anode_specific_capacity / 1000  # Convert to mAh
+        cathode_capacity_est = cathode_mass * cathode_specific_capacity / 1000  # Convert to mAh
+        
+        np_ratio_est = anode_capacity_est / cathode_capacity_est if cathode_capacity_est > 0 else 0
+        
+        st.metric(
+            "N/P Ratio (Estimate)",
+            f"{np_ratio_est:.3f}",
+            help=f"Estimated N/P ratio using typical capacities\nAnode: {anode_specific_capacity} mAh/g, Cathode: {cathode_specific_capacity} mAh/g"
+        )
+        
+        if np_ratio_est < 1.0:
+            st.error("🚨 N/P < 1.0: High lithium plating risk!")
+        elif np_ratio_est < 1.05:
+            st.warning("⚠️ N/P < 1.05: Low safety margin")
+        else:
+            st.success("✅ N/P ratio in safe range")
+    
+    # Return all the data (including calculated areas from diameters)
+    return {
+        'anode_mass': anode_mass,
+        'cathode_mass': cathode_mass,
+        'anode_loading': anode_loading,
+        'cathode_loading': cathode_loading,
+        'anode_thickness': anode_thickness,
+        'cathode_thickness': cathode_thickness,
+        'anode_diameter': anode_diameter,
+        'cathode_diameter': cathode_diameter,
+        'anode_area': anode_area,
+        'cathode_area': cathode_area,
+        'overhang_ratio': overhang_ratio,
+        'np_ratio_estimate': np_ratio_est
+    }
+
+
+def render_cell_inputs(context_key=None, project_id=None, get_components_func=None, experiment_name=None, project_type='Full Cell'):
+    """Render multi-file upload and per-file inputs for each cell. Returns datasets list.
+    
+    Args:
+        context_key: Unique key for this render context
+        project_id: ID of the project for defaults
+        get_components_func: Function to get formulation components
+        experiment_name: Name of experiment for auto-generating cell names (e.g., "Test i", "Test ii")
+    """
     if context_key is None:
         context_key = str(uuid.uuid4())
     
@@ -1079,10 +1397,18 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
         except ImportError:
             project_defaults = {}
     
+    # Render Full Cell specific inputs first if this is a Full Cell project
+    full_cell_data = None
+    if project_type == 'Full Cell':
+        # Get cell format from session state (set in app.py)
+        cell_format = st.session_state.get('current_cell_format', 'Coin')
+        full_cell_data = render_full_cell_mass_balance_inputs(context_key, cell_format=cell_format)
+        st.markdown("---")
+    
     with st.expander('🧪 Cell Inputs', expanded=True):
         upload_key = f"multi_file_upload_{context_key}"
         uploaded_files = st.file_uploader('Upload CSV or XLSX file(s) for Cells', type=['csv', 'xlsx'], accept_multiple_files=True, key=upload_key)
-        st.caption("💡 Supported formats: Biologic CSV files (semicolon-delimited) and Neware XLSX files (with 'cycle' sheet)")
+        st.caption("💡 Supported formats: Biologic CSV files (semicolon-delimited), Neware XLSX files (with 'cycle' sheet), and MTI XLSX files (with 'Cycle List1' sheet)")
         datasets = []
         if uploaded_files:
             # Handle multiple cells with assign-to-all functionality
@@ -1110,7 +1436,9 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         formation_cycles_0 = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
                     with col2:
                         active_material_0 = st.number_input(f'% Active material for Cell 1', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_0')
-                        test_number_0 = st.text_input(f'Test Number for Cell 1', value='Cell 1', key=f'testnum_0')
+                        # Auto-generate cell name using experiment name + roman numeral
+                        default_cell_name = f"{experiment_name} {int_to_roman(1)}" if experiment_name else 'Cell 1'
+                        test_number_0 = st.text_input(f'Test Number for Cell 1', value=default_cell_name, key=f'testnum_0')
                     
                     # Electrolyte, Substrate, and Separator selection
                     substrate_options = get_substrate_options()
@@ -1131,6 +1459,29 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             f'Separator for Cell 1', 
                             default_value=separator_default,
                             key=f'separator_0'
+                        )
+                    
+                    # Cutoff voltages
+                    col6, col7 = st.columns(2)
+                    with col6:
+                        cutoff_lower_0 = st.number_input(
+                            'Lower Cutoff Voltage (V)', 
+                            min_value=0.0, 
+                            max_value=10.0, 
+                            value=st.session_state.get('cutoff_lower_0', 2.5),
+                            step=0.1,
+                            key='cutoff_lower_0',
+                            help="Lower voltage cutoff (e.g., 2.5V). Auto-extracted from MTI/Neware files."
+                        )
+                    with col7:
+                        cutoff_upper_0 = st.number_input(
+                            'Upper Cutoff Voltage (V)', 
+                            min_value=0.0, 
+                            max_value=10.0, 
+                            value=st.session_state.get('cutoff_upper_0', 4.2),
+                            step=0.1,
+                            key='cutoff_upper_0',
+                            help="Upper voltage cutoff (e.g., 4.2V). Auto-extracted from MTI/Neware files."
                         )
                     
                     # Formulation table
@@ -1171,7 +1522,9 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                     'electrolyte': electrolyte_0,
                     'substrate': substrate_0,
                     'separator': separator_0,
-                    'formulation': formulation_0
+                    'formulation': formulation_0,
+                    'cutoff_voltage_lower': cutoff_lower_0,
+                    'cutoff_voltage_upper': cutoff_upper_0
                 })
                 
                 # Handle remaining cells
@@ -1188,6 +1541,8 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             substrate = substrate_0
                             separator = separator_0
                             formulation = formulation_0
+                            cutoff_lower = cutoff_lower_0
+                            cutoff_upper = cutoff_upper_0
                         else:
                             # Individual inputs for this cell
                             loading_default = st.session_state.get(f'loading_{i}', disc_loading_0)
@@ -1228,6 +1583,29 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                                 key=f'separator_{i}'
                             )
                             
+                            # Cutoff voltages
+                            cutoff_col1, cutoff_col2 = st.columns(2)
+                            with cutoff_col1:
+                                cutoff_lower = st.number_input(
+                                    f'Lower Cutoff Voltage (V) for Cell {i+1}', 
+                                    min_value=0.0, 
+                                    max_value=10.0, 
+                                    value=st.session_state.get(f'cutoff_lower_{i}', cutoff_lower_0),
+                                    step=0.1,
+                                    key=f'cutoff_lower_{i}',
+                                    help="Lower voltage cutoff (e.g., 2.5V). Auto-extracted from MTI/Neware files."
+                                )
+                            with cutoff_col2:
+                                cutoff_upper = st.number_input(
+                                    f'Upper Cutoff Voltage (V) for Cell {i+1}', 
+                                    min_value=0.0, 
+                                    max_value=10.0, 
+                                    value=st.session_state.get(f'cutoff_upper_{i}', cutoff_upper_0),
+                                    step=0.1,
+                                    key=f'cutoff_upper_{i}',
+                                    help="Upper voltage cutoff (e.g., 4.2V). Auto-extracted from MTI/Neware files."
+                                )
+                            
                             # Formulation table - use same formulation if toggle is enabled
                             use_same_formulation_key = f'use_same_formulation_{context_key}'
                             use_same_formulation = st.session_state.get(use_same_formulation_key, True)
@@ -1255,7 +1633,8 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         
                         # Test number is always individual (not assigned to all)
                         with col2:
-                            default_test_num = f'Cell {i+1}'
+                            # Auto-generate cell name using experiment name + roman numeral
+                            default_test_num = f"{experiment_name} {int_to_roman(i+1)}" if experiment_name else f'Cell {i+1}'
                             test_number = st.text_input(f'Test Number for Cell {i+1}', value=default_test_num, key=f'testnum_{i}')
                         
                         datasets.append({
@@ -1267,7 +1646,9 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             'electrolyte': electrolyte,
                             'substrate': substrate,
                             'separator': separator,
-                            'formulation': formulation
+                            'formulation': formulation,
+                            'cutoff_voltage_lower': cutoff_lower,
+                            'cutoff_voltage_upper': cutoff_upper
                         })
             else:
                 # Single cell - no assign-to-all needed
@@ -1294,7 +1675,9 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         formation_cycles = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
                     with col2:
                         active_material = st.number_input(f'% Active material for Cell 1', min_value=0.0, max_value=100.0, step=1.0, value=active_default, key=f'active_0')
-                        test_number = st.text_input(f'Test Number for Cell 1', value='Cell 1', key=f'testnum_0')
+                        # Auto-generate cell name using experiment name + roman numeral
+                        default_cell_name = f"{experiment_name} {int_to_roman(1)}" if experiment_name else 'Cell 1'
+                        test_number = st.text_input(f'Test Number for Cell 1', value=default_cell_name, key=f'testnum_0')
                     
                     # Electrolyte, Substrate, and Separator selection
                     substrate_options = get_substrate_options()
@@ -1317,6 +1700,29 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             key=f'separator_0'
                         )
                     
+                    # Cutoff voltages
+                    cutoff_col1, cutoff_col2 = st.columns(2)
+                    with cutoff_col1:
+                        cutoff_lower = st.number_input(
+                            'Lower Cutoff Voltage (V)', 
+                            min_value=0.0, 
+                            max_value=10.0, 
+                            value=st.session_state.get('cutoff_lower_0', 2.5),
+                            step=0.1,
+                            key='cutoff_lower_0_single',
+                            help="Lower voltage cutoff (e.g., 2.5V). Auto-extracted from MTI/Neware files."
+                        )
+                    with cutoff_col2:
+                        cutoff_upper = st.number_input(
+                            'Upper Cutoff Voltage (V)', 
+                            min_value=0.0, 
+                            max_value=10.0, 
+                            value=st.session_state.get('cutoff_upper_0', 4.2),
+                            step=0.1,
+                            key='cutoff_upper_0_single',
+                            help="Upper voltage cutoff (e.g., 4.2V). Auto-extracted from MTI/Neware files."
+                        )
+                    
                     # Formulation table
                     st.markdown("**Formulation:**")
                     formulation = render_formulation_table(f'formulation_0_{context_key}', project_id, get_components_func)
@@ -1330,9 +1736,11 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                         'electrolyte': electrolyte,
                         'substrate': substrate,
                         'separator': separator,
-                        'formulation': formulation
+                        'formulation': formulation,
+                        'cutoff_voltage_lower': cutoff_lower,
+                        'cutoff_voltage_upper': cutoff_upper
                     })
-    return datasets
+    return datasets, full_cell_data
 
 def render_formulation_table(key_suffix, project_id=None, get_components_func=None):
     """Render a formulation table with Component and Dry Mass Fraction columns using autocomplete."""

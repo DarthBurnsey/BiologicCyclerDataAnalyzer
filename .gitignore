@@ -25,10 +25,15 @@ env/
 .DS_Store
 Thumbs.db
 
-# Database (optional - uncomment if you don't want to track database)
-# *.db
-# *.sqlite
-# *.sqlite3
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Raw data files (binary experiment data)
+data/
+*.xlsx
+*.xls
 
 # Streamlit
 .streamlit/
