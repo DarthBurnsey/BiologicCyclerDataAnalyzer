@@ -72,6 +72,10 @@ from interactive_plots import (
     plot_interactive_capacity, plot_interactive_retention, plot_interactive_comparison_capacity,
     plot_interactive_comparison_metrics
 )
+from cycler_tracking import (
+    create_tracking_draft_experiment, get_tracking_dashboard_payload,
+    sync_tracking_rows_to_database
+)
 
 EDITOR_STATE_PREFIXES = (
     'loading_', 'active_', 'testnum_', 'formation_cycles_', 'electrolyte_', 'substrate_',
@@ -175,6 +179,26 @@ def open_experiment_from_sidebar(experiment_id, project_id, project_name):
     st.session_state['_sidebar_pending_experiment_jump'] = (project_id, experiment_id)
     st.session_state['start_new_experiment'] = False
 
+
+def open_tracking_row_from_dashboard(tracking_row):
+    experiment_id = tracking_row.get('db_experiment_id')
+    project_id = tracking_row.get('project_id')
+    project_name = tracking_row.get('project_name')
+
+    if not experiment_id:
+        if not project_id or not project_name:
+            st.error("Unable to determine which project should receive that tracking record.")
+            return
+        experiment_id = create_tracking_draft_experiment(tracking_row)
+        clear_navigation_caches()
+
+    if not experiment_id or not project_id or not project_name:
+        st.error("Unable to open that tracking record in Cell Inputs.")
+        return
+
+    open_experiment_from_sidebar(experiment_id, project_id, project_name)
+    st.session_state['show_cell_inputs_prompt'] = True
+
 # =============================
 # Battery Data Gravimetric Capacity Calculator App
 # =============================
@@ -216,6 +240,7 @@ with st.container():
                 
                 # Get updated cells data from session state (includes exclude changes)
                 current_datasets = st.session_state.get('datasets', [])
+                pressed_thickness = st.session_state.get('pressed_thickness', experiment_data.get('pressed_thickness'))
                 updated_cells_data = []
                 recalculated_cells = []
                 
@@ -241,7 +266,7 @@ with st.container():
                     original_active = original_cell.get('active_material', 0)
                     
                     # Recalculate gravimetric capacities if loading or active material changed
-                    updated_data_json = original_cell.get('data_json', '{}')
+                    updated_data_json = original_cell.get('data_json')
                     if (new_loading != original_loading or new_active != original_active) and updated_data_json:
                         try:
                             # Parse the original DataFrame
@@ -283,7 +308,8 @@ with st.container():
                     new_cutoff_upper = dataset.get('cutoff_voltage_upper', original_cell.get('cutoff_voltage_upper'))
                     
                     # Convert session state dataset back to cells data format
-                    updated_cell = {
+                    updated_cell = original_cell.copy()
+                    updated_cell.update({
                         'loading': new_loading,
                         'active_material': new_active,
                         'formation_cycles': new_formation,
@@ -297,13 +323,17 @@ with st.container():
                         'formulation': dataset.get('formulation', []),
                         'excluded': dataset.get('excluded', False),
                         'data_json': updated_data_json,
-                        'porosity': porosity
-                    }
+                        'porosity': porosity,
+                        'file_name': original_cell.get('file_name'),
+                        'cycler': dataset.get('cycler', original_cell.get('cycler')),
+                        'channel': dataset.get('channel', original_cell.get('channel')),
+                        'cycler_channel': dataset.get('cycler_channel', original_cell.get('cycler_channel')),
+                        'tracking_placeholder': original_cell.get('tracking_placeholder', False)
+                    })
                     updated_cells_data.append(updated_cell)
 
                 # Get additional experiment data
                 solids_content = st.session_state.get('solids_content', experiment_data.get('solids_content'))
-                pressed_thickness = st.session_state.get('pressed_thickness', experiment_data.get('pressed_thickness'))
                 experiment_notes = st.session_state.get('experiment_notes', experiment_data.get('experiment_notes'))
                 
                 # Prepare cell format data if it's a Full Cell project
@@ -952,6 +982,120 @@ else:
 # --- Dashboard Tab ---
 with tab_dashboard:
     st.header("📊 Battery Testing Dashboard")
+
+    tracking_payload = get_tracking_dashboard_payload()
+    if tracking_payload.get('available'):
+        synced_records = sync_tracking_rows_to_database(tracking_payload['rows'])
+        if synced_records:
+            tracking_payload = get_tracking_dashboard_payload()
+
+        tracking_rows = tracking_payload['rows']
+        tracking_summary = tracking_payload['summary']
+
+        st.subheader("⚡ Cycler Tracking")
+        tracking_metric_cols = st.columns(4)
+        tracking_metric_cols[0].metric("Active Experiments", tracking_summary['active_experiments'])
+        tracking_metric_cols[1].metric("Active Cells", tracking_summary['active_cells'])
+        tracking_metric_cols[2].metric("Completed Experiments", tracking_summary['completed_experiments'])
+        dud_value = tracking_summary['suspected_dud_cells']
+        dud_delta = (
+            f"{tracking_summary['defect_fraction']:.1%} dud rate"
+            if tracking_summary.get('defect_fraction') is not None
+            else None
+        )
+        tracking_metric_cols[3].metric("Suspected Dud Cells", dud_value, dud_delta)
+
+        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([2, 2, 1, 1])
+        available_statuses = sorted({row['status'] for row in tracking_rows})
+        selected_statuses = filter_col1.multiselect(
+            "Tracking Status",
+            options=available_statuses,
+            default=['Active'] if 'Active' in available_statuses else available_statuses,
+            key='tracking_status_filter'
+        )
+        available_projects = sorted({row['project_name'] for row in tracking_rows if row.get('project_name')})
+        selected_tracking_projects = filter_col2.multiselect(
+            "Tracking Projects",
+            options=available_projects,
+            default=available_projects,
+            key='tracking_project_filter'
+        )
+        dud_only = filter_col3.checkbox(
+            "Duds only",
+            value=False,
+            key='tracking_duds_only',
+            help="Only show experiments where fewer cells made it into the database than were placed on cyclers."
+        )
+        issue_only = filter_col4.checkbox(
+            "Issues only",
+            value=False,
+            key='tracking_issues_only',
+            help="Only show duplicate names, missing channels, or other tracking anomalies."
+        )
+
+        filtered_tracking_rows = []
+        for row in tracking_rows:
+            if selected_statuses and row['status'] not in selected_statuses:
+                continue
+            if selected_tracking_projects and row.get('project_name') not in selected_tracking_projects:
+                continue
+            if dud_only and row.get('missing_cell_count', 0) <= 0:
+                continue
+            if issue_only and not row.get('alerts'):
+                continue
+            filtered_tracking_rows.append(row)
+
+        tracking_table = pd.DataFrame([
+            {
+                'Status': row['status'],
+                'Experiment': row['experiment_name'],
+                'Project': row.get('project_name') or 'Unresolved',
+                'Tracking Date': row.get('tracking_date_display') or '',
+                'Tracked Cells': row.get('tracked_cell_count', 0),
+                'DB Cells': row.get('database_cell_count', 0),
+                'Missing Cells': row.get('missing_cell_count', 0),
+                'Cyclers': row.get('cycler_channel_text') or 'Missing',
+                'Notes': row.get('notes') or '',
+                'Flags': ' | '.join(row.get('alerts', []))
+            }
+            for row in filtered_tracking_rows
+        ])
+
+        st.caption(f"{len(filtered_tracking_rows)} tracking row(s) shown")
+        if not tracking_table.empty:
+            st.dataframe(tracking_table, use_container_width=True, hide_index=True)
+        else:
+            st.info("No tracking rows match the current filters.")
+
+        actionable_rows = [row for row in filtered_tracking_rows if row.get('can_open_in_editor')]
+        if actionable_rows:
+            selected_tracking_row_key = st.selectbox(
+                "Open in Cell Inputs",
+                options=[row['row_key'] for row in actionable_rows],
+                format_func=lambda key: next(
+                    (
+                        f"{row['experiment_name']} | {row.get('project_name') or 'Unresolved'} | "
+                        f"{row['status']} | {row.get('tracking_date_display') or 'No date'}"
+                    )
+                    for row in actionable_rows if row['row_key'] == key
+                ),
+                key='tracking_open_selector'
+            )
+            selected_tracking_row = next(
+                row for row in actionable_rows if row['row_key'] == selected_tracking_row_key
+            )
+            action_label = (
+                "Open Existing Experiment"
+                if selected_tracking_row.get('db_experiment_id')
+                else "Create Draft in Cell Inputs"
+            )
+            if st.button(action_label, key='tracking_open_button', use_container_width=True):
+                open_tracking_row_from_dashboard(selected_tracking_row)
+                st.rerun()
+        else:
+            st.info("Rows with duplicate unresolved names or unknown projects cannot be opened automatically yet.")
+
+        st.markdown("---")
     
     # Render filter controls in sidebar
     filter_params = render_filter_controls()
@@ -1218,6 +1362,17 @@ with tab_inputs:
             st.info(f"Setting up experiment: **{loaded_experiment['experiment_name']}** (ready for data upload)")
         else:
             st.info(f"Editing experiment: **{loaded_experiment['experiment_name']}**")
+
+        tracking_metadata = experiment_data.get('tracking')
+        if tracking_metadata:
+            tracking_bits = [
+                f"Tracked on {tracking_metadata.get('tracking_date')}" if tracking_metadata.get('tracking_date') else None,
+                tracking_metadata.get('cycler_channel_text'),
+                f"Expected {tracking_metadata.get('tracked_cell_count')} cell(s)" if tracking_metadata.get('tracked_cell_count') else None,
+            ]
+            tracking_text = " | ".join(bit for bit in tracking_bits if bit)
+            if tracking_text:
+                st.caption(f"Tracking metadata: {tracking_text}")
         
         # Only hydrate editor state when loading a different experiment.
         if initialized_experiment_id != loaded_experiment_id:
@@ -1252,12 +1407,15 @@ with tab_inputs:
             # Convert loaded cells data back to datasets format for editing
             loaded_datasets = []
             for cell_data in cells_data:
-                # Create a mock file object for display purposes
-                mock_file = type('MockFile', (), {
-                    'name': cell_data.get('file_name', 'loaded_data.csv'),
-                    'type': 'text/csv'
-                })()
-                
+                has_data = bool(cell_data.get('data_json') or cell_data.get('parquet_path'))
+                file_name = cell_data.get('file_name')
+                mock_file = None
+                if file_name and has_data:
+                    mock_file = type('MockFile', (), {
+                        'name': file_name,
+                        'type': 'text/csv'
+                    })()
+
                 loaded_datasets.append({
                     'file': mock_file,
                     'loading': cell_data.get('loading', 20.0),
@@ -1270,7 +1428,14 @@ with tab_inputs:
                     'substrate': cell_data.get('substrate', 'Copper'),
                     'separator': cell_data.get('separator', '25um PP'),
                     'formulation': cell_data.get('formulation', []),
-                    'excluded': cell_data.get('excluded', False)  # Add this line
+                    'excluded': cell_data.get('excluded', False),
+                    'cycler': cell_data.get('cycler'),
+                    'channel': cell_data.get('channel'),
+                    'cycler_channel': cell_data.get('cycler_channel'),
+                    'tracking_placeholder': cell_data.get('tracking_placeholder', False),
+                    'uploaded_file_source': False,
+                    'has_data': has_data,
+                    'file_label': file_name or 'No raw file attached yet'
                 })
             
             st.session_state['datasets'] = loaded_datasets
@@ -1773,7 +1938,14 @@ with tab_inputs:
                             'substrate': substrate,
                             'separator': separator,
                             'formulation': formulation,
-                            'excluded': dataset.get('excluded', False)
+                            'excluded': dataset.get('excluded', False),
+                            'cycler': dataset.get('cycler'),
+                            'channel': dataset.get('channel'),
+                            'cycler_channel': dataset.get('cycler_channel'),
+                            'tracking_placeholder': dataset.get('tracking_placeholder', False),
+                            'uploaded_file_source': dataset.get('uploaded_file_source', False),
+                            'has_data': dataset.get('has_data', False),
+                            'file_label': dataset.get('file_label')
                         }
 
                 edited_datasets.append(edited_dataset)
@@ -1926,7 +2098,14 @@ with tab_inputs:
                         'substrate': substrate,
                         'separator': separator,
                         'formulation': formulation,
-                        'excluded': dataset.get('excluded', False)
+                        'excluded': dataset.get('excluded', False),
+                        'cycler': dataset.get('cycler'),
+                        'channel': dataset.get('channel'),
+                        'cycler_channel': dataset.get('cycler_channel'),
+                        'tracking_placeholder': dataset.get('tracking_placeholder', False),
+                        'uploaded_file_source': dataset.get('uploaded_file_source', False),
+                        'has_data': dataset.get('has_data', False),
+                        'file_label': dataset.get('file_label')
                     }
                     dataset.update(edited_dataset)
                     
@@ -1947,6 +2126,10 @@ with tab_inputs:
             if st.button("Append Files to Experiment"):
                 from ui_components import int_to_roman
                 num_existing = len(datasets)
+                placeholder_indexes = [
+                    idx for idx, item in enumerate(datasets)
+                    if item.get('tracking_placeholder') and not item.get('has_data')
+                ]
                 
                 # Fetch default values from the first cell to auto-populate
                 default_loading = datasets[0]['loading'] if datasets else 20.0
@@ -1958,8 +2141,17 @@ with tab_inputs:
                 default_substrate = datasets[0].get('substrate', 'Copper') if datasets else 'Copper'
                 default_separator = datasets[0].get('separator', '25um PP') if datasets else '25um PP'
                 default_formulation = datasets[0].get('formulation', [{'Component': '', 'Dry Mass Fraction (%)': 0.0}]) if datasets else [{'Component': '', 'Dry Mass Fraction (%)': 0.0}]
-                
-                for file in new_uploaded_files:
+                assigned_to_placeholders = 0
+
+                for placeholder_index, file in zip(placeholder_indexes, new_uploaded_files):
+                    datasets[placeholder_index]['file'] = file
+                    datasets[placeholder_index]['uploaded_file_source'] = True
+                    datasets[placeholder_index]['file_label'] = file.name
+                    assigned_to_placeholders += 1
+
+                remaining_files = list(new_uploaded_files)[assigned_to_placeholders:]
+
+                for file in remaining_files:
                     num_existing += 1
                     test_num_val = f"{experiment_name_input} {int_to_roman(num_existing)}" if experiment_name_input else f'Cell {num_existing}'
                     
@@ -1975,9 +2167,18 @@ with tab_inputs:
                         'substrate': default_substrate,
                         'separator': default_separator,
                         'formulation': default_formulation,
-                        'excluded': False
+                        'excluded': False,
+                        'cycler': None,
+                        'channel': None,
+                        'cycler_channel': None,
+                        'tracking_placeholder': False,
+                        'uploaded_file_source': True,
+                        'has_data': False,
+                        'file_label': file.name
                     })
-                
+
+                if assigned_to_placeholders:
+                    st.success(f"Assigned {assigned_to_placeholders} uploaded file(s) to tracked placeholder cells.")
                 st.session_state['datasets'] = datasets
                 st.rerun()
     else:
@@ -2163,9 +2364,35 @@ with tab_inputs:
                     original_loading = original_cell.get('loading', 0)
                     original_active = original_cell.get('active_material', 0)
                     
+                    uploaded_file = dataset.get('file')
+                    uploaded_file_source = dataset.get('uploaded_file_source', False)
+
                     # Recalculate gravimetric capacities if loading or active material changed
-                    updated_data_json = original_cell.get('data_json', '{}')
-                    if (new_loading != original_loading or new_active != original_active) and updated_data_json:
+                    updated_data_json = original_cell.get('data_json')
+                    updated_file_name = original_cell.get('file_name')
+                    processed_cutoff_lower = dataset.get('cutoff_voltage_lower', original_cell.get('cutoff_voltage_lower'))
+                    processed_cutoff_upper = dataset.get('cutoff_voltage_upper', original_cell.get('cutoff_voltage_upper'))
+
+                    if uploaded_file_source and uploaded_file:
+                        try:
+                            temp_dfs = load_and_preprocess_data([dataset], project_type)
+                            if temp_dfs and len(temp_dfs) > 0:
+                                processed_cell = temp_dfs[0]
+                                updated_data_json = processed_cell['df'].to_json()
+                                updated_file_name = uploaded_file.name
+                                processed_cutoff_lower = processed_cell.get('cutoff_voltage_lower', processed_cutoff_lower)
+                                processed_cutoff_upper = processed_cell.get('cutoff_voltage_upper', processed_cutoff_upper)
+                                st.info(f"Attached raw file to {new_testnum}")
+                            else:
+                                st.warning(f"Failed to process uploaded file for {new_testnum}. Keeping metadata only.")
+                        except Exception as e:
+                            st.error(f"Error processing uploaded file for {new_testnum}: {str(e)}")
+
+                    if (
+                        not uploaded_file_source
+                        and (new_loading != original_loading or new_active != original_active)
+                        and updated_data_json
+                    ):
                         try:
                             # Parse the original DataFrame - fix deprecation warning
                             original_df = pd.read_json(StringIO(updated_data_json))
@@ -2216,8 +2443,8 @@ with tab_inputs:
                     widget_electrolyte = st.session_state.get(f'edit_electrolyte_{i}') or st.session_state.get(f'edit_single_electrolyte_{i}')
                     widget_substrate = st.session_state.get(f'edit_substrate_{i}') or st.session_state.get(f'edit_single_substrate_{i}')
                     widget_separator = st.session_state.get(f'edit_separator_{i}') or st.session_state.get(f'edit_single_separator_{i}')
-                    new_cutoff_lower = dataset.get('cutoff_voltage_lower', original_cell.get('cutoff_voltage_lower'))
-                    new_cutoff_upper = dataset.get('cutoff_voltage_upper', original_cell.get('cutoff_voltage_upper'))
+                    new_cutoff_lower = processed_cutoff_lower
+                    new_cutoff_upper = processed_cutoff_upper
                     
                     updated_cell.update({
                         'loading': new_loading,
@@ -2225,6 +2452,7 @@ with tab_inputs:
                         'formation_cycles': new_formation,
                         'test_number': new_testnum,
                         'cell_name': new_testnum,
+                        'file_name': updated_file_name,
                         'electrolyte': widget_electrolyte if widget_electrolyte is not None else dataset.get('electrolyte', '1M LiPF6 1:1:1'),
                         'substrate': widget_substrate if widget_substrate is not None else dataset.get('substrate', 'Copper'),
                         'separator': widget_separator if widget_separator is not None else dataset.get('separator', '25um PP'),
@@ -2232,7 +2460,11 @@ with tab_inputs:
                         'cutoff_voltage_upper': new_cutoff_upper,
                         'formulation': dataset.get('formulation', []),
                         'data_json': updated_data_json,  # Updated with recalculated values
-                        'excluded': dataset.get('excluded', False)  # Add this line
+                        'excluded': dataset.get('excluded', False),
+                        'cycler': dataset.get('cycler'),
+                        'channel': dataset.get('channel'),
+                        'cycler_channel': dataset.get('cycler_channel'),
+                        'tracking_placeholder': bool(dataset.get('tracking_placeholder', False) and not updated_data_json)
                     })
                     updated_cells_data.append(updated_cell)
                 else:
@@ -2261,7 +2493,11 @@ with tab_inputs:
                                 'cutoff_voltage_upper': processed_cell.get('cutoff_voltage_upper', dataset.get('cutoff_voltage_upper')),
                                 'formulation': dataset.get('formulation', []),
                                 'data_json': df.to_json(),
-                                'excluded': dataset.get('excluded', False)
+                                'excluded': dataset.get('excluded', False),
+                                'cycler': dataset.get('cycler'),
+                                'channel': dataset.get('channel'),
+                                'cycler_channel': dataset.get('cycler_channel'),
+                                'tracking_placeholder': False
                             }
                             
                             # Calculate porosity if we have the required data

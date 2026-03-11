@@ -645,7 +645,7 @@ def rename_experiment(experiment_id, new_name):
         ''', (new_name, f"{new_name}.json", experiment_id))
         conn.commit()
 
-def save_experiment(project_id, experiment_name, experiment_date, disc_diameter_mm, group_assignments, group_names, cells_data, solids_content=None, pressed_thickness=None, experiment_notes=None, cell_format_data=None):
+def save_experiment(project_id, experiment_name, experiment_date, disc_diameter_mm, group_assignments, group_names, cells_data, solids_content=None, pressed_thickness=None, experiment_notes=None, cell_format_data=None, additional_data=None):
     """Save a complete experiment with porosity calculation."""
     try:
         from porosity_calculations import calculate_porosity_from_experiment_data
@@ -719,6 +719,10 @@ def save_experiment(project_id, experiment_name, experiment_date, disc_diameter_
         # Add cell format data if provided
         if cell_format_data:
             experiment_data.update(cell_format_data)
+
+        # Allow callers to persist tracking or other extra experiment metadata.
+        if additional_data:
+            experiment_data.update(additional_data)
         
         cursor.execute('''
             INSERT INTO cell_experiments 
@@ -739,7 +743,7 @@ def save_experiment(project_id, experiment_name, experiment_date, disc_diameter_
         conn.commit()
         return experiment_id
 
-def update_experiment(experiment_id, project_id, experiment_name, experiment_date, disc_diameter_mm, group_assignments, group_names, cells_data, solids_content=None, pressed_thickness=None, experiment_notes=None, cell_format_data=None):
+def update_experiment(experiment_id, project_id, experiment_name, experiment_date, disc_diameter_mm, group_assignments, group_names, cells_data, solids_content=None, pressed_thickness=None, experiment_notes=None, cell_format_data=None, additional_data=None):
     """Update an existing experiment with new experiment-level fields."""
     try:
         from porosity_calculations import calculate_porosity_from_experiment_data
@@ -798,6 +802,23 @@ def update_experiment(experiment_id, project_id, experiment_name, experiment_dat
         # Add cell format data if provided
         if cell_format_data:
             experiment_data.update(cell_format_data)
+
+        cursor.execute('SELECT data_json FROM cell_experiments WHERE id = ?', (experiment_id,))
+        existing_row = cursor.fetchone()
+        existing_data = {}
+        if existing_row and existing_row[0]:
+            try:
+                existing_data = json.loads(existing_row[0])
+            except (TypeError, json.JSONDecodeError):
+                existing_data = {}
+
+        # Preserve top-level metadata that is not rebuilt by the editor on save.
+        for key, value in existing_data.items():
+            if key not in experiment_data:
+                experiment_data[key] = value
+
+        if additional_data:
+            experiment_data.update(additional_data)
         
         # Process cells to extract data to parquet
         if cells_data:
