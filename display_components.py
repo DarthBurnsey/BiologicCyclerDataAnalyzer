@@ -93,6 +93,8 @@ def display_experiment_summaries_table(experiment_summaries, all_flags=None):
         '1st Discharge (mAh/g)',
         'First Efficiency (%)',
         'Cycle Life (80%)',
+        'Fade Rate (%/cyc)',
+        'Fade Rate (%/100cyc)',
         'Porosity (%)',
         'Cutoff Voltages (V)',
         'Electrolyte',
@@ -112,6 +114,7 @@ def display_experiment_summaries_table(experiment_summaries, all_flags=None):
             # Better default: Essential columns
             default_cols = ['Experiment', 'Flags', 'Reversible Capacity (mAh/g)', 
                           'Coulombic Efficiency (%)', 'Cycle Life (80%)', 
+                          'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)',
                           'Areal Capacity (mAh/cm²)', 'Porosity (%)', 
                           'Cutoff Voltages (V)', 'Electrolyte', 'Date']
             st.session_state.section1_selected_columns = [c for c in default_cols if c in all_columns]
@@ -134,7 +137,8 @@ def display_experiment_summaries_table(experiment_summaries, all_flags=None):
                         help="Focus on cell performance metrics"):
                 perf_cols = ['Experiment', 'Flags', 'Reversible Capacity (mAh/g)', 
                            'Coulombic Efficiency (%)', '1st Discharge (mAh/g)', 
-                           'First Efficiency (%)', 'Cycle Life (80%)', 'Areal Capacity (mAh/cm²)']
+                           'First Efficiency (%)', 'Cycle Life (80%)', 
+                           'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)', 'Areal Capacity (mAh/cm²)']
                 st.session_state.section1_selected_columns = [c for c in perf_cols if c in all_columns]
                 st.rerun()
         
@@ -160,7 +164,8 @@ def display_experiment_summaries_table(experiment_summaries, all_flags=None):
         processing_cols = ['Active Material (%)', 'Loading (mg/cm²)', 'Pressed Thickness (μm)', 'Porosity (%)']
         performance_cols = ['Reversible Capacity (mAh/g)', 'Coulombic Efficiency (%)', 
                           'Areal Capacity (mAh/cm²)', '1st Discharge (mAh/g)', 
-                          'First Efficiency (%)', 'Cycle Life (80%)']
+                          'First Efficiency (%)', 'Cycle Life (80%)', 
+                          'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)']
         materials_cols = ['Electrolyte', 'Substrate', 'Separator', 'Cutoff Voltages (V)']
         component_cols = [f'{comp} (%)' for comp in all_components]
         
@@ -308,6 +313,8 @@ def display_experiment_summaries_table(experiment_summaries, all_flags=None):
             'Areal Capacity (mAh/cm²)': exp['areal_capacity'] if exp['areal_capacity'] is not None else np.nan,
             'Reversible Capacity (mAh/g)': exp['reversible_capacity'] if exp['reversible_capacity'] is not None else np.nan,
             'Coulombic Efficiency (%)': exp['coulombic_efficiency'] if exp['coulombic_efficiency'] is not None else np.nan,
+            'Fade Rate (%/cyc)': exp.get('fade_rate_per_cycle') if exp.get('fade_rate_per_cycle') is not None else np.nan,
+            'Fade Rate (%/100cyc)': exp.get('fade_rate_per_100') if exp.get('fade_rate_per_100') is not None else np.nan,
             'Porosity (%)': f"{exp['porosity']*100:.1f}%" if exp['porosity'] is not None and exp['porosity'] > 0 else "N/A",
             'Cutoff Voltages (V)': f"{exp.get('cutoff_voltage_lower', 'N/A')}-{exp.get('cutoff_voltage_upper', 'N/A')}" if exp.get('cutoff_voltage_lower') is not None and exp.get('cutoff_voltage_upper') is not None else "N/A",
             'Electrolyte': exp.get('electrolyte', 'N/A'),
@@ -359,6 +366,10 @@ def display_experiment_summaries_table(experiment_summaries, all_flags=None):
         format_dict['Coulombic Efficiency (%)'] = '{:.3f}%'
     if 'First Efficiency (%)' in df.columns:
         format_dict['First Efficiency (%)'] = '{:.3f}%'
+    if 'Fade Rate (%/cyc)' in df.columns:
+        format_dict['Fade Rate (%/cyc)'] = '{:.4f}'
+    if 'Fade Rate (%/100cyc)' in df.columns:
+        format_dict['Fade Rate (%/100cyc)'] = '{:.2f}'
     
     # Add formatters for component columns
     for component in all_components:
@@ -406,6 +417,8 @@ def display_individual_cells_table(individual_cells, all_flags=None):
         '1st Discharge (mAh/g)',
         'First Efficiency (%)',
         'Cycle Life (80%)',
+        'Fade Rate (%/cyc)',
+        'Fade Rate (%/100cyc)',
         'Porosity (%)',
         'Cutoff Voltages (V)',
         'Electrolyte',
@@ -426,6 +439,7 @@ def display_individual_cells_table(individual_cells, all_flags=None):
             # Better default: Essential cell columns
             default_cols = ['Cell Name', 'Experiment', 'Flags', 'Reversible Capacity (mAh/g)', 
                           'Coulombic Efficiency (%)', 'Cycle Life (80%)', 
+                          'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)',
                           'Areal Capacity (mAh/cm²)', 'Porosity (%)', 
                           'Cutoff Voltages (V)', 'Electrolyte']
             st.session_state.section2_selected_columns = [c for c in default_cols if c in all_columns]
@@ -448,7 +462,8 @@ def display_individual_cells_table(individual_cells, all_flags=None):
                         help="Focus on individual cell performance"):
                 perf_cols = ['Cell Name', 'Experiment', 'Flags', 'Reversible Capacity (mAh/g)', 
                            'Coulombic Efficiency (%)', '1st Discharge (mAh/g)', 
-                           'First Efficiency (%)', 'Cycle Life (80%)', 'Areal Capacity (mAh/cm²)']
+                           'First Efficiency (%)', 'Cycle Life (80%)', 
+                           'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)', 'Areal Capacity (mAh/cm²)']
                 st.session_state.section2_selected_columns = [c for c in perf_cols if c in all_columns]
                 st.rerun()
         
@@ -474,7 +489,8 @@ def display_individual_cells_table(individual_cells, all_flags=None):
         processing_cols = ['Active Material (%)', 'Loading (mg/cm²)', 'Pressed Thickness (μm)', 'Porosity (%)']
         performance_cols = ['Reversible Capacity (mAh/g)', 'Coulombic Efficiency (%)', 
                           'Areal Capacity (mAh/cm²)', '1st Discharge (mAh/g)', 
-                          'First Efficiency (%)', 'Cycle Life (80%)']
+                          'First Efficiency (%)', 'Cycle Life (80%)', 
+                          'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)']
         materials_cols = ['Electrolyte', 'Substrate', 'Separator', 'Cutoff Voltages (V)']
         component_cols = [f'{comp} (%)' for comp in all_components]
         
@@ -614,6 +630,8 @@ def display_individual_cells_table(individual_cells, all_flags=None):
             'Areal Capacity (mAh/cm²)': cell['areal_capacity'] if cell['areal_capacity'] is not None else np.nan,
             'Reversible Capacity (mAh/g)': cell['reversible_capacity'] if cell['reversible_capacity'] is not None else np.nan,
             'Coulombic Efficiency (%)': cell['coulombic_efficiency'] if cell['coulombic_efficiency'] is not None else np.nan,
+            'Fade Rate (%/cyc)': cell.get('fade_rate_per_cycle') if cell.get('fade_rate_per_cycle') is not None else np.nan,
+            'Fade Rate (%/100cyc)': cell.get('fade_rate_per_100') if cell.get('fade_rate_per_100') is not None else np.nan,
             'Porosity (%)': f"{cell['porosity']*100:.1f}%" if cell['porosity'] is not None and cell['porosity'] > 0 else "N/A",
             'Cutoff Voltages (V)': f"{cell.get('cutoff_voltage_lower', 'N/A')}-{cell.get('cutoff_voltage_upper', 'N/A')}" if cell.get('cutoff_voltage_lower') is not None and cell.get('cutoff_voltage_upper') is not None else "N/A",
             'Electrolyte': cell.get('electrolyte', 'N/A'),
@@ -665,6 +683,10 @@ def display_individual_cells_table(individual_cells, all_flags=None):
         format_dict['Coulombic Efficiency (%)'] = '{:.3f}%'
     if 'First Efficiency (%)' in df.columns:
         format_dict['First Efficiency (%)'] = '{:.3f}%'
+    if 'Fade Rate (%/cyc)' in df.columns:
+        format_dict['Fade Rate (%/cyc)'] = '{:.4f}'
+    if 'Fade Rate (%/100cyc)' in df.columns:
+        format_dict['Fade Rate (%/100cyc)'] = '{:.2f}'
     
     # Add formatters for component columns
     for component in all_components:

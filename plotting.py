@@ -1,7 +1,7 @@
 # plotting.py
 import matplotlib.pyplot as plt
 import pandas as pd
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from matplotlib.figure import Figure
 
 def plot_capacity_graph(
@@ -27,7 +27,8 @@ def plot_capacity_graph(
     group_names: Optional[list] = None,
     cycle_filter: str = "1-*",
     custom_colors: Optional[Dict[str, str]] = None,
-    y_axis_limits: Optional[tuple] = None
+    y_axis_limits: Optional[tuple] = None,
+    excluded_from_average: Optional[List[str]] = None
 ) -> Figure:
     """Plot the main capacity/efficiency graph and return the matplotlib figure. If remove_markers is True, lines will have no markers. If hide_legend is True, the legend will not be shown. Optionally plot group average curves for Group A, B, and C."""
     if avg_line_toggles is None:
@@ -36,7 +37,9 @@ def plot_capacity_graph(
         group_names = ["Group A", "Group B", "Group C"]
     if custom_colors is None:
         custom_colors = {}
-    
+    if excluded_from_average is None:
+        excluded_from_average = []
+        
     # Get matplotlib default color cycle
     default_colors_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
     
@@ -128,16 +131,24 @@ def plot_capacity_graph(
                 pass
         # Plot average if requested
         if show_average_performance and len(dfs) > 1:
-            # Find common cycles
-            dfs_trimmed = [d['df'][:-1] if remove_last_cycle else d['df'] for d in dfs]
-            common_cycles = set(dfs_trimmed[0][x_col])
-            for df in dfs_trimmed[1:]:
-                common_cycles = common_cycles & set(df[x_col])
-            common_cycles = sorted(list(common_cycles))
-            if common_cycles:
-                avg_qdis = []
-                avg_qchg = []
-                avg_eff = []
+            # Filter dfs based on excluded_from_average
+            included_dfs = []
+            for i, d in enumerate(dfs):
+                cell_name = d['testnum'] if d['testnum'] else f'Cell {i+1}'
+                if cell_name not in excluded_from_average:
+                    included_dfs.append(d)
+            
+            if len(included_dfs) > 0:
+                # Find common cycles
+                dfs_trimmed = [d['df'][:-1] if remove_last_cycle else d['df'] for d in included_dfs]
+                common_cycles = set(dfs_trimmed[0][x_col])
+                for df in dfs_trimmed[1:]:
+                    common_cycles = common_cycles & set(df[x_col])
+                common_cycles = sorted(list(common_cycles))
+                if common_cycles:
+                    avg_qdis = []
+                    avg_qchg = []
+                    avg_eff = []
                 for cycle in common_cycles:
                     qdis_vals = []
                     qchg_vals = []
@@ -867,8 +878,11 @@ def plot_comparison_capacity_graph(
     remove_markers: bool = False,
     hide_legend: bool = False,
     cycle_filter: str = "1-*",
-    custom_colors: Optional[Dict[str, str]] = None,
-    y_axis_limits: Optional[tuple] = None
+    custom_colors: Dict[str, str] = None,
+    y_axis_limits: Tuple[float, float] = (None, None),
+    custom_names: Dict[str, str] = None,
+    custom_title: str = "Capacity Data Comparison",
+    excluded_from_average: Optional[List[str]] = None
 ) -> Figure:
     """
     Plot capacity data from multiple experiments on the same axes for comparison.
@@ -887,6 +901,7 @@ def plot_comparison_capacity_graph(
         hide_legend: Whether to hide the legend
         cycle_filter: Cycle filter string (e.g., "1-*", "1-100")
         custom_colors: Dictionary mapping dataset labels to custom colors (hex format)
+        custom_names: Dictionary mapping original dataset labels to custom display names
     
     Returns:
         matplotlib Figure object
@@ -897,6 +912,12 @@ def plot_comparison_capacity_graph(
     if custom_colors is None:
         custom_colors = {}
     
+    if custom_names is None:
+        custom_names = {}
+    
+    if excluded_from_average is None:
+        excluded_from_average = []
+        
     # Apply cycle filtering to all experiments
     from ui_components import parse_cycle_filter
     filtered_experiments_data = []
@@ -957,12 +978,24 @@ def plot_comparison_capacity_graph(
             for cell_idx, d in enumerate(dfs):
                 try:
                     cell_name = d['testnum'] if d['testnum'] else f'Cell {cell_idx+1}'
+                    
+                    # Original label for resolving toggles and colors
+                    dataset_label = f"{exp_name} - {cell_name}"
+                    
+                    # Custom or display base label for names
+                    display_base_label = custom_names.get(dataset_label, dataset_label)
+                    
+                    # The literal toggles stored in the session state are bound to the original exp string
                     label_dis = f"{exp_name} - {cell_name} Q Dis"
                     label_chg = f"{exp_name} - {cell_name} Q Chg"
                     label_eff = f"{exp_name} - {cell_name} Efficiency"
                     
+                    # What goes into the legend
+                    disp_label_dis = f"{display_base_label} Q Dis"
+                    disp_label_chg = f"{display_base_label} Q Chg"
+                    disp_label_eff = f"{display_base_label} Efficiency"
+                    
                     # Get custom color for this dataset, or use default experiment color
-                    dataset_label = f"{exp_name} - {cell_name}"
                     cell_color = custom_colors.get(dataset_label, default_exp_color)
                     
                     plot_df = d['df'][:-1] if remove_last_cycle else d['df']
@@ -975,7 +1008,7 @@ def plot_comparison_capacity_graph(
                             valid_mask = ~qdis_data.isna()
                             if valid_mask.any():
                                 ax1.plot(plot_df[dataset_x_col][valid_mask], qdis_data[valid_mask], 
-                                       label=label_dis, marker=marker_style, color=cell_color, alpha=0.7)
+                                       label=disp_label_dis, marker=marker_style, color=cell_color, alpha=0.7)
                         except Exception:
                             pass
                     
@@ -986,7 +1019,7 @@ def plot_comparison_capacity_graph(
                             valid_mask = ~qchg_data.isna()
                             if valid_mask.any():
                                 ax1.plot(plot_df[dataset_x_col][valid_mask], qchg_data[valid_mask], 
-                                       label=label_chg, marker=marker_style, color=cell_color, 
+                                       label=disp_label_chg, marker=marker_style, color=cell_color, 
                                        alpha=0.7, linestyle='--')
                         except Exception:
                             pass
@@ -998,7 +1031,7 @@ def plot_comparison_capacity_graph(
                             valid_mask = ~efficiency_pct.isna()
                             if valid_mask.any():
                                 ax2.plot(plot_df[dataset_x_col][valid_mask], efficiency_pct[valid_mask], 
-                                       label=label_eff, linestyle=':', marker=eff_marker_style, 
+                                       label=disp_label_eff, linestyle=':', marker=eff_marker_style, 
                                        color=cell_color, alpha=0.5)
                         except Exception:
                             pass
@@ -1009,11 +1042,20 @@ def plot_comparison_capacity_graph(
         # For single-cell experiments, show the cell data as "average" (same thing for n=1)
         if show_average_performance and len(dfs) >= 1:
             try:
-                dfs_trimmed = [d['df'][:-1] if remove_last_cycle else d['df'] for d in dfs]
+                # Add exclusion filter
+                included_dfs = []
+                for i, d in enumerate(dfs):
+                    cell_name = d['testnum'] if d['testnum'] else f'Cell {i+1}'
+                    dataset_label = f"{exp_name} - {cell_name}"
+                    if dataset_label not in excluded_from_average:
+                        included_dfs.append(d)
                 
-                # Get the x-axis column name for THIS experiment (not global x_col)
-                # Each experiment might have a different column name
-                exp_x_col = dfs_trimmed[0].columns[0] if not dfs_trimmed[0].empty else x_col
+                if len(included_dfs) > 0:
+                    dfs_trimmed = [d['df'][:-1] if remove_last_cycle else d['df'] for d in included_dfs]
+                    
+                    # Get the x-axis column name for THIS experiment (not global x_col)
+                    # Each experiment might have a different column name
+                    exp_x_col = dfs_trimmed[0].columns[0] if not dfs_trimmed[0].empty else x_col
                 
                 # Find common cycles across all cells in this experiment
                 common_cycles = set(dfs_trimmed[0][exp_x_col])
@@ -1071,23 +1113,25 @@ def plot_comparison_capacity_graph(
                         avg_label = f"{exp_name} - Average"
                         label_suffix = " - Average"
                     
+                    display_avg_label = custom_names.get(avg_label, f"{exp_name}{label_suffix}")
+                        
                     avg_color = custom_colors.get(avg_label, default_exp_color)
                     
                     # Plot averages with thicker lines
                     if avg_line_toggles.get("Average Q Dis", True):
                         ax1.plot(common_cycles, avg_qdis, 
-                               label=f'{exp_name}{label_suffix} Q Dis', 
+                               label=f'{display_avg_label} Q Dis', 
                                color=avg_color, linewidth=3, marker=avg_marker_style)
                     
                     if avg_line_toggles.get("Average Q Chg", True):
                         ax1.plot(common_cycles, avg_qchg, 
-                               label=f'{exp_name}{label_suffix} Q Chg', 
+                               label=f'{display_avg_label} Q Chg', 
                                color=avg_color, linewidth=3, marker=avg_marker_style, 
                                linestyle='--')
                     
                     if ax2 and avg_line_toggles.get("Average Efficiency", True):
                         ax2.plot(common_cycles, avg_eff, 
-                               label=f'{exp_name}{label_suffix} Efficiency (%)', 
+                               label=f'{display_avg_label} Efficiency (%)', 
                                color=avg_color, linewidth=3, linestyle=':', 
                                marker=avg_marker_style, alpha=0.7)
             except Exception as e:
@@ -1099,7 +1143,7 @@ def plot_comparison_capacity_graph(
                 pass
     
     # Set labels and title
-    ax1.set_xlabel(x_col)
+    ax1.set_xlabel('Cycle Number')
     ax1.set_ylabel('Capacity (mAh/g)', color='blue')
     ax1.tick_params(axis='y', labelcolor='blue')
     
@@ -1107,12 +1151,13 @@ def plot_comparison_capacity_graph(
         ax2.set_ylabel('Efficiency (%)', color='red')
         ax2.tick_params(axis='y', labelcolor='red')
     
+    # Formatting
+    title_text = custom_title
+    if any_efficiency or avg_eff_on:
+        title_text += " and Efficiency"
+        
     if show_graph_title:
-        title = f'Experiment Comparison - Gravimetric Capacity'
-        if ax2:
-            title += ' and Efficiency'
-        title += f' vs. {x_col}'
-        ax1.set_title(title)
+        ax1.set_title(title_text)
     
     # Handle legend
     if not hide_legend:

@@ -165,6 +165,7 @@ def render_formulation_editor_modal():
             st.session_state.show_formulation_editor = False
             st.rerun()
 
+@st.cache_data(ttl=30, show_spinner=False)
 def get_default_values_for_experiment(project_id):
     """Get default values for a new experiment based on project preferences."""
     # Import database functions inside the function to avoid circular imports
@@ -172,11 +173,26 @@ def get_default_values_for_experiment(project_id):
     
     preferences = get_project_preferences(project_id)
     
+    try:
+        formation_cycles = int(preferences.get('formation_cycles', 4))
+    except (ValueError, TypeError):
+        formation_cycles = 4
+
+    def _float_pref(key, fallback):
+        try:
+            value = preferences.get(key, fallback)
+            return float(value) if value not in (None, "") else fallback
+        except (ValueError, TypeError):
+            return fallback
+
     defaults = {
         'electrolyte': preferences.get('electrolyte', ''),
         'substrate': preferences.get('substrate', ''),
         'separator': preferences.get('separator', ''),
-        'formation_cycles': int(preferences.get('formation_cycles', 4)),
+        'formation_cycles': formation_cycles,
+        'cutoff_voltage_lower': _float_pref('cutoff_voltage_lower', 2.5),
+        'cutoff_voltage_upper': _float_pref('cutoff_voltage_upper', 4.2),
+        'disc_diameter_mm': _float_pref('disc_diameter_mm', 15.0),
         'formulation': []
     }
     

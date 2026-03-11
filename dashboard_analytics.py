@@ -14,6 +14,56 @@ import os
 from io import StringIO
 from database import get_db_connection, TEST_USER_ID, hydrate_data_json
 
+# Broad physical bounds used to discard impossible dashboard summary values.
+RETENTION_PLAUSIBLE_RANGE = (0.0, 250.0)      # Capacity retention (%)
+FADE_RATE_PLAUSIBLE_RANGE = (-20.0, 300.0)    # Fade rate (% per 100 cycles)
+
+
+def _is_plausible_metric(value: Optional[float], bounds: Tuple[float, float]) -> bool:
+    """Check if a metric value is finite and inside broad physical bounds."""
+    if value is None:
+        return False
+    return np.isfinite(value) and bounds[0] <= value <= bounds[1]
+
+
+def _filter_metric_outliers(
+    values: List[float],
+    bounds: Tuple[float, float],
+    robust: bool = True,
+    log_transform: bool = False,
+    min_points_for_robust: int = 8
+) -> List[float]:
+    """
+    Filter impossible values first, then optionally apply robust MAD filtering.
+
+    MAD filtering is conservative and auto-disables for small samples so we avoid
+    over-filtering sparse project datasets.
+    """
+    if not values:
+        return []
+
+    arr = np.asarray(values, dtype=float)
+    mask = np.isfinite(arr) & (arr >= bounds[0]) & (arr <= bounds[1])
+    arr = arr[mask]
+
+    if len(arr) == 0 or not robust or len(arr) < min_points_for_robust:
+        return arr.tolist()
+
+    transformed = np.log1p(arr) if log_transform else arr
+    median = np.median(transformed)
+    mad = np.median(np.abs(transformed - median))
+    if mad <= 0:
+        return arr.tolist()
+
+    modified_z = 0.6745 * (transformed - median) / mad
+    robust_arr = arr[np.abs(modified_z) <= 3.5]
+
+    # Safety guard: if robust filter removes too much, keep physical-only filter.
+    if len(robust_arr) < max(5, int(0.5 * len(arr))):
+        return arr.tolist()
+
+    return robust_arr.tolist()
+
 
 def get_global_statistics(user_id: str, filter_params: Optional[Dict] = None) -> Dict:
     """
@@ -101,18 +151,31 @@ def get_global_statistics(user_id: str, filter_params: Optional[Dict] = None) ->
                     if df is not None:
                         # Calculate retention
                         retention = calculate_retention_percent(df)
-                        if retention is not None:
+                        if _is_plausible_metric(retention, RETENTION_PLAUSIBLE_RANGE):
                             all_retentions.append(retention)
                         
                         # Calculate fade rate
                         fade_rate = calculate_fade_rate(df)
-                        if fade_rate is not None:
+                        if _is_plausible_metric(fade_rate, FADE_RATE_PLAUSIBLE_RANGE):
                             all_fade_rates.append(fade_rate)
             except (json.JSONDecodeError, Exception):
                 continue
-        
-        best_retention = max(all_retentions) if all_retentions else 0.0
-        avg_fade_rate = np.mean(all_fade_rates) if all_fade_rates else 0.0
+
+        valid_retentions = _filter_metric_outliers(
+            all_retentions,
+            RETENTION_PLAUSIBLE_RANGE,
+            robust=True,
+            log_transform=True
+        )
+        valid_fade_rates = _filter_metric_outliers(
+            all_fade_rates,
+            FADE_RATE_PLAUSIBLE_RANGE,
+            robust=True,
+            log_transform=False
+        )
+
+        best_retention = max(valid_retentions) if valid_retentions else 0.0
+        avg_fade_rate = np.mean(valid_fade_rates) if valid_fade_rates else 0.0
         
         return {
             'total_projects': total_projects,
@@ -210,20 +273,29 @@ def get_project_summaries(user_id: str, filter_params: Optional[Dict] = None) ->
                             
                             # Check retention
                             retention = calculate_retention_percent(df)
-                            if retention and retention > best_retention:
+                            if (
+                                _is_plausible_metric(retention, RETENTION_PLAUSIBLE_RANGE)
+                                and retention > best_retention
+                            ):
                                 best_retention = retention
                                 best_cell_id = cell.get('test_number', cell.get('cell_name', 'Unknown'))
                             
                             # Collect fade rates
                             fade_rate = calculate_fade_rate(df)
-                            if fade_rate is not None:
+                            if _is_plausible_metric(fade_rate, FADE_RATE_PLAUSIBLE_RANGE):
                                 all_fade_rates.append(fade_rate)
                 
                 except (json.JSONDecodeError, Exception):
                     continue
             
             # Determine status based on average fade rate
-            avg_fade = np.mean(all_fade_rates) if all_fade_rates else 0.0
+            valid_project_fade_rates = _filter_metric_outliers(
+                all_fade_rates,
+                FADE_RATE_PLAUSIBLE_RANGE,
+                robust=True,
+                log_transform=False
+            )
+            avg_fade = np.mean(valid_project_fade_rates) if valid_project_fade_rates else 0.0
             if avg_fade < 1.0:
                 status = 'good'
             elif avg_fade < 2.0:
@@ -315,7 +387,7 @@ def get_top_performers(
                     if not cell_data_json:
                          continue
                          
-                    df = pd.read_json(cell_data_json)
+                    df = pd.read_json(StringIO(cell_data_json))
                     
                     # Check minimum cycles
                     cycle_col = 'Cycle' if 'Cycle' in df.columns else 'Cycle number'
@@ -329,6 +401,15 @@ def get_top_performers(
                     # Calculate metrics
                     retention = calculate_retention_percent(df)
                     fade_rate = calculate_fade_rate(df)
+                    retention_is_valid = _is_plausible_metric(retention, RETENTION_PLAUSIBLE_RANGE)
+                    fade_is_valid = _is_plausible_metric(fade_rate, FADE_RATE_PLAUSIBLE_RANGE)
+
+                    # Skip outlier rows when sorting by these metrics.
+                    if metric == 'retention' and not retention_is_valid:
+                        continue
+                    if metric == 'fade_rate' and not fade_is_valid:
+                        continue
+
                     initial_cap, current_cap = get_capacity_values(df)
                     avg_eff = calculate_avg_efficiency(df)
                     
@@ -340,8 +421,8 @@ def get_top_performers(
                         'project_id': project_id,
                         'initial_capacity': initial_cap,
                         'current_capacity': current_cap,
-                        'retention_pct': retention if retention else 0.0,
-                        'fade_rate': fade_rate if fade_rate else 0.0,
+                        'retention_pct': retention if retention_is_valid else 0.0,
+                        'fade_rate': fade_rate if fade_is_valid else 0.0,
                         'cycles_tested': cycles_tested,
                         'avg_efficiency': avg_eff if avg_eff else 0.0
                     })

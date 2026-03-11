@@ -1,0 +1,17 @@
+{
+  "name": "cellscope2-node-backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "CellScope 2.0 Node.js backend with normalized SQLite schema",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node scripts/migrate.js",
+    "import:legacy": "node scripts/import-legacy.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

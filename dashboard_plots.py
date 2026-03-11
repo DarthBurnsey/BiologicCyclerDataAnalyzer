@@ -11,6 +11,72 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Optional
 
+def _filter_fade_scatter_outliers(
+    df_plot: pd.DataFrame,
+    x_axis: str,
+    enabled: bool = True
+) -> tuple[pd.DataFrame, int, str]:
+    """
+    Remove extreme/impossible outliers from fade-rate scatter data.
+
+    Strategy:
+    1) Physical sanity bounds
+    2) Robust MAD filtering on log-scaled fade rates
+    3) Optional robust IQR filter on initial capacity x-axis
+    """
+    if df_plot.empty or not enabled:
+        return df_plot, 0, "none"
+
+    original_count = len(df_plot)
+    working = df_plot.copy()
+
+    # Physical sanity checks
+    physical_mask = (
+        np.isfinite(working['fade_rate'])
+        & np.isfinite(working['x_value'])
+        & (working['fade_rate'] >= 0)
+        & (working['fade_rate'] <= 100)  # >100%/100 cycles is almost always corrupted data
+        & (working['x_value'] > 0)
+    )
+    working = working[physical_mask].copy()
+
+    if len(working) < 5:
+        return working, original_count - len(working), "physical-only"
+
+    robust_mask = np.ones(len(working), dtype=bool)
+
+    # Robust filter on fade rate (positive-skew friendly with log transform)
+    if len(working) >= 8:
+        fade_vals = np.log1p(working['fade_rate'].to_numpy(dtype=float))
+        fade_med = np.median(fade_vals)
+        fade_mad = np.median(np.abs(fade_vals - fade_med))
+        if fade_mad > 0:
+            modified_z = 0.6745 * (fade_vals - fade_med) / fade_mad
+            robust_mask &= np.abs(modified_z) <= 3.5
+
+    # Extra robust x-axis guard when using initial capacity
+    if x_axis == 'initial_capacity' and len(working) >= 12:
+        x_vals = working['x_value'].to_numpy(dtype=float)
+        q1, q3 = np.percentile(x_vals, [25, 75])
+        iqr = q3 - q1
+        if iqr > 0:
+            low = q1 - 3.0 * iqr
+            high = q3 + 3.0 * iqr
+            robust_mask &= (x_vals >= low) & (x_vals <= high)
+
+    robust_filtered = working.iloc[robust_mask].copy()
+
+    # Avoid over-filtering small datasets
+    if len(robust_filtered) < 5:
+        filtered = working
+        mode = "physical-only"
+    else:
+        filtered = robust_filtered
+        mode = "physical+robust"
+
+    removed = original_count - len(filtered)
+    return filtered, removed, mode
+
 
 def plot_multi_project_retention(
     cells_data: List[Dict],
@@ -203,7 +269,8 @@ def plot_multi_project_retention(
 def plot_fade_rate_scatter(
     cells_data: List[Dict],
     x_axis: str = 'initial_capacity',
-    color_by: str = 'project'
+    color_by: str = 'project',
+    filter_outliers: bool = True
 ) -> go.Figure:
     """
     Create scatter plot of fade rate vs. another variable.
@@ -298,6 +365,27 @@ def plot_fade_rate_scatter(
         return fig
     
     df_plot = pd.DataFrame(plot_data)
+    df_plot, outliers_removed, filter_mode = _filter_fade_scatter_outliers(
+        df_plot,
+        x_axis=x_axis,
+        enabled=filter_outliers
+    )
+
+    if df_plot.empty:
+        fig = go.Figure()
+        fig.add_annotation(
+            text="All points were filtered as invalid/outliers. Disable outlier filtering to inspect raw values.",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16, color="gray")
+        )
+        fig.update_layout(
+            template='plotly_white',
+            height=500,
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False)
+        )
+        return fig
     
     # Create scatter plot
     fig = px.scatter(
@@ -321,6 +409,19 @@ def plot_fade_rate_scatter(
         },
         title=f"Fade Rate vs. {x_axis.replace('_', ' ').title()}"
     )
+
+    if filter_outliers and outliers_removed > 0:
+        fig.add_annotation(
+            text=f"Outlier filter active: removed {outliers_removed} point(s) ({filter_mode})",
+            xref="paper",
+            yref="paper",
+            x=0.01,
+            y=1.08,
+            xanchor='left',
+            yanchor='bottom',
+            showarrow=False,
+            font=dict(size=11, color="#475569")
+        )
     
     # Add trend line
     try:

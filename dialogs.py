@@ -15,6 +15,7 @@ def confirm_delete_project():
         if st.button("🗑️ Yes, Delete", type="primary", use_container_width=True):
             try:
                 delete_project(project_id)
+                st.cache_data.clear()
                 # Clear current project if it was deleted
                 if st.session_state.get('current_project_id') == project_id:
                     st.session_state['current_project_id'] = None
@@ -42,6 +43,7 @@ def confirm_delete_experiment():
         if st.button("🗑️ Yes, Delete", type="primary", use_container_width=True):
             try:
                 delete_cell_experiment(experiment_id)
+                st.cache_data.clear()
                 # Clear loaded experiment if it was deleted
                 if (st.session_state.get('loaded_experiment') and 
                     st.session_state['loaded_experiment'].get('experiment_id') == experiment_id):

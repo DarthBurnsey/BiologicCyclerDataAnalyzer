@@ -173,7 +173,7 @@ BATTERY_MATERIALS = {
         "Lithium Manganese Oxide (LMO)", "Lithium Titanate (LTO)", "Lithium Metal",
         "Sulfur", "Oxygen", "Lithium Nickel Oxide", "Lithium Manganese Spinel",
         "Lithium Vanadium Phosphate", "Lithium Iron Sulfate", "Lithium Cobalt Phosphate",
-        "NMC811", "NMC811 (MSE)", "NMC811 (BASF)", "NMC811DASF", "NMC811 MSC",
+        "NMC811", "NMC811 (MSE)", "NMC811 (BASF)",
         "NMC622", "NMC532", "NMC111"
     ],
     "Binders": [
@@ -221,6 +221,7 @@ BATTERY_MATERIALS = {
     ]
 }
 
+@st.cache_data(show_spinner=False)
 def get_separator_options():
     """
     Get comprehensive separator options including all predefined separators.
@@ -262,19 +263,21 @@ def track_electrolyte_usage(electrolyte):
         # Silently fail if tracking fails
         pass
 
-def get_electrolyte_options():
+@st.cache_data(ttl=30, show_spinner=False)
+def get_electrolyte_options(_project_id=None):
     """
     Get comprehensive electrolyte options sorted by recent usage.
     Recently used electrolytes appear at the top, followed by alphabetical order.
+    
+    Args:
+        _project_id: Project ID to look up recent electrolytes for. Underscore prefix
+                     tells st.cache_data not to hash this parameter by value.
     """
     try:
-        # Get current project ID from session state
-        current_project_id = st.session_state.get('current_project_id')
-
-        if current_project_id:
+        if _project_id:
             # Get project preferences to find recently used electrolytes
             from database import get_project_preferences
-            preferences = get_project_preferences(current_project_id)
+            preferences = get_project_preferences(_project_id)
             recent_electrolytes = preferences.get('recent_electrolytes', [])
 
             if recent_electrolytes:
@@ -313,7 +316,8 @@ def render_hybrid_electrolyte_input(label: str, default_value: str = "", key: st
         key = f"electrolyte_{uuid.uuid4().hex[:8]}"
     
     # Get all available electrolyte options (sorted by recent usage)
-    electrolyte_options = get_electrolyte_options()
+    current_project_id = st.session_state.get('current_project_id')
+    electrolyte_options = get_electrolyte_options(_project_id=current_project_id)
     
     # Add a "Custom..." option at the end for manual entry
     electrolyte_options_with_custom = electrolyte_options + ["➕ Custom..."]
@@ -449,7 +453,6 @@ def render_hybrid_separator_input(label: str, default_value: str = "", key: str 
             key=f"{key}_toggle"
         ):
             st.session_state[mode_key] = "custom" if st.session_state[mode_key] == "dropdown" else "dropdown"
-            st.rerun()
     
     # Add autocomplete suggestions if in custom mode
     if st.session_state[mode_key] == "custom":
@@ -469,10 +472,10 @@ def render_hybrid_separator_input(label: str, default_value: str = "", key: str 
                             use_container_width=True
                         ):
                             st.session_state[value_key] = suggestion
-                            st.rerun()
     
     return st.session_state[value_key]
 
+@st.cache_data(show_spinner=False)
 def get_all_battery_materials():
     """Get a flat list of all battery materials for autocomplete."""
     all_materials = []
@@ -580,15 +583,14 @@ def render_autocomplete_input(key: str, label: str = "Component", placeholder: s
                     ):
                         st.session_state[selected_key] = suggestion
                         st.session_state[show_suggestions_key] = False
-                        st.rerun()
             
             # Add "Clear suggestions" button
             if st.button("Clear suggestions", key=f"{key}_clear"):
                 st.session_state[show_suggestions_key] = False
-                st.rerun()
     
     return st.session_state[selected_key]
 
+@st.cache_data(show_spinner=False)
 def get_substrate_options():
     """
     Get available substrate options. This function can be easily extended
@@ -637,71 +639,30 @@ def calculate_cell_metrics(df_cell, formation_cycles, disc_area_cm2):
     
     # Coulombic Efficiency (post-formation)
     eff_col = 'Efficiency (-)'
-    qdis_col = 'Q Dis (mAh/g)'
-    qch_col = 'Q Ch (mAh/g)'
     n_cycles = len(df_cell)
     ceff_values = []
     
     try:
         start_idx = formation_cycles if n_cycles > formation_cycles else 0
         
-        # Prefer calculating from Q Dis / Q Ch per cycle; fall back to provided efficiency column
-        if qdis_col in df_cell.columns and qch_col in df_cell.columns:
-            qdis_series = pd.to_numeric(df_cell[qdis_col], errors='coerce')
-            qch_series = pd.to_numeric(df_cell[qch_col], errors='coerce')
-            
-            # Use degradation check logic: stop if capacity drops significantly
-            if n_cycles > formation_cycles + 1:
-                prev_qdis = qdis_series.iloc[formation_cycles]
-                for i in range(formation_cycles + 1, n_cycles):
-                    qdis = qdis_series.iloc[i]
-                    qch = qch_series.iloc[i]
-                    try:
-                        pq = float(prev_qdis) if pd.notna(prev_qdis) else 0
-                        qd = float(qdis) if pd.notna(qdis) else 0
-                        qc = float(qch) if pd.notna(qch) else 0
-                        
-                        # Stop if capacity drops significantly
-                        if pq > 0 and qd < 0.95 * pq:
-                            break
-                        
-                        # Calculate efficiency if we have valid data
-                        if pd.notna(qdis) and pd.notna(qch) and qc > 0:
-                            ceff_values.append((qd / qc) * 100)
-                            prev_qdis = qd
-                    except (ValueError, TypeError):
-                        continue
-            else:
-                # Simple calculation without degradation check if not enough cycles
-                for i in range(start_idx, n_cycles):
-                    qdis = qdis_series.iloc[i]
-                    qch = qch_series.iloc[i]
-                    if pd.notna(qdis) and pd.notna(qch) and qch > 0:
-                        ceff_values.append((qdis / qch) * 100)
-        
-        elif eff_col in df_cell.columns and qdis_col in df_cell.columns and n_cycles > formation_cycles+1:
-            # Fallback to efficiency column with degradation check
-            prev_qdis = df_cell[qdis_col].iloc[formation_cycles]
-            prev_eff = df_cell[eff_col].iloc[formation_cycles]
-            for i in range(formation_cycles+1, n_cycles):
-                curr_qdis = df_cell[qdis_col].iloc[i]
-                curr_eff = df_cell[eff_col].iloc[i]
-                try:
-                    pq = float(prev_qdis)
-                    cq = float(curr_qdis)
-                    pe = float(prev_eff)
-                    ce = float(curr_eff)
-                    if pq > 0 and (cq < 0.95 * pq or ce < 0.95 * pe):
-                        break
-                    # Convert efficiency from decimal (0-1) to percentage
-                    ceff_values.append(ce * 100)
-                    prev_qdis = cq
-                    prev_eff = ce
-                except (ValueError, TypeError):
-                    continue
-        
-        elif eff_col in df_cell.columns:
-            # Simple fallback: just use efficiency column without degradation check
+        charge_discharge_pairs = [
+            ('Q Dis (mAh/g)', 'Q Chg (mAh/g)'),
+            ('Q Dis (mAh/g)', 'Q Ch (mAh/g)'),
+            ('Q discharge (mA.h)', 'Q charge (mA.h)')
+        ]
+
+        for discharge_col, charge_col in charge_discharge_pairs:
+            if discharge_col in df_cell.columns and charge_col in df_cell.columns:
+                qdis_series = pd.to_numeric(df_cell[discharge_col], errors='coerce')
+                qch_series = pd.to_numeric(df_cell[charge_col], errors='coerce')
+                ceff_values = [
+                    (float(qd) / float(qc)) * 100
+                    for qd, qc in zip(qdis_series.iloc[start_idx:n_cycles], qch_series.iloc[start_idx:n_cycles])
+                    if pd.notna(qd) and pd.notna(qc) and float(qc) > 0
+                ]
+                break
+
+        if not ceff_values and eff_col in df_cell.columns:
             eff_series = pd.to_numeric(df_cell[eff_col], errors='coerce')
             ceff_values = [val * 100 for val in eff_series.iloc[start_idx:n_cycles] if pd.notna(val) and val > 0]
         
@@ -711,10 +672,22 @@ def calculate_cell_metrics(df_cell, formation_cycles, disc_area_cm2):
             metrics['coulombic_eff'] = None
     except Exception as e:
         metrics['coulombic_eff'] = None
+
+    # Capacity fade rate metrics from linear degradation region
+    metrics['fade_rate_per_cycle'] = None
+    metrics['fade_rate_per_100'] = None
+    try:
+        from data_analysis import calculate_capacity_fade_rate
+        fade_result = calculate_capacity_fade_rate(df_cell, formation_cycles=formation_cycles)
+        if fade_result is not None:
+            metrics['fade_rate_per_cycle'] = fade_result.get('fade_rate_per_cycle')
+            metrics['fade_rate_per_100'] = fade_result.get('fade_rate_per_100')
+    except Exception:
+        pass
     
     return metrics
 
-def render_toggle_section(dfs: List[Dict[str, Any]], enable_grouping: bool = False) -> Tuple[Dict[str, bool], Dict[str, bool], bool, bool, bool, Dict[str, bool], bool, bool, Dict[str, bool], str, Tuple[float, float]]:
+def render_toggle_section(dfs: List[Dict[str, Any]], enable_grouping: bool = False) -> Tuple[Dict[str, bool], Dict[str, bool], bool, bool, bool, Dict[str, bool], bool, bool, Dict[str, bool], str, Tuple[float, float], List[str]]:
     """Render all toggles and return their states: show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles, cycle_filter, y_axis_limits."""
     with st.expander("⚙️ Graph Display Options", expanded=True):
         st.markdown("### Graph Display Options")
@@ -773,14 +746,14 @@ def render_toggle_section(dfs: List[Dict[str, Any]], enable_grouping: bool = Fal
         show_lines = {}
         with dis_col:
             for label in discharge_labels:
-                show_lines[label] = st.checkbox(f"Show {label}", value=toggle_all_discharge, key=f'show_{label}')
+                show_lines[label] = st.checkbox(label, value=toggle_all_discharge, key=f'show_{label}')
         with chg_col:
             for label in charge_labels:
-                show_lines[label] = st.checkbox(f"Show {label}", value=toggle_all_charge, key=f'show_{label}')
+                show_lines[label] = st.checkbox(label, value=toggle_all_charge, key=f'show_{label}')
         show_efficiency_lines = {}
         with eff_col:
             for label in efficiency_labels:
-                show_efficiency_lines[label] = st.checkbox(f"Show {label}", value=toggle_all_efficiency, key=f'show_{label}')
+                show_efficiency_lines[label] = st.checkbox(label, value=toggle_all_efficiency, key=f'show_{label}')
 
         avg_line_toggles = {"Average Q Dis": True, "Average Q Chg": True, "Average Efficiency": True}
         group_plot_toggles = {"Group Q Dis": False, "Group Q Chg": False, "Group Efficiency": False}
@@ -831,12 +804,23 @@ def render_toggle_section(dfs: List[Dict[str, Any]], enable_grouping: bool = Fal
                     help="Remove the plot legend"
                 )
                 show_average_performance = False
+                excluded_from_average = []
                 if len(dfs) > 1:
                     show_average_performance = st.checkbox(
                         '📊 Show averages', 
                         value=False,
                         help="Display average performance lines"
                     )
+                    
+                    if show_average_performance:
+                        cell_names = [d['testnum'] if d['testnum'] else f'Cell {i+1}' for i, d in enumerate(dfs)]
+                        excluded_from_average = st.multiselect(
+                            "Exclude from average",
+                            options=cell_names,
+                            default=[],
+                            key="exclude_from_avg_single",
+                            help="Select cells to exclude from average calculation"
+                        )
             
             # Y-Axis Controls Section
             st.markdown("---")
@@ -889,7 +873,7 @@ def render_toggle_section(dfs: List[Dict[str, Any]], enable_grouping: bool = Fal
                 group_plot_toggles["Group Q Dis"] = st.checkbox('Plot Group Q Dis', value=True, key='plot_group_qdis')
                 group_plot_toggles["Group Q Chg"] = st.checkbox('Plot Group Q Chg (Charge Capacity)', value=False, key='plot_group_qchg')
                 group_plot_toggles["Group Efficiency"] = st.checkbox('Plot Group Efficiency', value=False, key='plot_group_eff')
-        return show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles, cycle_filter, y_axis_limits
+        return show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, group_plot_toggles, cycle_filter, y_axis_limits, excluded_from_average
 
 # render_retention_display_options function removed - now using unified plot settings
 
@@ -929,7 +913,7 @@ def parse_cycle_filter(cycle_filter: str, max_cycle: int) -> List[int]:
     
     return sorted(list(cycles))
 
-def render_comparison_plot_options(experiments_data: List[Dict[str, Any]]) -> Tuple[Dict[str, bool], Dict[str, bool], bool, bool, bool, Dict[str, bool], bool, bool, str, Tuple[float, float]]:
+def render_comparison_plot_options(experiments_data: List[Dict[str, Any]]) -> Tuple[Dict[str, bool], Dict[str, bool], bool, bool, bool, Dict[str, bool], bool, bool, str, Tuple[float, float], str, List[str]]:
     """
     Render plotting options for the comparison plot and return their states.
     
@@ -940,7 +924,7 @@ def render_comparison_plot_options(experiments_data: List[Dict[str, Any]]) -> Tu
         
     Returns:
         Tuple containing: show_lines, show_efficiency_lines, remove_last_cycle, 
-        show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, cycle_filter, y_axis_limits
+        show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, cycle_filter, y_axis_limits, custom_title, excluded_from_average
     """
     with st.expander("⚙️ Comparison Plot Options", expanded=True):
         st.markdown("### Select Data Series to Compare")
@@ -984,7 +968,8 @@ def render_comparison_plot_options(experiments_data: List[Dict[str, Any]]) -> Tu
 
             show_lines = {}
             for i, label in enumerate(all_discharge_labels):
-                show_lines[label] = st.checkbox(f"Show {label}", value=toggle_all_discharge, key=f'comp_show_{label}')
+                display_label = label.split(" - ", 1)[1] if " - " in label and not label.endswith("Average Q Dis") else label
+                show_lines[label] = st.checkbox(display_label, value=toggle_all_discharge, key=f'comp_show_{label}')
 
         # Charge toggles
         with chg_col:
@@ -995,7 +980,8 @@ def render_comparison_plot_options(experiments_data: List[Dict[str, Any]]) -> Tu
                 toggle_all_charge = False
 
             for i, label in enumerate(all_charge_labels):
-                show_lines[label] = st.checkbox(f"Show {label}", value=toggle_all_charge, key=f'comp_show_charge_{label}')
+                display_label = label.split(" - ", 1)[1] if " - " in label and not label.endswith("Average Q Chg") else label
+                show_lines[label] = st.checkbox(display_label, value=toggle_all_charge, key=f'comp_show_charge_{label}')
 
         # Efficiency toggles
         with eff_col:
@@ -1007,7 +993,8 @@ def render_comparison_plot_options(experiments_data: List[Dict[str, Any]]) -> Tu
 
             show_efficiency_lines = {}
             for i, label in enumerate(all_efficiency_labels):
-                show_efficiency_lines[label] = st.checkbox(f"Show {label}", value=toggle_all_efficiency, key=f'comp_show_eff_{label}')
+                display_label = label.split(" - ", 1)[1] if " - " in label and not label.endswith("Average Efficiency") else label
+                show_efficiency_lines[label] = st.checkbox(display_label, value=toggle_all_efficiency, key=f'comp_show_eff_{label}')
 
         # Cycle filter section for comparison plots
         st.markdown("---")
@@ -1051,6 +1038,14 @@ def render_comparison_plot_options(experiments_data: List[Dict[str, Any]]) -> Tu
                     help="Display the plot title"
                 )
                 
+                custom_title = st.text_input(
+                    "Custom Graph Title",
+                    value="Capacity Data Comparison",
+                    key="comp_custom_title",
+                    disabled=not show_graph_title,
+                    label_visibility="collapsed"
+                )
+                
             with col3:
                 st.markdown("**Legend & Performance**")
                 hide_legend = st.checkbox(
@@ -1065,6 +1060,23 @@ def render_comparison_plot_options(experiments_data: List[Dict[str, Any]]) -> Tu
                     key='comp_show_averages',
                     help="Display average performance lines (hides individual cell traces when enabled)"
                 )
+                
+                excluded_from_average = []
+                if show_average_performance:
+                    all_dataset_labels = []
+                    for exp_data in experiments_data:
+                        exp_name = exp_data['experiment_name']
+                        for i, d in enumerate(exp_data['dfs']):
+                            cell_name = d['testnum'] if d['testnum'] else f'Cell {i+1}'
+                            all_dataset_labels.append(f"{exp_name} - {cell_name}")
+                    
+                    excluded_from_average = st.multiselect(
+                        "Exclude from average",
+                        options=all_dataset_labels,
+                        default=[],
+                        key="exclude_from_avg_comp",
+                        help="Select cells to exclude from average calculation"
+                    )
             
             # Y-Axis Controls Section
             st.markdown("---")
@@ -1138,7 +1150,7 @@ def render_comparison_plot_options(experiments_data: List[Dict[str, Any]]) -> Tu
                     help="Show/hide average efficiency line"
                 )
     
-    return show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, cycle_filter, y_axis_limits
+    return show_lines, show_efficiency_lines, remove_last_cycle, show_graph_title, show_average_performance, avg_line_toggles, remove_markers, hide_legend, cycle_filter, y_axis_limits, custom_title, excluded_from_average
 
 
 def render_full_cell_mass_balance_inputs(context_key=None, cell_format="Coin"):
@@ -1431,6 +1443,8 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                     electrolyte_default = st.session_state.get('electrolyte_0', project_defaults.get('electrolyte', '1M LiPF6 1:1:1'))
                     substrate_default = st.session_state.get('substrate_0', project_defaults.get('substrate', 'Copper'))
                     separator_default = st.session_state.get('separator_0', project_defaults.get('separator', '25um PP'))
+                    cutoff_lower_default = st.session_state.get('cutoff_lower_0', project_defaults.get('cutoff_voltage_lower', 2.5))
+                    cutoff_upper_default = st.session_state.get('cutoff_upper_0', project_defaults.get('cutoff_voltage_upper', 4.2))
                     with col1:
                         disc_loading_0 = st.number_input(f'Disc loading (mg) for Cell 1', min_value=0.0, step=1.0, value=loading_default, key=f'loading_0')
                         formation_cycles_0 = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
@@ -1468,7 +1482,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             'Lower Cutoff Voltage (V)', 
                             min_value=0.0, 
                             max_value=10.0, 
-                            value=st.session_state.get('cutoff_lower_0', 2.5),
+                            value=cutoff_lower_default,
                             step=0.1,
                             key='cutoff_lower_0',
                             help="Lower voltage cutoff (e.g., 2.5V). Auto-extracted from MTI/Neware files."
@@ -1478,7 +1492,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             'Upper Cutoff Voltage (V)', 
                             min_value=0.0, 
                             max_value=10.0, 
-                            value=st.session_state.get('cutoff_upper_0', 4.2),
+                            value=cutoff_upper_default,
                             step=0.1,
                             key='cutoff_upper_0',
                             help="Upper voltage cutoff (e.g., 4.2V). Auto-extracted from MTI/Neware files."
@@ -1670,6 +1684,8 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                     electrolyte_default = st.session_state.get('electrolyte_0', project_defaults.get('electrolyte', '1M LiPF6 1:1:1'))
                     substrate_default = st.session_state.get('substrate_0', project_defaults.get('substrate', 'Copper'))
                     separator_default = st.session_state.get('separator_0', project_defaults.get('separator', '25um PP'))
+                    cutoff_lower_default = st.session_state.get('cutoff_lower_0', project_defaults.get('cutoff_voltage_lower', 2.5))
+                    cutoff_upper_default = st.session_state.get('cutoff_upper_0', project_defaults.get('cutoff_voltage_upper', 4.2))
                     with col1:
                         disc_loading = st.number_input(f'Disc loading (mg) for Cell 1', min_value=0.0, step=1.0, value=loading_default, key=f'loading_0')
                         formation_cycles = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
@@ -1707,7 +1723,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             'Lower Cutoff Voltage (V)', 
                             min_value=0.0, 
                             max_value=10.0, 
-                            value=st.session_state.get('cutoff_lower_0', 2.5),
+                            value=cutoff_lower_default,
                             step=0.1,
                             key='cutoff_lower_0_single',
                             help="Lower voltage cutoff (e.g., 2.5V). Auto-extracted from MTI/Neware files."
@@ -1717,7 +1733,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             'Upper Cutoff Voltage (V)', 
                             min_value=0.0, 
                             max_value=10.0, 
-                            value=st.session_state.get('cutoff_upper_0', 4.2),
+                            value=cutoff_upper_default,
                             step=0.1,
                             key='cutoff_upper_0_single',
                             help="Upper voltage cutoff (e.g., 4.2V). Auto-extracted from MTI/Neware files."
@@ -1823,7 +1839,6 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
                 # Remove this row and update session state
                 st.session_state[formulation_key] = [row for j, row in enumerate(formulation_data) if j != i]
                 st.session_state[save_flag_key] = False
-                st.rerun()
         # Detect changes
         if component != row['Component'] or fraction != row['Dry Mass Fraction (%)']:
             changed = True
@@ -1837,7 +1852,6 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
         if st.button(f"➕ Add Component", key=f'add_component_{key_suffix}', use_container_width=True):
             st.session_state[formulation_key].append({'Component': '', 'Dry Mass Fraction (%)': 0.0})
             st.session_state[save_flag_key] = False
-            st.rerun()
     
     with btn_col2:
         copy_button_key = f'show_copy_{key_suffix}'
@@ -1846,7 +1860,6 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
         
         if st.button(f"📋 Copy from...", key=f'copy_formulation_btn_{key_suffix}', use_container_width=True, help="Copy formulation from another experiment"):
             st.session_state[copy_button_key] = not st.session_state[copy_button_key]
-            st.rerun()
     
     # Show copy formulation dropdown if button was clicked
     if st.session_state.get(copy_button_key, False) and project_id:
@@ -1860,7 +1873,15 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
             # Filter experiments that have formulations
             experiments_with_formulations = []
             for exp in experiments:
-                exp_id, cell_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes = exp
+                # Expecting 17 items from DB: 
+                # id, cell_name, file_name, loading, active_material, formation_cycles, 
+                # test_number, electrolyte, substrate, separator, formulation_json, 
+                # data_json, created_date, porosity, experiment_notes, 
+                # cutoff_voltage_lower, cutoff_voltage_upper
+                exp_id = exp[0]
+                cell_name = exp[1]
+                file_name = exp[2]
+                formulation_json = exp[10]
                 
                 if formulation_json:
                     try:
@@ -1905,22 +1926,18 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
                             st.session_state[save_flag_key] = False
                             st.session_state[copy_button_key] = False  # Hide the copy interface
                             st.success(f"✅ Copied formulation from '{selected_experiment_name}'")
-                            st.rerun()
                     with copy_col2:
                         if st.button("❌ Cancel", key=f'cancel_copy_{key_suffix}', use_container_width=True):
                             st.session_state[copy_button_key] = False
-                            st.rerun()
                 st.markdown("---")
             else:
                 st.info("💡 No other experiments with formulations found in this project.")
                 if st.button("Close", key=f'close_copy_info_{key_suffix}'):
                     st.session_state[copy_button_key] = False
-                    st.rerun()
         except Exception as e:
             st.error(f"Error loading experiments: {e}")
             if st.button("Close", key=f'close_copy_error_{key_suffix}'):
                 st.session_state[copy_button_key] = False
-                st.rerun()
     
     # If any changes, reset the save flag
     if changed:
@@ -2032,7 +2049,9 @@ def display_summary_stats(dfs: List[Dict[str, Any]], disc_area_cm2: float, show_
         "1st Cycle Discharge Capacity (mAh/g)",
         "First Cycle Efficiency (%)",
         "Cycle Life (80%)",
-        "Initial Areal Capacity (mAh/cm²)"
+        "Initial Areal Capacity (mAh/cm²)",
+        "Capacity Fade Rate (%/cycle)",
+        "Capacity Fade Rate (%/100 cycles)"
     ]
     summary_dict = {param: [] for param in param_names}
     cell_names = []
@@ -2045,6 +2064,8 @@ def display_summary_stats(dfs: List[Dict[str, Any]], disc_area_cm2: float, show_
         summary_dict[param_names[3]].append(metrics['first_cycle_eff'])
         summary_dict[param_names[4]].append(metrics['cycle_life_80'])
         summary_dict[param_names[5]].append(metrics['areal_capacity'])
+        summary_dict[param_names[6]].append(metrics['fade_rate_per_cycle'])
+        summary_dict[param_names[7]].append(metrics['fade_rate_per_100'])
     # Add group summary rows if grouping is enabled
     group_names_final = []
     if group_assignments is not None and group_names is not None:
@@ -2054,12 +2075,12 @@ def display_summary_stats(dfs: List[Dict[str, Any]], disc_area_cm2: float, show_
                 group_metrics = [cell_metrics[i] for i in group_indices]
                 # Calculate group averages
                 avg_values = {}
-                for param_key in ['max_qdis', 'first_cycle_eff', 'cycle_life_80', 'areal_capacity', 'reversible_capacity', 'coulombic_eff']:
+                for param_key in ['max_qdis', 'first_cycle_eff', 'cycle_life_80', 'areal_capacity', 'reversible_capacity', 'coulombic_eff', 'fade_rate_per_cycle', 'fade_rate_per_100']:
                     values = [m[param_key] for m in group_metrics if m[param_key] is not None]
                     avg_values[param_key] = sum(values) / len(values) if values else None
                 # Add to summary
                 for i, param in enumerate(param_names):
-                    param_keys = ['reversible_capacity', 'coulombic_eff', 'max_qdis', 'first_cycle_eff', 'cycle_life_80', 'areal_capacity']
+                    param_keys = ['reversible_capacity', 'coulombic_eff', 'max_qdis', 'first_cycle_eff', 'cycle_life_80', 'areal_capacity', 'fade_rate_per_cycle', 'fade_rate_per_100']
                     summary_dict[param].append(avg_values[param_keys[i]])
                 group_names_final.append(group_name + " (Group Avg)")
     # Compute overall averages
@@ -2102,6 +2123,10 @@ def display_summary_stats(dfs: List[Dict[str, Any]], disc_area_cm2: float, show_
             elif idx == 4:  # Cycle Life (80%) - 1 decimal place
                 row.append(f"{v:.1f}")
             elif idx == 5:  # Initial Areal Capacity (mAh/cm²) - 2 decimal places
+                row.append(f"{v:.2f}")
+            elif idx == 6:  # Capacity Fade Rate (%/cycle) - 4 decimal places
+                row.append(f"{v:.4f}")
+            elif idx == 7:  # Capacity Fade Rate (%/100 cycles) - 2 decimal places
                 row.append(f"{v:.2f}")
             else:
                 row.append(f"{v:.1f}")
@@ -2246,10 +2271,10 @@ def render_comparison_color_customization(experiments_data: List[Dict[str, Any]]
                 if exp_name not in experiments_groups:
                     experiments_groups[exp_name] = []
                 experiments_groups[exp_name].append(dataset)
-            
+
             for exp_name, datasets in experiments_groups.items():
                 st.markdown(f"#### 📊 {exp_name}")
-                
+
                 # Create columns for color pickers
                 cols_per_row = 3
                 for i in range(0, len(datasets), cols_per_row):
@@ -2257,11 +2282,11 @@ def render_comparison_color_customization(experiments_data: List[Dict[str, Any]]
                     for col_idx, dataset in enumerate(datasets[i:i+cols_per_row]):
                         with cols[col_idx]:
                             label = dataset['label']
+                            display_label = dataset['label'].split(" - ", 1)[1] if " - " in dataset['label'] and not dataset.get('is_average', False) else dataset['label']
                             default_color = dataset['default_color']
-                            
-                            # Get current custom color or use default
+
                             current_color = st.session_state.comp_custom_colors.get(label, default_color)
-                            
+
                             # Color picker
                             new_color = st.color_picker(
                                 f"{dataset['cell_name']}",
@@ -2269,22 +2294,127 @@ def render_comparison_color_customization(experiments_data: List[Dict[str, Any]]
                                 key=f"comp_color_{label}",
                                 help=f"Choose color for {label}"
                             )
-                            
+
                             # Update session state if color changed
                             if new_color != default_color:
                                 st.session_state.comp_custom_colors[label] = new_color
                             elif label in st.session_state.comp_custom_colors and new_color == default_color:
                                 # User reset to default
                                 del st.session_state.comp_custom_colors[label]
-                
+
                 st.markdown("---")
         else:
             st.info("No datasets available for color customization.")
-    
+
     return st.session_state.comp_custom_colors
 
 
+def render_comparison_name_customization(experiments_data: List[Dict[str, Any]], show_average_performance: bool = False) -> Dict[str, str]:
+    """
+    Render dataset name customization UI for comparison plots.
+
+    Args:
+        experiments_data: List of experiment data dictionaries
+        show_average_performance: Whether average performance lines are being shown
+
+    Returns:
+        Dictionary mapping original dataset labels to customized labels
+    """
+    # Initialize session state for custom names if not exists
+    if 'comp_custom_names' not in st.session_state:
+        st.session_state.comp_custom_names = {}
+
+    # Collect all datasets that will be shown
+    all_datasets = []
+
+    for exp_idx, exp_data in enumerate(experiments_data):
+        exp_name = exp_data['experiment_name']
+        dfs = exp_data['dfs']
+
+        # Individual cell datasets (only if not showing averages)
+        if not show_average_performance:
+            for cell_idx, d in enumerate(dfs):
+                cell_name = d['testnum'] if d['testnum'] else f'Cell {cell_idx+1}'
+                all_datasets.append({
+                    'original_label': f"{exp_name} - {cell_name}",
+                    'exp_name': exp_name,
+                    'cell_name': cell_name,
+                    'is_average': False
+                })
+
+        # Average datasets (if showing averages and multiple cells)
+        if show_average_performance and len(dfs) >= 1:
+            label_suffix = " - Average" if len(dfs) > 1 else ""
+            display_cell_name = "Average" if len(dfs) > 1 else exp_name
+            all_datasets.append({
+                'original_label': f"{exp_name}{label_suffix}",
+                'exp_name': exp_name,
+                'cell_name': display_cell_name,
+                'is_average': True
+            })
+
+    # Render name customization UI
+    with st.expander("🏷️ Dataset Name Customization", expanded=False):
+        st.markdown("### Customize Legend Names")
+        st.info("💡 Rename datasets to make your comparison plots clearer. Reset to revert back to default names.")
+
+        # Reset button
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.button("🔄 Reset All Names", key="comp_reset_names", use_container_width=True):
+                st.session_state.comp_custom_names = {}
+                st.rerun()
+
+        # Text inputs for each dataset
+        if all_datasets:
+            # Group by experiment for better organization
+            experiments_groups = {}
+            for dataset in all_datasets:
+                exp_name = dataset['exp_name']
+                if exp_name not in experiments_groups:
+                    experiments_groups[exp_name] = []
+                experiments_groups[exp_name].append(dataset)
+
+            for exp_name, datasets in experiments_groups.items():
+                st.markdown(f"#### 🏷️ {exp_name}")
+
+                # Create columns for text inputs (2 per row for name fields)
+                cols_per_row = 2
+                for i in range(0, len(datasets), cols_per_row):
+                    cols = st.columns(cols_per_row)
+                    for col_idx, dataset in enumerate(datasets[i:i+cols_per_row]):
+                        with cols[col_idx]:
+                            original_label = dataset['original_label']
+                            display_label = original_label.split(" - ", 1)[1] if " - " in original_label and not dataset.get('is_average', False) else original_label
+
+                            current_name = st.session_state.comp_custom_names.get(
+                                original_label,
+                                display_label
+                            )
+
+                            new_name = st.text_input(
+                                display_label,
+                                value=current_name,
+                                key=f"comp_rename_{original_label}",
+                                help=f"Set a custom display name for {original_label}"
+                            )
+
+                            # Update session state if name changed
+                            if new_name != original_label:
+                                st.session_state.comp_custom_names[original_label] = new_name
+                            elif original_label in st.session_state.comp_custom_names and new_name == original_label:
+                                # User reset to default
+                                del st.session_state.comp_custom_names[original_label]
+                
+                st.markdown("---")
+        else:
+            st.info("No datasets available for name customization.")
+            
+    return st.session_state.comp_custom_names
+
+
 def render_experiment_color_customization(dfs: List[Dict[str, Any]], experiment_name: str, show_average_performance: bool = False, enable_grouping: bool = False, group_names: List[str] = None) -> Dict[str, str]:
+
     """
     Render color customization UI for individual experiment plots.
     

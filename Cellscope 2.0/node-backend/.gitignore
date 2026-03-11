@@ -1,0 +1,10 @@
+.env
+*.log
+
+# Runtime SQLite artifacts
+/data/*.db
+/data/*.db-shm
+/data/*.db-wal
+
+# Keep folder structure
+!/data/.gitkeep

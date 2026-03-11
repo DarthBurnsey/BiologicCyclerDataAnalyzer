@@ -8,9 +8,10 @@ import os
 import uuid
 import pandas as pd
 from pathlib import Path
-import streamlit as st
+from io import StringIO
 
-DATABASE_PATH = 'cellscope.db'
+# Configurable database path — defaults to v1.0's database for coexistence
+DATABASE_PATH = os.environ.get('CELLSCOPE_DB_PATH', os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'cellscope.db'))
 SQLITE_TIMEOUT = 60
 
 logging.basicConfig(level=logging.INFO)
@@ -316,7 +317,6 @@ def migrate_database():
         
         conn.commit()
 
-@st.cache_data(ttl=30, show_spinner=False)
 def get_project_components(project_id):
     """Get all unique components used in formulations within a project.
     
@@ -374,27 +374,6 @@ def get_user_projects(user_id):
             FROM projects 
             WHERE user_id = ? 
             ORDER BY last_modified DESC
-        ''', (user_id,))
-        return cursor.fetchall()
-
-def get_user_projects_with_counts(user_id):
-    """Get all projects for a user with experiment counts for navigation UIs."""
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT
-                p.id,
-                p.name,
-                p.description,
-                p.project_type,
-                p.created_date,
-                p.last_modified,
-                COUNT(e.id) AS experiment_count
-            FROM projects p
-            LEFT JOIN cell_experiments e ON e.project_id = p.id
-            WHERE p.user_id = ?
-            GROUP BY p.id, p.name, p.description, p.project_type, p.created_date, p.last_modified
-            ORDER BY p.last_modified DESC
         ''', (user_id,))
         return cursor.fetchall()
 
@@ -467,36 +446,6 @@ def get_project_experiments(project_id):
             hydrated_results.append((exp_id, cname, fname, d_json, cdate))
             
         return hydrated_results
-
-def get_project_experiment_index(project_id):
-    """Get lightweight experiment metadata for sidebar navigation."""
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, cell_name, created_date, data_json
-            FROM cell_experiments
-            WHERE project_id = ?
-            ORDER BY created_date DESC
-        ''', (project_id,))
-        return cursor.fetchall()
-
-def get_hydrated_experiment_payload(experiment_id):
-    """Get an experiment payload only when the full hydrated data is needed."""
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT project_id, cell_name, data_json, parquet_path
-            FROM cell_experiments
-            WHERE id = ?
-        ''', (experiment_id,))
-        row = cursor.fetchone()
-
-        if not row:
-            return None
-
-        project_id, experiment_name, data_json, parquet_path = row
-        hydrated_json = hydrate_data_json(data_json, parquet_path, experiment_id)
-        return project_id, experiment_name, hydrated_json
 
 def check_experiment_exists(project_id, cell_name, file_name):
     """Check if an experiment already exists in the project."""
@@ -1045,7 +994,6 @@ def get_all_project_experiments_data(project_id):
             
         return hydrated_results
 
-@st.cache_data(ttl=30, show_spinner=False)
 def get_project_preferences(project_id):
     """Get all preferences for a project."""
     with get_db_connection() as conn:
