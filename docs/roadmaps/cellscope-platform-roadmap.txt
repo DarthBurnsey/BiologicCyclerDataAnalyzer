@@ -1,0 +1,599 @@
+CellScope Platform Roadmap
+Ontology, Derived Metrics, Cohorts, and Connectors
+
+Prepared: March 17, 2026
+Audience: Internal engineering and product leadership
+
+========================================================================
+1. Executive Summary
+========================================================================
+
+CellScope is already useful as a battery experiment management and
+visualization tool, but it is still organized around experiments and
+screens rather than around a canonical battery data model. To become a
+high-value platform comparable to a Voltaiq-style system, the product
+needs to be rebuilt around four foundational capabilities:
+
+1. A canonical battery ontology with first-class records for materials,
+   lots, builds, equipment, process steps, test protocols, and lineage.
+2. A derived-metrics service that computes and persists battery features
+   once, rather than recalculating them ad hoc inside UI code.
+3. A cohort and workspace layer that lets users define reusable,
+   queryable groups of cells, tests, and process conditions.
+4. A connector framework that ingests data from cyclers and adjacent test
+   systems in a governed, replayable, provenance-aware way.
+
+The recommended implementation sequence is strict:
+
+Phase 1: Canonical ontology
+Phase 2: Connector framework
+Phase 3: Derived metrics service
+Phase 4: Cohorts and workspaces
+
+This order matters. If CellScope adds more analytics or UI features
+before the ontology, ingestion model, and metric pipeline are stabilized,
+the platform will accumulate more product surface on top of unstable
+foundations.
+
+========================================================================
+2. Product Goal
+========================================================================
+
+Transform CellScope from a lab-facing experiment app into a battery data
+platform that can answer questions such as:
+
+- Which material lots, process settings, and protocol versions produced
+  the best long-term retention for NMC811 full cells?
+- Which electrode batches show early dQ/dV peak drift or abnormal DCIR
+  rise relative to peers from the same build week?
+- Which runs are safe to compare directly because they share the same
+  formation protocol, upper cutoff, fixture, chamber, and electrolyte
+  lot?
+- Which failures trace back to a process run, operator, equipment asset,
+  or incoming lot rather than to electrochemistry alone?
+- Which cohorts should be reused in dashboards, exports, and AI
+  summaries without reassembling filters by hand?
+
+========================================================================
+3. Strategic Decisions
+========================================================================
+
+3.1 Platform backend
+
+The primary platform backend should be the FastAPI codebase in:
+
+  Cellscope 2.0/backend/app
+
+Rationale:
+
+- It already owns live ingestion concepts such as sources, channels,
+  runs, cycle points, anomaly events, and reporting.
+- Python is the correct home for electrochemical analytics, parsing,
+  derived feature computation, and scientific data tooling.
+- The current Node backend is useful as a normalized CRUD bridge, but it
+  does not currently carry the analytics or live-ops foundation that the
+  long-term product needs.
+
+3.2 Database
+
+Use PostgreSQL as the production system of record.
+
+Rationale:
+
+- The target platform needs richer indexing, JSON support, larger scale,
+  concurrent access, background workers, and reliable migrations.
+- SQLite should remain supported for local development and isolated tests
+  only.
+
+3.3 Artifact storage
+
+Keep raw and high-resolution time-series artifacts in Parquet files or
+object storage, referenced from the database. Keep normalized features,
+cycle summaries, step summaries, and lineage in the database.
+
+3.4 Legacy product posture
+
+The root Streamlit app remains a transitional client and validation tool.
+It should not continue to accumulate core domain logic.
+
+========================================================================
+4. Workstream A: Canonical Battery Ontology
+========================================================================
+
+4.1 Objective
+
+Create the battery-native system of record that every future workflow
+depends on. The ontology must separate manufactured objects from test
+events, define provenance explicitly, and support traceability across
+lots, builds, process steps, and test results.
+
+4.2 Why this comes first
+
+Today, significant metadata is stored inside experiment JSON payloads or
+embedded cell dictionaries. That makes lineage fragile, querying hard,
+and reuse expensive. Without a canonical ontology:
+
+- analytics remain context-poor,
+- cohorts remain unreliable,
+- ingestion remains mapper-heavy and heuristic-driven,
+- and root-cause analysis remains mostly manual.
+
+4.3 Core entities to add
+
+Materials and lots:
+- material
+- material_lot
+- electrolyte_recipe
+- electrolyte_lot
+- separator_material
+- separator_lot
+- binder_lot
+- conductive_additive_lot
+- current_collector_lot
+
+Manufacturing and process:
+- electrode_batch
+- slurry_batch
+- coating_run
+- drying_run
+- calendaring_run
+- cutting_run
+- assembly_run
+- electrolyte_fill_run
+- formation_protocol_version
+- protocol_version
+- process_run
+
+People and equipment:
+- operator
+- equipment_asset
+- fixture
+- chamber
+- site
+- line_or_station
+
+Cell identity and testing:
+- cell_build
+- cell_alias
+- test_request
+- test_run
+- rpt_run
+- pulse_run
+- eis_run
+- calendar_aging_run
+- benchmark_definition
+
+Lineage and provenance:
+- lineage_edge
+- source_artifact
+- parser_version
+- mapping_decision
+
+4.4 Modeling rules
+
+- A cell build is the physical cell record.
+- A test run is a testing event performed on that cell build.
+- A protocol version is immutable once used in production data.
+- A lot is not a string field; it is a first-class record with supplier,
+  received date, certificate data, and notes.
+- A process run is a first-class record with structured settings, start
+  and end times, operator attribution, equipment attribution, and
+  optional attachments.
+- Lineage is explicit. Do not infer critical relationships only from
+  names.
+
+4.5 Initial schema targets
+
+The first release of the ontology should support the following joins
+without reading any legacy experiment JSON:
+
+- cell_build -> electrode_batch
+- cell_build -> electrolyte_lot
+- cell_build -> separator_lot
+- cell_build -> protocol_version
+- cell_build -> operator
+- cell_build -> equipment_asset
+- test_run -> cell_build
+- test_run -> protocol_version
+- test_run -> fixture
+- test_run -> equipment_asset
+- test_run -> source_artifact
+
+4.6 Migration and backfill rules
+
+- Preserve all existing project, experiment, and cell identifiers as
+  legacy references.
+- Create backfill mappings from existing records to new ontology records.
+- Where legacy data is incomplete, generate placeholder records with
+  explicit flags such as `source = legacy_backfill` and
+  `confidence = inferred`.
+- Never fabricate unknown chemistry, lot, or process values.
+- Keep every imported legacy value so the migration is auditable.
+
+4.7 Phase A deliverables
+
+- PostgreSQL schema and migrations for all core ontology tables
+- legacy-to-ontology import job
+- lineage query service
+- admin/API endpoints for ontology CRUD and lookup
+- backfill report documenting confidence and missingness
+
+========================================================================
+5. Workstream B: Connector Framework
+========================================================================
+
+5.1 Objective
+
+Replace one-off import behavior and CSV-assisted tracking workflows with
+an extensible ingestion framework that can discover, parse, map, validate,
+replay, and audit incoming battery data.
+
+5.2 Current limitation
+
+The current tracking flow in `cycler_tracking.py` is clever and useful,
+but it is a workaround that synchronizes a spreadsheet-like source into
+experiment payloads. That is not sufficient for a lab operating system.
+
+5.3 Connector architecture
+
+Each connector should move data through these stages:
+
+1. Discover
+2. Fetch
+3. Fingerprint
+4. Parse
+5. Map
+6. Validate
+7. Ingest
+8. Derive
+9. Publish lifecycle events
+
+5.4 Core connector entities
+
+- connector_type
+- connector_instance
+- connector_checkpoint
+- connector_artifact
+- parser_release
+- mapping_rule
+- mapping_review_item
+- ingestion_run
+- ingestion_event
+- run_lifecycle_event
+
+5.5 Supported connector types, release order
+
+Wave 1:
+- BioLogic watched-folder exports
+- Neware watched-folder exports
+- MTI watched-folder exports
+- Maccor file exports
+- Arbin file exports
+
+Wave 2:
+- direct API polling where vendor support exists
+- SFTP-based ingestion
+- shared-drive backfill connectors
+
+Wave 3:
+- chamber/environment data
+- inline DCIR/pulse test assets
+- impedance data ingestion
+- manufacturing-side batch and genealogy feeds
+
+5.6 Connector requirements
+
+- Every raw artifact must be immutable and fingerprinted.
+- Every parse must record parser version and mapping confidence.
+- Every backfill must be resumable and idempotent.
+- Partial files must be quarantined rather than treated as final data.
+- Duplicate artifacts must be recognized and suppressed safely.
+- Mapping failures must go to a review queue, not to silent fallback.
+- A run must have explicit lifecycle states:
+  discovered, active, paused, completed, stale, failed, archived.
+
+5.7 Provenance requirements
+
+For every run and metric, it must be possible to answer:
+
+- Which connector ingested this data?
+- Which file or endpoint produced it?
+- Which parser version normalized it?
+- Which mapping rule linked it to a cell build or channel?
+- Was any operator review required?
+- Has the run been reprocessed since first ingestion?
+
+5.8 Phase B deliverables
+
+- connector plugin interface
+- first-party connectors for current supported cyclers
+- reprocessing and backfill jobs
+- mapping review queue and audit trail
+- run lifecycle API and event feed
+
+========================================================================
+6. Workstream C: Derived Metrics Service
+========================================================================
+
+6.1 Objective
+
+Move all important battery feature computation out of UI code and into a
+versioned backend metrics service. Persist results at useful scopes so
+dashboards, cohorts, exports, and AI summaries can query precomputed
+features instead of reparsing raw files.
+
+6.2 Current limitation
+
+The codebase currently computes meaningful values in multiple places:
+
+- summary calculations
+- dashboard analytics
+- plotting code
+- export code
+- anomaly logic
+
+That approach causes drift, duplicate logic, and inconsistent answers.
+
+6.3 Metric scopes
+
+Per-cycle metrics:
+- specific charge/discharge capacity
+- retention vs baseline
+- CE
+- CE drift
+- voltage window usage
+- peak positions and peak areas from dQ/dV or dV/dQ
+- pulse-derived resistance points
+- relaxation features
+
+Per-run metrics:
+- cycle life to thresholds
+- fade slope and fit quality
+- DCIR evolution
+- dQ/dV drift summary
+- relaxation trend summary
+- EIS fit summary
+- anomaly signatures
+- benchmark scores
+
+Per-cohort metrics:
+- distributions
+- benchmark comparisons
+- feature drift over time
+- lot or batch sensitivity
+- protocol-version comparisons
+- outlier cluster summaries
+
+6.4 Core entities
+
+- metric_definition
+- metric_run
+- cycle_metric_value
+- run_metric_value
+- cohort_metric_snapshot
+- benchmark_definition
+- benchmark_result
+
+6.5 First metric families to ship
+
+Core cycling:
+- first-cycle efficiency
+- post-formation CE
+- CE drift
+- reversible capacity
+- retention at cycle N
+- cycle life to 80%, 85%, 90%
+- fade slope and fit confidence
+
+Advanced diagnostics:
+- dQ/dV peak location, amplitude, area, and shift
+- DCIR at selected SOC points
+- pulse response summary
+- voltage relaxation slope and time constant
+- EIS equivalent-circuit fit summary
+- failure signatures for rapid fade, unstable CE, sudden resistance jump,
+  peak splitting, and early collapse
+
+6.6 Execution model
+
+- Metric jobs run asynchronously after ingestion completes.
+- Recompute is triggered by data change, metadata change, or metric
+  definition version bump.
+- Metric outputs are immutable per version and timestamped.
+- Dashboard and export APIs read the latest approved metric versions.
+
+6.7 Phase C deliverables
+
+- metrics service package
+- job queue and worker process
+- persisted metric tables
+- benchmark definitions and scoring engine
+- API endpoints for run, cell, cohort, and benchmark queries
+
+========================================================================
+7. Workstream D: Cohorts and Workspaces
+========================================================================
+
+7.1 Objective
+
+Give users a reusable analysis layer above raw records. Cohorts should be
+saved, shareable, snapshot-capable groups of records. Workspaces should
+capture comparison context, notes, and outputs.
+
+7.2 Cohort examples the system must support
+
+- all NMC811 full cells with electrolyte lot X and upper cutoff 4.3 V
+- all cells built from electrode batch EB-014 using formation protocol v3
+- all full-cell runs on fixture F-12 with CE drift greater than threshold
+- all cells using separator lot S-88 tested above 45 C
+
+7.3 Core entities
+
+- cohort
+- cohort_definition
+- cohort_snapshot
+- workspace
+- workspace_item
+- annotation
+- comparison_view
+
+7.4 Filter model
+
+The cohort system must support filters over:
+
+- ontology fields
+- run metadata
+- process settings
+- protocol versions
+- derived metrics
+- status and anomaly flags
+- date windows
+
+7.5 Snapshot model
+
+- Cohorts should support live previews and frozen snapshots.
+- Snapshots are the unit used by exports, reports, and AI summaries.
+- Snapshots must preserve membership and query logic for auditability.
+
+7.6 Workspace behaviors
+
+- pin cohorts and individual runs
+- save comparison layouts
+- attach notes and interpretation
+- store benchmark context
+- drive exports and AI summaries
+
+7.7 Phase D deliverables
+
+- cohort definition DSL
+- cohort preview API
+- cohort snapshot materialization jobs
+- workspace CRUD and annotation APIs
+- export and AI summary integration over cohort snapshots
+
+========================================================================
+8. Delivery Plan
+========================================================================
+
+Phase 1: Foundation and ontology
+Target outcome:
+- normalized production schema
+- legacy backfill complete
+- lineage queries working
+
+Phase 2: Connectors
+Target outcome:
+- governed ingestion for current cyclers
+- replayable backfills
+- run lifecycle and provenance in place
+
+Phase 3: Metrics
+Target outcome:
+- persisted feature tables
+- metric registry and versioning
+- dashboards no longer depend on UI-local calculations
+
+Phase 4: Cohorts and workspaces
+Target outcome:
+- saved filters and snapshots
+- reusable comparison contexts
+- exports and AI built on cohort objects
+
+Recommended milestone framing:
+
+0 to 6 weeks:
+- architecture freeze
+- PostgreSQL schema
+- ontology migrations
+- legacy backfill prototype
+
+6 to 12 weeks:
+- connector framework
+- BioLogic/Neware/MTI migration
+- mapping review queue
+
+12 to 18 weeks:
+- metric registry
+- worker pipeline
+- first derived metric families
+
+18 to 24 weeks:
+- cohorts
+- workspace APIs
+- export and AI integration
+
+========================================================================
+9. Acceptance Criteria
+========================================================================
+
+The roadmap is successful when the platform can do all of the following:
+
+- Trace a cell result back to lots, batches, process runs, operators,
+  equipment assets, and protocol versions without inspecting raw JSON.
+- Ingest cycler data through idempotent connectors with provenance,
+  lifecycle status, and replay support.
+- Query retention, CE drift, dQ/dV features, DCIR evolution, and failure
+  signatures directly from persisted feature tables.
+- Define and save cohorts combining ontology fields and derived metrics.
+- Reuse cohorts in dashboards, exports, and AI summaries without
+  rebuilding filters by hand.
+- Recompute metrics safely when parser or metric definitions change.
+
+========================================================================
+10. Key Risks and Mitigations
+========================================================================
+
+Risk: ontology over-design before data reality is understood
+Mitigation:
+- start with minimum viable first-class entities that are immediately
+  needed for traceability and comparisons
+- keep extension points for richer manufacturing data later
+
+Risk: migration complexity from legacy JSON payloads
+Mitigation:
+- preserve legacy references
+- backfill with explicit confidence and source labels
+- do not require perfect normalization in wave one
+
+Risk: analytics inconsistency during transition
+Mitigation:
+- introduce a metric registry early
+- route all new calculations through the service once available
+- deprecate duplicate UI-local logic in stages
+
+Risk: connector mapping ambiguity
+Mitigation:
+- create operator review flows
+- keep mapping decisions versioned and auditable
+- never silently auto-link low-confidence data
+
+========================================================================
+11. Immediate Next Steps
+========================================================================
+
+1. Freeze the target platform backend and production data stack.
+2. Design and approve the canonical ontology schema.
+3. Build the legacy backfill and lineage importer.
+4. Create the connector plugin contract and migrate current parsers.
+5. Build the metric registry and asynchronous metrics pipeline.
+6. Implement cohort definitions and snapshots after the first feature
+   families are queryable.
+
+========================================================================
+12. Final Recommendation
+========================================================================
+
+The highest-value move for CellScope is not to add more plotting screens
+or more ad hoc comparison widgets. The biggest value unlock comes from
+turning battery data into a governed, queryable, traceable platform.
+
+That requires:
+
+- first-class ontology,
+- first-class ingestion,
+- first-class metrics,
+- and first-class cohorts.
+
+If those four layers are implemented in the order defined here, CellScope
+can evolve from a useful experiment tool into a battery intelligence
+system with materially higher strategic and commercial value.

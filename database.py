@@ -232,6 +232,58 @@ def init_database():
                 UNIQUE(project_id, preference_key)
             )
         ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS saved_cohorts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                filters_json TEXT NOT NULL,
+                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS derived_experiment_metrics (
+                experiment_id INTEGER PRIMARY KEY,
+                source_signature TEXT NOT NULL,
+                metrics_json TEXT NOT NULL,
+                computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (experiment_id) REFERENCES cell_experiments (id) ON DELETE CASCADE
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cohort_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cohort_id INTEGER,
+                name TEXT NOT NULL,
+                description TEXT,
+                filters_json TEXT NOT NULL,
+                experiment_ids_json TEXT NOT NULL,
+                membership_signature TEXT NOT NULL,
+                summary_json TEXT NOT NULL,
+                root_batch_summary_json TEXT NOT NULL,
+                ai_summary_text TEXT,
+                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (cohort_id) REFERENCES saved_cohorts (id) ON DELETE SET NULL
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cohort_snapshot_members (
+                snapshot_id INTEGER NOT NULL,
+                experiment_id INTEGER NOT NULL,
+                member_json TEXT NOT NULL,
+                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (snapshot_id, experiment_id),
+                FOREIGN KEY (snapshot_id) REFERENCES cohort_snapshots (id) ON DELETE CASCADE,
+                FOREIGN KEY (experiment_id) REFERENCES cell_experiments (id) ON DELETE CASCADE
+            )
+        ''')
         
         conn.commit()
 
@@ -313,6 +365,122 @@ def migrate_database():
                 print("Created project_preferences table")
             except sqlite3.OperationalError as e:
                 print(f"Error creating project_preferences table: {e}")
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='saved_cohorts'")
+        if not cursor.fetchone():
+            try:
+                cursor.execute('''
+                    CREATE TABLE saved_cohorts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        description TEXT,
+                        filters_json TEXT NOT NULL,
+                        created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                print("Created saved_cohorts table")
+            except sqlite3.OperationalError as e:
+                print(f"Error creating saved_cohorts table: {e}")
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='derived_experiment_metrics'")
+        if not cursor.fetchone():
+            try:
+                cursor.execute('''
+                    CREATE TABLE derived_experiment_metrics (
+                        experiment_id INTEGER PRIMARY KEY,
+                        source_signature TEXT NOT NULL,
+                        metrics_json TEXT NOT NULL,
+                        computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (experiment_id) REFERENCES cell_experiments (id) ON DELETE CASCADE
+                    )
+                ''')
+                print("Created derived_experiment_metrics table")
+            except sqlite3.OperationalError as e:
+                print(f"Error creating derived_experiment_metrics table: {e}")
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cohort_snapshots'")
+        if not cursor.fetchone():
+            try:
+                cursor.execute('''
+                    CREATE TABLE cohort_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        cohort_id INTEGER,
+                        name TEXT NOT NULL,
+                        description TEXT,
+                        filters_json TEXT NOT NULL,
+                        experiment_ids_json TEXT NOT NULL,
+                        membership_signature TEXT NOT NULL,
+                        summary_json TEXT NOT NULL,
+                        root_batch_summary_json TEXT NOT NULL,
+                        ai_summary_text TEXT,
+                        created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (cohort_id) REFERENCES saved_cohorts (id) ON DELETE SET NULL
+                    )
+                ''')
+                print("Created cohort_snapshots table")
+            except sqlite3.OperationalError as e:
+                print(f"Error creating cohort_snapshots table: {e}")
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cohort_snapshot_members'")
+        if not cursor.fetchone():
+            try:
+                cursor.execute('''
+                    CREATE TABLE cohort_snapshot_members (
+                        snapshot_id INTEGER NOT NULL,
+                        experiment_id INTEGER NOT NULL,
+                        member_json TEXT NOT NULL,
+                        created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (snapshot_id, experiment_id),
+                        FOREIGN KEY (snapshot_id) REFERENCES cohort_snapshots (id) ON DELETE CASCADE,
+                        FOREIGN KEY (experiment_id) REFERENCES cell_experiments (id) ON DELETE CASCADE
+                    )
+                ''')
+                print("Created cohort_snapshot_members table")
+            except sqlite3.OperationalError as e:
+                print(f"Error creating cohort_snapshot_members table: {e}")
+
+        # Final idempotent safety pass for new analytics/cohort tables on fresh DBs.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS derived_experiment_metrics (
+                experiment_id INTEGER PRIMARY KEY,
+                source_signature TEXT NOT NULL,
+                metrics_json TEXT NOT NULL,
+                computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (experiment_id) REFERENCES cell_experiments (id) ON DELETE CASCADE
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cohort_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cohort_id INTEGER,
+                name TEXT NOT NULL,
+                description TEXT,
+                filters_json TEXT NOT NULL,
+                experiment_ids_json TEXT NOT NULL,
+                membership_signature TEXT NOT NULL,
+                summary_json TEXT NOT NULL,
+                root_batch_summary_json TEXT NOT NULL,
+                ai_summary_text TEXT,
+                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (cohort_id) REFERENCES saved_cohorts (id) ON DELETE SET NULL
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cohort_snapshot_members (
+                snapshot_id INTEGER NOT NULL,
+                experiment_id INTEGER NOT NULL,
+                member_json TEXT NOT NULL,
+                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (snapshot_id, experiment_id),
+                FOREIGN KEY (snapshot_id) REFERENCES cohort_snapshots (id) ON DELETE CASCADE,
+                FOREIGN KEY (experiment_id) REFERENCES cell_experiments (id) ON DELETE CASCADE
+            )
+        ''')
         
         conn.commit()
 

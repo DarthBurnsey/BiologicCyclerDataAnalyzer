@@ -1,0 +1,14 @@
+{
+  "name": "cellscope2-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Dependency-light test shell for the CellScope 2.0 FastAPI backend",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

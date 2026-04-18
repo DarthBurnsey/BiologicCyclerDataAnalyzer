@@ -29,6 +29,43 @@ def int_to_roman(num: int) -> str:
         i += 1
     return roman_num
 
+
+def coerce_float_input(value: Any, default: float = 0.0) -> float:
+    """Normalize external/session values before using them in float widgets."""
+    if value is None:
+        return float(default)
+    if isinstance(value, str) and not value.strip():
+        return float(default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def coerce_int_input(value: Any, default: int = 0) -> int:
+    """Normalize external/session values before using them in integer widgets."""
+    if value is None:
+        return int(default)
+    if isinstance(value, str) and not value.strip():
+        return int(default)
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def normalize_formulation_rows(formulation: Any) -> List[Dict[str, Any]]:
+    """Ensure formulation rows always match the types expected by Streamlit inputs."""
+    normalized_rows = []
+    for row in formulation or []:
+        if not isinstance(row, dict):
+            continue
+        normalized_rows.append({
+            'Component': row.get('Component') or '',
+            'Dry Mass Fraction (%)': coerce_float_input(row.get('Dry Mass Fraction (%)'), 0.0)
+        })
+    return normalized_rows or [{'Component': '', 'Dry Mass Fraction (%)': 0.0}]
+
 # Comprehensive Separator Database
 COMPREHENSIVE_SEPARATORS = [
     # Original 4 separators
@@ -1199,7 +1236,7 @@ def render_full_cell_mass_balance_inputs(context_key=None, cell_format="Coin"):
             'Active Material Mass (mg)',
             min_value=0.0,
             step=0.1,
-            value=st.session_state.get(f'anode_mass_{context_key}', 10.0),
+            value=coerce_float_input(st.session_state.get(f'anode_mass_{context_key}', 10.0), 10.0),
             key=f'anode_mass_{context_key}',
             help="Mass of anode active material"
         )
@@ -1209,7 +1246,7 @@ def render_full_cell_mass_balance_inputs(context_key=None, cell_format="Coin"):
             'Diameter (mm)',
             min_value=0.1,
             step=0.1,
-            value=st.session_state[anode_diameter_key],
+            value=coerce_float_input(st.session_state[anode_diameter_key], default_anode_diameter),
             key=anode_diameter_key,
             help="Diameter of anode electrode disc"
         )
@@ -1227,7 +1264,10 @@ def render_full_cell_mass_balance_inputs(context_key=None, cell_format="Coin"):
         # If user changes loading manually, mark it as manual
         # Use calculated value unless user has manually overridden
         if st.session_state[anode_loading_manual_key]:
-            default_loading = st.session_state.get(f'anode_loading_{context_key}', calculated_anode_loading)
+            default_loading = coerce_float_input(
+                st.session_state.get(f'anode_loading_{context_key}', calculated_anode_loading),
+                calculated_anode_loading
+            )
         else:
             default_loading = calculated_anode_loading
             st.session_state[f'anode_loading_{context_key}'] = calculated_anode_loading
@@ -1252,7 +1292,7 @@ def render_full_cell_mass_balance_inputs(context_key=None, cell_format="Coin"):
             'Electrode Thickness (μm)',
             min_value=0.0,
             step=1.0,
-            value=st.session_state.get(f'anode_thickness_{context_key}', 50.0),
+            value=coerce_float_input(st.session_state.get(f'anode_thickness_{context_key}', 50.0), 50.0),
             key=f'anode_thickness_{context_key}',
             help="Total thickness of anode electrode"
         )
@@ -1263,7 +1303,7 @@ def render_full_cell_mass_balance_inputs(context_key=None, cell_format="Coin"):
             'Active Material Mass (mg)',
             min_value=0.0,
             step=0.1,
-            value=st.session_state.get(f'cathode_mass_{context_key}', 12.0),
+            value=coerce_float_input(st.session_state.get(f'cathode_mass_{context_key}', 12.0), 12.0),
             key=f'cathode_mass_{context_key}',
             help="Mass of cathode active material"
         )
@@ -1272,7 +1312,7 @@ def render_full_cell_mass_balance_inputs(context_key=None, cell_format="Coin"):
             'Diameter (mm)',
             min_value=0.1,
             step=0.1,
-            value=st.session_state[cathode_diameter_key],
+            value=coerce_float_input(st.session_state[cathode_diameter_key], default_cathode_diameter),
             key=cathode_diameter_key,
             help="Diameter of cathode electrode disc"
         )
@@ -1290,7 +1330,10 @@ def render_full_cell_mass_balance_inputs(context_key=None, cell_format="Coin"):
         # If user changes loading manually, mark it as manual
         # Use calculated value unless user has manually overridden
         if st.session_state[cathode_loading_manual_key]:
-            default_loading = st.session_state.get(f'cathode_loading_{context_key}', calculated_cathode_loading)
+            default_loading = coerce_float_input(
+                st.session_state.get(f'cathode_loading_{context_key}', calculated_cathode_loading),
+                calculated_cathode_loading
+            )
         else:
             default_loading = calculated_cathode_loading
             st.session_state[f'cathode_loading_{context_key}'] = calculated_cathode_loading
@@ -1315,7 +1358,7 @@ def render_full_cell_mass_balance_inputs(context_key=None, cell_format="Coin"):
             'Electrode Thickness (μm)',
             min_value=0.0,
             step=1.0,
-            value=st.session_state.get(f'cathode_thickness_{context_key}', 60.0),
+            value=coerce_float_input(st.session_state.get(f'cathode_thickness_{context_key}', 60.0), 60.0),
             key=f'cathode_thickness_{context_key}',
             help="Total thickness of cathode electrode"
         )
@@ -1429,8 +1472,8 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                 with st.expander(f'Cell 1: {uploaded_files[0].name}', expanded=False):
                     col1, col2 = st.columns(2)
                     # --- Defaults logic with project preferences ---
-                    loading_default = st.session_state.get('loading_0', 20.0)
-                    active_default = st.session_state.get('active_0', 90.0)
+                    loading_default = coerce_float_input(st.session_state.get('loading_0', 20.0), 20.0)
+                    active_default = coerce_float_input(st.session_state.get('active_0', 90.0), 90.0)
                     # Handle formation cycles from project defaults (could be string or int)
                     formation_cycles_default = project_defaults.get('formation_cycles', 4)
                     if isinstance(formation_cycles_default, str):
@@ -1438,13 +1481,22 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             formation_cycles_default = int(formation_cycles_default)
                         except (ValueError, TypeError):
                             formation_cycles_default = 4
-                    formation_default = st.session_state.get('formation_cycles_0', formation_cycles_default)
+                    formation_default = coerce_int_input(
+                        st.session_state.get('formation_cycles_0', formation_cycles_default),
+                        formation_cycles_default
+                    )
                     # Prioritize project defaults for electrolyte and substrate
                     electrolyte_default = st.session_state.get('electrolyte_0', project_defaults.get('electrolyte', '1M LiPF6 1:1:1'))
                     substrate_default = st.session_state.get('substrate_0', project_defaults.get('substrate', 'Copper'))
                     separator_default = st.session_state.get('separator_0', project_defaults.get('separator', '25um PP'))
-                    cutoff_lower_default = st.session_state.get('cutoff_lower_0', project_defaults.get('cutoff_voltage_lower', 2.5))
-                    cutoff_upper_default = st.session_state.get('cutoff_upper_0', project_defaults.get('cutoff_voltage_upper', 4.2))
+                    cutoff_lower_default = coerce_float_input(
+                        st.session_state.get('cutoff_lower_0', project_defaults.get('cutoff_voltage_lower', 2.5)),
+                        2.5
+                    )
+                    cutoff_upper_default = coerce_float_input(
+                        st.session_state.get('cutoff_upper_0', project_defaults.get('cutoff_voltage_upper', 4.2)),
+                        4.2
+                    )
                     with col1:
                         disc_loading_0 = st.number_input(f'Disc loading (mg) for Cell 1', min_value=0.0, step=1.0, value=loading_default, key=f'loading_0')
                         formation_cycles_0 = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
@@ -1559,8 +1611,8 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             cutoff_upper = cutoff_upper_0
                         else:
                             # Individual inputs for this cell
-                            loading_default = st.session_state.get(f'loading_{i}', disc_loading_0)
-                            active_default = st.session_state.get(f'active_{i}', active_material_0)
+                            loading_default = coerce_float_input(st.session_state.get(f'loading_{i}', disc_loading_0), disc_loading_0)
+                            active_default = coerce_float_input(st.session_state.get(f'active_{i}', active_material_0), active_material_0)
                             # Handle formation cycles from project defaults for subsequent cells
                             formation_cycles_default = project_defaults.get('formation_cycles', formation_cycles_0)
                             if isinstance(formation_cycles_default, str):
@@ -1568,7 +1620,10 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                                     formation_cycles_default = int(formation_cycles_default)
                                 except (ValueError, TypeError):
                                     formation_cycles_default = formation_cycles_0
-                            formation_default = st.session_state.get(f'formation_cycles_{i}', formation_cycles_default)
+                            formation_default = coerce_int_input(
+                                st.session_state.get(f'formation_cycles_{i}', formation_cycles_default),
+                                formation_cycles_default
+                            )
                             electrolyte_default = st.session_state.get(f'electrolyte_{i}', electrolyte_0)
                             substrate_default = st.session_state.get(f'substrate_{i}', substrate_0)
                             separator_default = st.session_state.get(f'separator_{i}', separator_0)
@@ -1604,7 +1659,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                                     f'Lower Cutoff Voltage (V) for Cell {i+1}', 
                                     min_value=0.0, 
                                     max_value=10.0, 
-                                    value=st.session_state.get(f'cutoff_lower_{i}', cutoff_lower_0),
+                                    value=coerce_float_input(st.session_state.get(f'cutoff_lower_{i}', cutoff_lower_0), cutoff_lower_0),
                                     step=0.1,
                                     key=f'cutoff_lower_{i}',
                                     help="Lower voltage cutoff (e.g., 2.5V). Auto-extracted from MTI/Neware files."
@@ -1614,7 +1669,7 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                                     f'Upper Cutoff Voltage (V) for Cell {i+1}', 
                                     min_value=0.0, 
                                     max_value=10.0, 
-                                    value=st.session_state.get(f'cutoff_upper_{i}', cutoff_upper_0),
+                                    value=coerce_float_input(st.session_state.get(f'cutoff_upper_{i}', cutoff_upper_0), cutoff_upper_0),
                                     step=0.1,
                                     key=f'cutoff_upper_{i}',
                                     help="Upper voltage cutoff (e.g., 4.2V). Auto-extracted from MTI/Neware files."
@@ -1670,8 +1725,8 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                 with st.expander(f'Cell 1: {uploaded_file.name}', expanded=False):
                     col1, col2 = st.columns(2)
                     # --- Defaults logic ---
-                    loading_default = st.session_state.get('loading_0', 20.0)
-                    active_default = st.session_state.get('active_0', 90.0)
+                    loading_default = coerce_float_input(st.session_state.get('loading_0', 20.0), 20.0)
+                    active_default = coerce_float_input(st.session_state.get('active_0', 90.0), 90.0)
                     # Handle formation cycles from project defaults for single cell
                     formation_cycles_default = project_defaults.get('formation_cycles', 4)
                     if isinstance(formation_cycles_default, str):
@@ -1679,13 +1734,22 @@ def render_cell_inputs(context_key=None, project_id=None, get_components_func=No
                             formation_cycles_default = int(formation_cycles_default)
                         except (ValueError, TypeError):
                             formation_cycles_default = 4
-                    formation_default = st.session_state.get('formation_cycles_0', formation_cycles_default)
+                    formation_default = coerce_int_input(
+                        st.session_state.get('formation_cycles_0', formation_cycles_default),
+                        formation_cycles_default
+                    )
                     # Prioritize project defaults for electrolyte, substrate, and separator
                     electrolyte_default = st.session_state.get('electrolyte_0', project_defaults.get('electrolyte', '1M LiPF6 1:1:1'))
                     substrate_default = st.session_state.get('substrate_0', project_defaults.get('substrate', 'Copper'))
                     separator_default = st.session_state.get('separator_0', project_defaults.get('separator', '25um PP'))
-                    cutoff_lower_default = st.session_state.get('cutoff_lower_0', project_defaults.get('cutoff_voltage_lower', 2.5))
-                    cutoff_upper_default = st.session_state.get('cutoff_upper_0', project_defaults.get('cutoff_voltage_upper', 4.2))
+                    cutoff_lower_default = coerce_float_input(
+                        st.session_state.get('cutoff_lower_0', project_defaults.get('cutoff_voltage_lower', 2.5)),
+                        2.5
+                    )
+                    cutoff_upper_default = coerce_float_input(
+                        st.session_state.get('cutoff_upper_0', project_defaults.get('cutoff_voltage_upper', 4.2)),
+                        4.2
+                    )
                     with col1:
                         disc_loading = st.number_input(f'Disc loading (mg) for Cell 1', min_value=0.0, step=1.0, value=loading_default, key=f'loading_0')
                         formation_cycles = st.number_input(f'Formation Cycles for Cell 1', min_value=0, step=1, value=formation_default, key=f'formation_cycles_0')
@@ -1776,15 +1840,14 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
     
     if formulation_key not in st.session_state:
         if default_formulation:
-            st.session_state[formulation_key] = default_formulation
+            st.session_state[formulation_key] = normalize_formulation_rows(default_formulation)
         else:
-            st.session_state[formulation_key] = [
-                {'Component': '', 'Dry Mass Fraction (%)': 0.0}
-            ]
+            st.session_state[formulation_key] = normalize_formulation_rows([])
     if save_flag_key not in st.session_state:
         st.session_state[save_flag_key] = True  # Default to True (saved/on by default)
     
-    formulation_data = st.session_state[formulation_key]
+    formulation_data = normalize_formulation_rows(st.session_state.get(formulation_key, []))
+    st.session_state[formulation_key] = formulation_data
     
     # Get previously used components from project if project_id and function are provided
     previous_components = []
@@ -1819,6 +1882,8 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
     changed = False
     
     for i, row in enumerate(formulation_data):
+        current_component = row.get('Component') or ''
+        current_fraction = coerce_float_input(row.get('Dry Mass Fraction (%)'), 0.0)
         col1, col2, col3 = st.columns([3, 2, 1])
         with col1:
             # Use autocomplete input for component selection
@@ -1826,13 +1891,21 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
                 key=f'component_{i}_{key_suffix}',
                 label="Component",
                 placeholder="Type to search materials...",
-                value=row['Component'],
+                value=current_component,
                 materials=unique_materials,
                 allow_custom=True
             )
                 
         with col2:
-            fraction = st.number_input(f"Fraction", value=row['Dry Mass Fraction (%)'], min_value=0.0, max_value=100.0, step=0.1, key=f'fraction_{i}_{key_suffix}', label_visibility="collapsed")
+            fraction = st.number_input(
+                "Fraction",
+                value=current_fraction,
+                min_value=0.0,
+                max_value=100.0,
+                step=0.1,
+                key=f'fraction_{i}_{key_suffix}',
+                label_visibility="collapsed"
+            )
             total_fraction += fraction
         with col3:
             if st.button("🗑️", key=f'delete_{i}_{key_suffix}', help="Delete row"):
@@ -1840,7 +1913,7 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
                 st.session_state[formulation_key] = [row for j, row in enumerate(formulation_data) if j != i]
                 st.session_state[save_flag_key] = False
         # Detect changes
-        if component != row['Component'] or fraction != row['Dry Mass Fraction (%)']:
+        if component != current_component or fraction != current_fraction:
             changed = True
         # Always keep all rows, even if empty
         updated_formulation.append({'Component': component, 'Dry Mass Fraction (%)': fraction})
@@ -1922,7 +1995,7 @@ def render_formulation_table(key_suffix, project_id=None, get_components_func=No
                     with copy_col1:
                         if st.button("✅ Copy This Formulation", key=f'execute_copy_{key_suffix}', type="primary", use_container_width=True):
                             import copy
-                            st.session_state[formulation_key] = copy.deepcopy(selected_exp['formulation'])
+                            st.session_state[formulation_key] = normalize_formulation_rows(copy.deepcopy(selected_exp['formulation']))
                             st.session_state[save_flag_key] = False
                             st.session_state[copy_button_key] = False  # Hide the copy interface
                             st.success(f"✅ Copied formulation from '{selected_experiment_name}'")

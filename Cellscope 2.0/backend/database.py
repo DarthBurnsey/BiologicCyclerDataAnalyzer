@@ -482,6 +482,28 @@ def get_experiment_data(experiment_id):
         
         return (row_id, pid, cname, fname, loading, active, form, testnum, elec, sub, sep, d_json, cdate)
 
+
+def get_hydrated_experiment_payload(experiment_id):
+    """Get an experiment payload only when the full hydrated data is needed."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT project_id, cell_name, data_json, parquet_path
+            FROM cell_experiments
+            WHERE id = ?
+            ''',
+            (experiment_id,),
+        )
+        row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        project_id, experiment_name, data_json, parquet_path = row
+        hydrated_json = hydrate_data_json(data_json, parquet_path, experiment_id)
+        return project_id, experiment_name, hydrated_json
+
 def delete_cell_experiment(experiment_id):
     """Delete a cell experiment from the database."""
     with get_db_connection() as conn:

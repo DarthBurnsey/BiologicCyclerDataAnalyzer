@@ -1,0 +1,14 @@
+issue_type,status,severity,scope,record_name,field,message,workbook_value,legacy_value,workbook_ref,legacy_ref
+review_required,review_required,warning,workbook_sheet,T43,pre_press_thickness_um,"Workbook field is blank, non-numeric, or otherwise unresolved.",""".""",null,T43!D25,
+review_required,review_required,warning,workbook_sheet,T13,pressed_thickness_um,Workbook contains multiple competing candidate values for this field.,"[60.0, 82.0]",null,"T13!E25, T13!E57",
+review_required,review_required,warning,workbook_sheet,T13,disc_mass_mg,Workbook contains multiple competing candidate values for this field.,"[7.8, 8.6]",null,T13!F36,
+review_required,review_required,warning,workbook_sheet,T8b,pre_press_thickness_um,"Workbook field is blank, non-numeric, or otherwise unresolved.","""--""",null,T8!L29,
+mismatch,mismatch,warning,parent_batch,T24,disc_mass_mg,Workbook disc mass does not match stable legacy loading data.,13.4333,9.63,,cell_experiments:92
+mismatch,mismatch,warning,parent_batch,T24,pressed_thickness_um,Workbook pressed thickness does not match the legacy experiment row.,61.0,0.0,,cell_experiments:92
+mismatch,mismatch,warning,parent_batch,T25,disc_mass_mg,Workbook disc mass does not match stable legacy loading data.,13.4333,12.27,,cell_experiments:32
+mismatch,mismatch,warning,parent_batch,T26,pressed_thickness_um,Workbook pressed thickness does not match the legacy experiment row.,100.0,0.0,,cell_experiments:33
+mismatch,mismatch,warning,parent_batch,T28,pressed_thickness_um,Workbook pressed thickness does not match the legacy experiment row.,85.0,70.0,,cell_experiments:45
+mismatch,mismatch,warning,parent_batch,T30,pressed_thickness_um,Workbook pressed thickness does not match the legacy experiment row.,55.0,80.0,,cell_experiments:48
+mismatch,mismatch,warning,parent_batch,T32,pressed_thickness_um,Workbook pressed thickness does not match the legacy experiment row.,88.0,60.0,,cell_experiments:68
+mismatch,legacy_only,warning,legacy_experiment,BRSa,workbook_match,Legacy LIB Anodes experiment has no matching workbook sheet.,null,null,,cell_experiments:90
+mismatch,legacy_only,warning,legacy_experiment,BRSb,workbook_match,Legacy LIB Anodes experiment has no matching workbook sheet.,null,null,,cell_experiments:91

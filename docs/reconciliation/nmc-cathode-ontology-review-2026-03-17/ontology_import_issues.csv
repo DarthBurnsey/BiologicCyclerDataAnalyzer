@@ -1,0 +1,64 @@
+issue_type,status,severity,scope,record_name,field,message,workbook_value,legacy_value,workbook_ref,legacy_ref
+review_required,review_required,warning,parent_sheet,N16,disc_mass_mg,Highlighted workbook value was skipped and needs manual confirmation.,35.34,null,N16!C29,
+review_required,review_required,warning,parent_sheet,N16,electrode_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,95.0,null,N16!C30,
+review_required,review_required,warning,parent_sheet,N16,pressed_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,64.0,null,N16!C31,
+review_required,review_required,warning,parent_sheet,N15,disc_mass_mg,Highlighted workbook value was skipped and needs manual confirmation.,35.34,null,N15!C29,
+review_required,review_required,warning,parent_sheet,N15,electrode_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,95.0,null,N15!C30,
+review_required,review_required,warning,parent_sheet,N15,pressed_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,64.0,null,N15!C31,
+review_required,review_required,warning,parent_sheet,N14,disc_mass_mg,Highlighted workbook value was skipped and needs manual confirmation.,35.34,null,N14!C29,
+review_required,review_required,warning,parent_sheet,N14,electrode_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,95.0,null,N14!C30,
+review_required,review_required,warning,parent_sheet,N14,pressed_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,64.0,null,N14!C31,
+review_required,review_required,warning,parent_sheet,N14,porosity,Highlighted workbook value was skipped and needs manual confirmation.,0.2743258177095831,null,N14!C35,
+review_required,review_required,warning,parent_sheet,N13,disc_mass_mg,Highlighted workbook value was skipped and needs manual confirmation.,11.57,null,N13!C29,
+review_required,review_required,warning,parent_sheet,N13,electrode_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,64.0,null,N13!C30,
+review_required,review_required,warning,parent_sheet,N13,pressed_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,49.0,null,N13!C31,
+review_required,review_required,warning,parent_sheet,N13,porosity,Highlighted workbook value was skipped and needs manual confirmation.,0.689550315050893,null,N13!C35,
+review_required,review_required,warning,parent_sheet,N12,disc_mass_mg,Highlighted workbook value was skipped and needs manual confirmation.,13.6,null,N12!C29,
+review_required,review_required,warning,parent_sheet,N12,electrode_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,64.0,null,N12!C30,
+review_required,review_required,warning,parent_sheet,N12,pressed_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,49.0,null,N12!C31,
+review_required,review_required,warning,parent_sheet,N11,disc_mass_mg,Highlighted workbook value was skipped and needs manual confirmation.,11.57,null,N11!C29,
+review_required,review_required,warning,parent_sheet,N11,electrode_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,64.0,null,N11!C30,
+review_required,review_required,warning,parent_sheet,N11,pressed_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,49.0,null,N11!C31,
+review_required,review_required,warning,parent_sheet,N11,porosity,Highlighted workbook value was skipped and needs manual confirmation.,0.6907875185053809,null,N11!C35,
+review_required,review_required,warning,parent_sheet,N4,electrode_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,165.0,null,N4!D24,
+review_required,review_required,warning,parent_sheet,N4,pressed_thickness_um,Highlighted workbook value was skipped and needs manual confirmation.,50.0,null,N4!E24,
+mismatch,missing_in_legacy,warning,parent_batch,N14,legacy_match,Parent batch appears in the workbook summary but has no exact legacy experiment match.,null,null,Experimental Data!37,
+mismatch,missing_in_legacy,warning,parent_batch,N13,legacy_match,Parent batch appears in the workbook summary but has no exact legacy experiment match.,null,null,Experimental Data!33,
+mismatch,legacy_only,warning,variant_batch,N12b,workbook_match,Legacy experiment exists without a matching summary-sheet variant row.,null,null,,cell_experiments:81
+mismatch,missing_in_legacy,warning,variant_batch,N12E,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!35,
+mismatch,missing_in_legacy,warning,variant_batch,N12F,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!36,
+mismatch,missing_in_legacy,warning,parent_batch,N11,legacy_match,Parent batch appears in the workbook summary but has no exact legacy experiment match.,null,null,Experimental Data!31,
+mismatch,missing_in_legacy,warning,variant_batch,N10b,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Compiled!20,
+mismatch,missing_in_legacy,warning,variant_batch,N10c,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Compiled!22,
+mismatch,mismatch,warning,variant_batch,N10d,electrolyte,Workbook electrolyte does not match the existing database entry.,"""1M LiTFSI + 10% FEC""","""1M LiPF6 EC:EMC:DMC 1:1:1 + 2% LiDFOB""",Experimental Data!34,cell_experiments:75
+mismatch,missing_in_legacy,warning,variant_batch,N10f,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Compiled!28,
+mismatch,missing_in_legacy,warning,variant_batch,N10G,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!30,
+mismatch,missing_in_legacy,warning,variant_batch,N10P,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!29,
+mismatch,missing_in_legacy,warning,variant_batch,N10q,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Compiled!24,
+mismatch,legacy_only,warning,variant_batch,N9 Remakes,workbook_match,Legacy experiment exists without a matching summary-sheet variant row.,null,null,,cell_experiments:83
+mismatch,legacy_only,warning,variant_batch,N9w,workbook_match,Legacy experiment exists without a matching summary-sheet variant row.,null,null,,cell_experiments:86
+mismatch,legacy_only,warning,variant_batch,N9x,workbook_match,Legacy experiment exists without a matching summary-sheet variant row.,null,null,,cell_experiments:85
+mismatch,legacy_only,warning,variant_batch,N9y ,workbook_match,Legacy experiment exists without a matching summary-sheet variant row.,null,null,,cell_experiments:84
+mismatch,missing_in_legacy,warning,parent_batch,N8,legacy_match,Parent batch appears in the workbook summary but has no exact legacy experiment match.,null,null,Experimental Data!26,
+mismatch,missing_in_legacy,warning,parent_batch,N7,legacy_match,Parent batch appears in the workbook summary but has no exact legacy experiment match.,null,null,Experimental Data!20,
+mismatch,missing_in_legacy,warning,parent_batch,N6,legacy_match,Parent batch appears in the workbook summary but has no exact legacy experiment match.,null,null,Experimental Data!19,
+mismatch,missing_in_legacy,warning,variant_batch,N6A,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!23,
+mismatch,missing_in_legacy,warning,variant_batch,N6B,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!24,
+mismatch,missing_in_legacy,warning,variant_batch,N6C,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!25,
+mismatch,missing_in_legacy,warning,variant_batch,N6D,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!22,
+mismatch,missing_in_legacy,warning,variant_batch,N6 remake,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!38,
+mismatch,mismatch,warning,variant_batch,N5a,formulation,Workbook-derived formulation does not match the existing database entry.,"[{""Component"": ""NMC811"", ""Dry Mass Fraction (%)"": 92.0, ""metadata"": {""source_name"": ""NMC811""}}, {""Component"": ""Super P"", ""Dry Mass Fraction (%)"": 3.5, ""metadata"": {""source_name"": ""Super P""}}, {""Component"": ""MWCNTs"", ""Dry Mass Fraction (%)"": 0.5, ""metadata"": {""source_name"": ""MWCNTs""}}, {""Component"": ""PVDF HSV1810"", ""Dry Mass Fraction (%)"": 4.0, ""metadata"": {""source_name"": ""PVDF HSV1810"", ""manufacturer_hint"": ""Arkema"", ""product_hint"": ""HSV1810""}}]","[{""Component"": ""NMC811"", ""Dry Mass Fraction (%)"": 92.0, ""metadata"": {""source_name"": ""NMC811 (MSE)""}}, {""Component"": ""PVDF HSV1810"", ""Dry Mass Fraction (%)"": 4.0, ""metadata"": {""source_name"": ""PVDF HSV1810"", ""manufacturer_hint"": ""Arkema"", ""product_hint"": ""HSV1810""}}, {""Component"": ""Super P"", ""Dry Mass Fraction (%)"": 3.5, ""metadata"": {""source_name"": ""Super P""}}, {""Component"": ""CNTs"", ""Dry Mass Fraction (%)"": 50.0, ""metadata"": {""source_name"": ""CNTs""}}]",Experimental Data!12,cell_experiments:69
+mismatch,missing_in_legacy,warning,variant_batch,N5b,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!13,
+mismatch,missing_in_legacy,warning,variant_batch,N5c,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!14,
+mismatch,missing_in_legacy,warning,variant_batch,N5d,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!15,
+mismatch,missing_in_legacy,warning,variant_batch,N5E,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!16,
+mismatch,missing_in_legacy,warning,variant_batch,N5f,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Compiled!10,
+mismatch,mismatch,warning,variant_batch,N5g,formulation,Workbook-derived formulation does not match the existing database entry.,"[{""Component"": ""NMC811"", ""Dry Mass Fraction (%)"": 92.0, ""metadata"": {""source_name"": ""NMC811""}}, {""Component"": ""Super P"", ""Dry Mass Fraction (%)"": 3.5, ""metadata"": {""source_name"": ""Super P""}}, {""Component"": ""MWCNTs"", ""Dry Mass Fraction (%)"": 0.5, ""metadata"": {""source_name"": ""MWCNTs""}}, {""Component"": ""PVDF HSV1810"", ""Dry Mass Fraction (%)"": 4.0, ""metadata"": {""source_name"": ""PVDF HSV1810"", ""manufacturer_hint"": ""Arkema"", ""product_hint"": ""HSV1810""}}]","[{""Component"": ""NMC811"", ""Dry Mass Fraction (%)"": 92.0, ""metadata"": {""source_name"": ""NMC811 (MSE)""}}, {""Component"": ""Super P"", ""Dry Mass Fraction (%)"": 3.5, ""metadata"": {""source_name"": ""Super P""}}, {""Component"": ""CNTs"", ""Dry Mass Fraction (%)"": 50.0, ""metadata"": {""source_name"": ""CNTs""}}, {""Component"": ""PVDF HSV1810"", ""Dry Mass Fraction (%)"": 4.0, ""metadata"": {""source_name"": ""PVDF HSV1810"", ""manufacturer_hint"": ""Arkema"", ""product_hint"": ""HSV1810""}}]",Experimental Data!17,cell_experiments:70
+mismatch,missing_in_legacy,warning,variant_batch,N5h,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!18,
+mismatch,missing_in_legacy,warning,variant_batch,N5I,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!21,
+mismatch,missing_in_legacy,warning,parent_batch,N3,legacy_match,Parent batch appears in the workbook summary but has no exact legacy experiment match.,null,null,Experimental Data!8,
+mismatch,mismatch,warning,variant_batch,N2A,electrolyte,Workbook electrolyte does not match the existing database entry.,"""LiPF6 (1:1:1)""","""1M LiTFSI 3:7 +10% FEC""",Experimental Data!4,cell_experiments:62
+mismatch,missing_in_legacy,warning,variant_batch,N2AB2,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!7,
+mismatch,missing_in_legacy,warning,variant_batch,N2B,legacy_match,Workbook variant has no matching legacy experiment entry.,null,null,Experimental Data!6,
+mismatch,legacy_only,warning,variant_batch,N1a,workbook_match,Legacy experiment exists without a matching summary-sheet variant row.,null,null,,cell_experiments:40
+mismatch,mismatch,warning,variant_batch,N1B,electrolyte,Workbook electrolyte does not match the existing database entry.,"""LiPF6 (1:1:1)""","""1M LiTFSI 3:7 +10% FEC""",Experimental Data!3,cell_experiments:38

@@ -74,4 +74,5 @@ class CellRead(BaseModel):
     cutoff_voltage_lower: Optional[float]
     cutoff_voltage_upper: Optional[float]
     parquet_path: Optional[str]
+    data_json: Optional[dict] = None
     created_at: datetime

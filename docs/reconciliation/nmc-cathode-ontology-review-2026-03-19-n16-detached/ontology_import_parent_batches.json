@@ -1,0 +1,814 @@
+[
+  {
+    "batch_name": "N1",
+    "parent_batch_name": null,
+    "process_run_name": "N1 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 94.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Hx-T",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "Cx (echo)"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Begin testing NMC formulations. Testing without removing from the glovebox.\nInitial testing of NMC811 (MSE Supplies). Cx-e as the conductive additive.",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N1",
+      "active_material_source": "MSE",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "electrode_thickness_um": 84.0,
+        "pressed_thickness_um": 70.0,
+        "disc_mass_mg": 25.43
+      },
+      "current_collector": "Aluminum",
+      "separator": null,
+      "summary_row": "N1",
+      "default_electrolyte": "1M LiTFSI 3:7 +10% FEC",
+      "default_cycling_strategy": "3x Form., Staircase",
+      "default_calendared": null
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2025-09-11 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N10",
+    "parent_batch_name": null,
+    "process_run_name": "N10 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 92.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Hx-e",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "Cx(B)",
+          "post_processing": "acid_wash"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Comparison against newly recevied NMC811 from Targray (BASF). Testing w/ Cx(Beta) (acid washed). Compare to N9/8.",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N10",
+      "active_material_source": "BASF",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "electrode_thickness_um": 73.0,
+        "pressed_thickness_um": 50.0,
+        "disc_mass_mg": 16.2
+      },
+      "current_collector": "Aluminum",
+      "separator": null,
+      "summary_row": "N10",
+      "default_electrolyte": null,
+      "default_cycling_strategy": null,
+      "default_calendared": null
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2025-11-13 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N11",
+    "parent_batch_name": null,
+    "process_run_name": "N11 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 94.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Hx-e",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "Cx(B)",
+          "post_processing": "acid_wash"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Repeat of trials with NMC(MSE), attempt to get high quality data. Utilizing Cx(B) acid washed.",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N11",
+      "active_material_source": "MSE",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "active_mass_density_g_cc": 4.321234784534529,
+        "slurry_density_g_ml": 1.8632425585000456,
+        "electrode_density_g_ml": 1.3361797308467878,
+        "thickness_reduction_pct": 0.234375
+      },
+      "current_collector": "Aluminum",
+      "separator": null,
+      "summary_row": "N11",
+      "default_electrolyte": null,
+      "default_cycling_strategy": null,
+      "default_calendared": null
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2026-01-07 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N12",
+    "parent_batch_name": null,
+    "process_run_name": "N12 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 94.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Hx-e",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "Hx-e (HCl Acid Wash)",
+          "post_processing": "acid_wash"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Repeat of trials with NMC(BASF), attempt to get high quality data. Utilizing Cx(B) acid washed.",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N12",
+      "active_material_source": "BASF",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "electrode_density_g_ml": 1.5706174882900874,
+        "thickness_reduction_pct": 0.234375,
+        "disc_mass_mg": 13.6
+      },
+      "current_collector": "Aluminum",
+      "separator": null,
+      "loading_backfill": {
+        "value": 13.6,
+        "sample_count": 2,
+        "record_ids": [
+          81
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "summary_row": "N12",
+      "default_electrolyte": null,
+      "default_cycling_strategy": null,
+      "default_calendared": null
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2026-01-07 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N13",
+    "parent_batch_name": null,
+    "process_run_name": "N13 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 94.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Hx-e",
+        "Dry Mass Fraction (%)": 2.5,
+        "metadata": {
+          "source_name": "Cx(B)",
+          "post_processing": "acid_wash"
+        }
+      },
+      {
+        "Component": "MWCNTs",
+        "Dry Mass Fraction (%)": 0.5,
+        "metadata": {
+          "source_name": "MWCNTs"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Comparison against newly recevied NMC811 from Targray (BASF). Testing w/ Cx(Beta) (acid washed) + CNTs. Compare to N10.",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N13",
+      "active_material_source": "BASF",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "active_mass_density_g_cc": 4.304013808439947,
+        "slurry_density_g_ml": 2.0203396017613606,
+        "electrode_density_g_ml": 1.3361797308467878,
+        "thickness_reduction_pct": 0.234375
+      },
+      "current_collector": "Aluminum",
+      "separator": null,
+      "summary_row": "N13",
+      "default_electrolyte": null,
+      "default_cycling_strategy": null,
+      "default_calendared": null
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2026-01-08 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N14",
+    "parent_batch_name": null,
+    "process_run_name": "N14 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 95.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Hx-e",
+        "Dry Mass Fraction (%)": 2.5,
+        "metadata": {
+          "source_name": "Hx-e (HCl Acid Wash)",
+          "post_processing": "acid_wash"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 2.5,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Large batch preparation for cylindrical/pouch making. Testing of coating thickness vs loading. Increase AM loading to 95%.",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N14",
+      "active_material_source": "BASF",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "active_mass_density_g_cc": 4.305984869832875,
+        "slurry_density_g_ml": 1.8764614839879583,
+        "electrode_density_g_ml": 3.1247420493708784,
+        "thickness_reduction_pct": 0.3263157894736842
+      },
+      "current_collector": "Aluminum",
+      "separator": null,
+      "summary_row": "N14",
+      "default_electrolyte": null,
+      "default_cycling_strategy": null,
+      "default_calendared": null
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2026-02-03 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N15",
+    "parent_batch_name": null,
+    "process_run_name": "N15 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 95.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Hx-e",
+        "Dry Mass Fraction (%)": 2.5,
+        "metadata": {
+          "source_name": "Hx-e (HCl Acid Wash)",
+          "post_processing": "acid_wash"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 2.5,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Testing of Hx-e (HCl acid washed) from Joe's protocol.",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N15",
+      "active_material_source": "BASF",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "electrode_density_g_ml": 3.1247420493708784,
+        "thickness_reduction_pct": 0.3263157894736842
+      },
+      "current_collector": null,
+      "separator": null
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2026-02-25 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N2",
+    "parent_batch_name": null,
+    "process_run_name": "N2 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 96.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Hx-T",
+        "Dry Mass Fraction (%)": 2.0,
+        "metadata": {
+          "source_name": "Cx (echo)"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 2.0,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Attempt to increase loading to improve areal capacity.\nAttempt to increase areal capacity with higher NMC811 loading. Electrode quality was good, still utilizing MSE NMC. 2% Cx(echo) used as the conductive.  (PVDF HSV1810)",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N2",
+      "active_material_source": "MSE",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "electrode_thickness_um": 100.0,
+        "pressed_thickness_um": 93.0,
+        "disc_mass_mg": 24.27
+      },
+      "current_collector": "Aluminum",
+      "separator": null,
+      "summary_row": "N2",
+      "default_electrolyte": "1M LiTFSI 3:7 +10% FEC",
+      "default_cycling_strategy": null,
+      "default_calendared": null
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2025-09-22 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N3",
+    "parent_batch_name": null,
+    "process_run_name": "N3 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 92.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Super P",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "Super P"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Establish baseline performance with commercial materials.\nEstablish a baseline with commercial materials, Super P used as the conductive | Tracking: uncal, LiTFSI",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N3",
+      "active_material_source": "MSE",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "electrode_thickness_um": 125.0,
+        "pressed_thickness_um": 125.0,
+        "disc_mass_mg": 42.77
+      },
+      "current_collector": "Aluminum",
+      "separator": null,
+      "summary_row": "N3",
+      "default_electrolyte": "1M LiTFSI 3:7 +10% FEC; LiTFSI",
+      "default_cycling_strategy": null,
+      "default_calendared": false
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2025-10-21 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N4",
+    "parent_batch_name": null,
+    "process_run_name": "N4 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 92.4623,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Super P",
+        "Dry Mass Fraction (%)": 3.5176,
+        "metadata": {
+          "source_name": "Super P"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 4.0201,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Establish baseline performance with Super P and CNTs. Larger batch for ease of mixing/coating.",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N4",
+      "active_material_source": "MSE",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "disc_mass_mg": 19.43
+      },
+      "current_collector": null,
+      "separator": null
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2025-10-22 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N5",
+    "parent_batch_name": null,
+    "process_run_name": "N5 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 92.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Super P",
+        "Dry Mass Fraction (%)": 3.5,
+        "metadata": {
+          "source_name": "Super P"
+        }
+      },
+      {
+        "Component": "MWCNTs",
+        "Dry Mass Fraction (%)": 0.5,
+        "metadata": {
+          "source_name": "MWCNTs"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Baseline testing with Super P and MWCNTs.",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N5",
+      "active_material_source": "MSE",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "electrode_thickness_um": 83.0,
+        "pressed_thickness_um": 83.0,
+        "disc_mass_mg": 21.9
+      },
+      "current_collector": null,
+      "separator": null
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2025-10-23 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N6",
+    "parent_batch_name": null,
+    "process_run_name": "N6 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 92.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Hx-T",
+        "Dry Mass Fraction (%)": 3.5,
+        "metadata": {
+          "source_name": "Cx(echo)"
+        }
+      },
+      {
+        "Component": "MWCNTs",
+        "Dry Mass Fraction (%)": 0.5,
+        "metadata": {
+          "source_name": "MWCNTs"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Comparison test against Cx(e). Large batch made for calendaring study investigation.\nComparison test against Cx(e). Large batch made for calendaring study investigation. | Tracking: uncal, 2M LiFSI, 0.2M LiDFOB 3:7",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N6",
+      "active_material_source": "MSE",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "electrode_thickness_um": 77.0,
+        "pressed_thickness_um": 53.0,
+        "disc_mass_mg": 20.73
+      },
+      "current_collector": "Aluminum",
+      "separator": null,
+      "summary_row": "N6",
+      "default_electrolyte": "2M LiFSI (3:7)",
+      "default_cycling_strategy": null,
+      "default_calendared": false
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2025-11-03 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N7",
+    "parent_batch_name": null,
+    "process_run_name": "N7 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 92.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Hx-e",
+        "Dry Mass Fraction (%)": 3.5,
+        "metadata": {
+          "source_name": "Cx(B)"
+        }
+      },
+      {
+        "Component": "MWCNTs",
+        "Dry Mass Fraction (%)": 0.5,
+        "metadata": {
+          "source_name": "MWCNTs"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Comparison test against Cx(B)\nComparison test against Cx(B) +CNTs | Tracking: uncal, 2M LiFSI, 0.2M LiDFOB 3:7",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N7",
+      "active_material_source": "MSE",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "electrode_thickness_um": 95.0,
+        "pressed_thickness_um": 95.0,
+        "disc_mass_mg": 18.766666666666666
+      },
+      "current_collector": "Aluminum",
+      "separator": null,
+      "summary_row": "N7",
+      "default_electrolyte": "2M LiFSI (3:7)",
+      "default_cycling_strategy": null,
+      "default_calendared": false
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2025-11-03 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N8",
+    "parent_batch_name": null,
+    "process_run_name": "N8 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 92.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Super P",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "Super P"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Comparison against newly recevied NMC811 from Targray (BASF). Utilize Super P for baseline, good for comparison against N5.",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N8",
+      "active_material_source": "BASF",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "electrode_thickness_um": 54.0,
+        "pressed_thickness_um": 54.0,
+        "disc_mass_mg": 16.1
+      },
+      "current_collector": "Aluminum",
+      "separator": null,
+      "summary_row": "N8",
+      "default_electrolyte": "2M LiFSI +0.2M LiDFOB 3:7",
+      "default_cycling_strategy": null,
+      "default_calendared": null
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2025-11-13 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "N9",
+    "parent_batch_name": null,
+    "process_run_name": "N9 cathode parent process",
+    "active_material_name": "NMC811",
+    "formulation_json": [
+      {
+        "Component": "NMC811",
+        "Dry Mass Fraction (%)": 92.0,
+        "metadata": {
+          "source_name": "NMC811"
+        }
+      },
+      {
+        "Component": "Hx-T",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "Cx(echo)"
+        }
+      },
+      {
+        "Component": "PVDF HSV1810",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "PVDF HSV1810",
+          "manufacturer_hint": "Arkema",
+          "product_hint": "HSV1810"
+        }
+      }
+    ],
+    "notes": "Comparison against newly recevied NMC811 from Targray (BASF). Testing w/ Cx(echo). Compare to N8\nThis test was conducted for a comparison against the newly received NMC811 from BASF. Useful comparison against N8.",
+    "metadata_json": {
+      "source_workbook": "/Users/bradyburns/Projects/CellScope/NMC Cathode Formulations 2025.xlsx",
+      "source_sheet": "N9",
+      "active_material_source": "BASF",
+      "branch_descriptors": {},
+      "safe_metrics": {
+        "electrode_thickness_um": 60.0,
+        "pressed_thickness_um": 60.0,
+        "disc_mass_mg": 17.73
+      },
+      "current_collector": "Aluminum",
+      "separator": "2+12+2 CCS",
+      "summary_row": "N9",
+      "default_electrolyte": "2M LiFSI +0.2M LiDFOB 3:7",
+      "default_cycling_strategy": null,
+      "default_calendared": null
+    },
+    "source_kind": "parent_sheet",
+    "source_created_at": "2025-11-13 00:00:00",
+    "legacy_experiment_ids": [
+      71
+    ]
+  }
+]

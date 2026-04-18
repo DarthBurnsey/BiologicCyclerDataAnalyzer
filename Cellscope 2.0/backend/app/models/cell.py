@@ -54,6 +54,9 @@ class Cell(Base):
     # Cycling data stored as parquet file
     parquet_path: Mapped[Optional[str]] = mapped_column(String(500), default=None)
 
+    # Inline cycling data for chart rendering (column-oriented JSON)
+    data_json: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )

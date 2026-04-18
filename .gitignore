@@ -35,9 +35,19 @@ data/
 *.xlsx
 *.xls
 
+# Backups and sample files
+backups/
+samples/
+
 # Streamlit
 .streamlit/
 
 # Logs
 *.log
+
+# Claude Code
+.claude/
+
+# Database backups
+*.db.bak
 

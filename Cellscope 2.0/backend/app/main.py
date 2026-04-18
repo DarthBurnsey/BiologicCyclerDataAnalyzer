@@ -6,13 +6,51 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.database import engine, Base
+from app.database import Base, engine, ensure_sqlite_schema_compatibility
 from app.api.projects import router as projects_router
 from app.api.experiments import router as experiments_router
 from app.api.cells import router as cells_router
+from app.api.live import router as live_router
+from app.api.metrics import router as metrics_router
+from app.api.ontology import router as ontology_router
+from app.api.workspaces import router as workspaces_router
+from app.api.experiment_designs import router as experiment_designs_router
 
 # Import models so they are registered with Base.metadata
-from app.models import Project, Experiment, Cell  # noqa: F401
+from app.models import (  # noqa: F401
+    Project,
+    Experiment,
+    Cell,
+    Material,
+    MaterialLot,
+    ProtocolVersion,
+    Operator,
+    Fixture,
+    EquipmentAsset,
+    ProcessRun,
+    ElectrodeBatch,
+    CellBuild,
+    LineageEdge,
+    CyclerSource,
+    CyclerChannel,
+    CyclerArtifact,
+    IngestionCheckpoint,
+    ParserRelease,
+    MappingDecision,
+    IngestionRun,
+    TestRun,
+    RunLifecycleEvent,
+    CyclePoint,
+    AnomalyEvent,
+    NotificationTarget,
+    DailyReportRun,
+    MetricDefinition,
+    MetricVersion,
+    MetricRun,
+    RunMetricValue,
+    CycleMetricValue,
+    ExperimentDesign,
+)
 
 
 @asynccontextmanager
@@ -20,6 +58,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan: create tables on startup."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await ensure_sqlite_schema_compatibility(engine)
     yield
     await engine.dispose()
 
@@ -44,6 +83,11 @@ app.add_middleware(
 app.include_router(projects_router)
 app.include_router(experiments_router)
 app.include_router(cells_router)
+app.include_router(live_router)
+app.include_router(metrics_router)
+app.include_router(ontology_router)
+app.include_router(workspaces_router)
+app.include_router(experiment_designs_router)
 
 
 @app.get("/api/health")

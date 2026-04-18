@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import json
+import html
 
 def extract_formulation_data(experiment_summaries, individual_cells):
     """Extract formulation components and active material data from experiments."""
@@ -72,6 +73,132 @@ def style_porosity(val):
     except:
         return ''
 
+
+def render_master_table_filter_styles():
+    st.markdown(
+        """
+        <style>
+        .master-table-filter-hint {
+            color: #6b7280;
+            font-size: 0.83rem;
+            margin-top: 0.15rem;
+        }
+
+        .master-table-active-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            margin: 0.55rem 0 0.3rem 0;
+        }
+
+        .master-table-active-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.35rem 0.65rem;
+            border-radius: 999px;
+            background: #f8fafc;
+            border: 1px solid #dbe4f0;
+            color: #334155;
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        .master-table-active-label {
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-size: 0.72rem;
+            font-weight: 700;
+        }
+
+        .master-table-summary-line {
+            color: #6b7280;
+            font-size: 0.95rem;
+            margin: 0.1rem 0 0.2rem 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def _filter_multiselect_options(options, search_query, selected_values=None):
+    """Filter multiselect options while keeping current selections available."""
+    selected_values = selected_values or []
+    normalized_query = (search_query or "").strip().casefold()
+    if not normalized_query:
+        return options
+    return [
+        option for option in options
+        if option in selected_values or normalized_query in option.casefold()
+    ]
+
+
+def _truncate_filter_value(value, max_length=28):
+    value = str(value)
+    return value if len(value) <= max_length else f"{value[:max_length - 3]}..."
+
+
+def _summarize_filter_values(values, max_items=2):
+    cleaned_values = [_truncate_filter_value(value) for value in values if value]
+    if not cleaned_values:
+        return ""
+    if len(cleaned_values) <= max_items:
+        return ", ".join(cleaned_values)
+    return f"{len(cleaned_values)} selected"
+
+
+def _render_master_table_active_filters(active_filters, empty_message):
+    if not active_filters:
+        st.caption(empty_message)
+        return
+
+    chips = "".join(
+        (
+            f'<span class="master-table-active-chip">'
+            f'<span class="master-table-active-label">{html.escape(label)}</span>'
+            f'{html.escape(value)}</span>'
+        )
+        for label, value in active_filters
+        if value
+    )
+    st.markdown(
+        f'<div class="master-table-active-filters">{chips}</div>',
+        unsafe_allow_html=True
+    )
+
+
+def _set_column_filter_state(section_prefix, selected_columns, performance_options, processing_options, materials_options, component_options):
+    """Keep master-table column state and widget state aligned."""
+    st.session_state[f'{section_prefix}_selected_columns'] = selected_columns
+    st.session_state[f'{section_prefix}_perf_multi'] = [
+        column for column in selected_columns if column in performance_options
+    ]
+    st.session_state[f'{section_prefix}_proc_multi'] = [
+        column for column in selected_columns if column in processing_options
+    ]
+    st.session_state[f'{section_prefix}_mat_multi'] = [
+        column for column in selected_columns if column in materials_options
+    ]
+    st.session_state[f'{section_prefix}_comp_multi'] = [
+        column for column in selected_columns if column in component_options
+    ]
+
+
+def _render_pill_filter_group(label, options, key, help_text, empty_message):
+    """Render a clean pill-style multi-select group."""
+    if not options:
+        st.caption(empty_message)
+        return []
+    return st.pills(
+        label,
+        options=options,
+        selection_mode='multi',
+        key=key,
+        help=help_text
+    ) or []
+
 def display_experiment_summaries_table(experiment_summaries, all_flags=None):
     """Display the experiment summaries table with column filtering and Active Material % column."""
     if not experiment_summaries:
@@ -107,173 +234,260 @@ def display_experiment_summaries_table(experiment_summaries, all_flags=None):
     for component in all_components:
         all_columns.append(f'{component} (%)')
     
-    # Modern Column Filter UI
-    with st.expander("🎯 Customize Table Columns", expanded=False):
-        # Initialize session state for column selection if not exists
-        if 'section1_selected_columns' not in st.session_state:
-            # Better default: Essential columns
-            default_cols = ['Experiment', 'Flags', 'Reversible Capacity (mAh/g)', 
-                          'Coulombic Efficiency (%)', 'Cycle Life (80%)', 
-                          'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)',
-                          'Areal Capacity (mAh/cm²)', 'Porosity (%)', 
-                          'Cutoff Voltages (V)', 'Electrolyte', 'Date']
-            st.session_state.section1_selected_columns = [c for c in default_cols if c in all_columns]
-        
-        # Quick preset buttons
-        st.markdown("### 📋 Quick Presets")
+    default_cols = [
+        'Experiment', 'Flags', 'Reversible Capacity (mAh/g)',
+        'Coulombic Efficiency (%)', 'Cycle Life (80%)',
+        'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)',
+        'Areal Capacity (mAh/cm²)', 'Porosity (%)',
+        'Cutoff Voltages (V)', 'Electrolyte', 'Date'
+    ]
+    if 'section1_selected_columns' not in st.session_state:
+        st.session_state.section1_selected_columns = [c for c in default_cols if c in all_columns]
+    if 'section1_column_search' not in st.session_state:
+        st.session_state.section1_column_search = ''
+
+    basic_cols = ['Experiment', 'Flags', 'Date']
+    processing_cols = ['Active Material (%)', 'Loading (mg/cm²)', 'Pressed Thickness (μm)', 'Porosity (%)']
+    performance_cols = [
+        'Reversible Capacity (mAh/g)', 'Coulombic Efficiency (%)',
+        'Areal Capacity (mAh/cm²)', '1st Discharge (mAh/g)',
+        'First Efficiency (%)', 'Cycle Life (80%)',
+        'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)'
+    ]
+    materials_cols = ['Electrolyte', 'Substrate', 'Separator', 'Cutoff Voltages (V)']
+    component_cols = [f'{comp} (%)' for comp in all_components]
+    performance_filter_options = basic_cols + performance_cols
+
+    render_master_table_filter_styles()
+    with st.container(border=True):
+        toolbar_cols = st.columns([0.82, 0.18])
+        with toolbar_cols[0]:
+            st.markdown("#### Find the experiment columns that matter")
+            st.caption(
+                "Start with a quick view, search by column name, then fine-tune the table with multi-select filters."
+            )
+        with toolbar_cols[1]:
+            if st.button("Reset Filters", key="section1_reset_columns", use_container_width=True):
+                reset_selection = [c for c in default_cols if c in all_columns]
+                _set_column_filter_state(
+                    'section1',
+                    reset_selection,
+                    performance_filter_options,
+                    processing_cols,
+                    materials_cols,
+                    component_cols
+                )
+                st.session_state.section1_column_search = ''
+                st.rerun()
+
+        search_query = st.text_input(
+            "Find columns",
+            key="section1_column_search",
+            placeholder="Try porosity, electrolyte, fade, separator, or graphite"
+        ).strip()
+        st.markdown(
+            '<div class="master-table-filter-hint">Each pill group supports multi-select. Search narrows the options while keeping your current picks visible.</div>',
+            unsafe_allow_html=True
+        )
+
         preset_col1, preset_col2, preset_col3, preset_col4 = st.columns(4)
-        
         with preset_col1:
-            if st.button("✨ Essential", key="section1_preset_essential", use_container_width=True, 
-                        help="Show only the most important columns"):
-                st.session_state.section1_selected_columns = [
-                    'Experiment', 'Reversible Capacity (mAh/g)', 'Coulombic Efficiency (%)', 
+            if st.button(
+                "Essential",
+                key="section1_preset_essential",
+                use_container_width=True,
+                help="Show only the most important columns"
+            ):
+                essential_selection = [
+                    'Experiment', 'Reversible Capacity (mAh/g)', 'Coulombic Efficiency (%)',
                     'Cycle Life (80%)', 'Electrolyte'
                 ]
-                st.rerun()
-        
-        with preset_col2:
-            if st.button("🔬 Performance", key="section1_preset_performance", use_container_width=True,
-                        help="Focus on cell performance metrics"):
-                perf_cols = ['Experiment', 'Flags', 'Reversible Capacity (mAh/g)', 
-                           'Coulombic Efficiency (%)', '1st Discharge (mAh/g)', 
-                           'First Efficiency (%)', 'Cycle Life (80%)', 
-                           'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)', 'Areal Capacity (mAh/cm²)']
-                st.session_state.section1_selected_columns = [c for c in perf_cols if c in all_columns]
-                st.rerun()
-        
-        with preset_col3:
-            if st.button("⚙️ Processing", key="section1_preset_processing", use_container_width=True,
-                        help="Focus on cell preparation data"):
-                proc_cols = ['Experiment', 'Active Material (%)', 'Loading (mg/cm²)', 
-                           'Pressed Thickness (μm)', 'Porosity (%)', 'Substrate', 
-                           'Separator', 'Cutoff Voltages (V)', 'Date']
-                st.session_state.section1_selected_columns = [c for c in proc_cols if c in all_columns]
-                st.rerun()
-        
-        with preset_col4:
-            if st.button("📊 All Data", key="section1_preset_all", use_container_width=True,
-                        help="Show all available columns"):
-                st.session_state.section1_selected_columns = all_columns.copy()
-                st.rerun()
-        
-        st.markdown("---")
-        
-        # Organize columns into logical groups
-        basic_cols = ['Experiment', 'Flags', 'Date']
-        processing_cols = ['Active Material (%)', 'Loading (mg/cm²)', 'Pressed Thickness (μm)', 'Porosity (%)']
-        performance_cols = ['Reversible Capacity (mAh/g)', 'Coulombic Efficiency (%)', 
-                          'Areal Capacity (mAh/cm²)', '1st Discharge (mAh/g)', 
-                          'First Efficiency (%)', 'Cycle Life (80%)', 
-                          'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)']
-        materials_cols = ['Electrolyte', 'Substrate', 'Separator', 'Cutoff Voltages (V)']
-        component_cols = [f'{comp} (%)' for comp in all_components]
-        
-        # Tabbed interface for better organization
-        col_tab1, col_tab2, col_tab3, col_tab4 = st.tabs([
-            "📊 Performance", "⚙️ Processing", "🧪 Materials", "🔍 Advanced"
-        ])
-        
-        with col_tab1:
-            st.markdown("**Performance Metrics**")
-            # Get current selection, ensuring it's valid
-            current_perf = [c for c in st.session_state.section1_selected_columns if c in (basic_cols + performance_cols)]
-            selected_performance = st.multiselect(
-                "Select performance columns:",
-                options=basic_cols + performance_cols,
-                default=current_perf,
-                key="section1_perf_multi",
-                help="Choose which performance metrics to display"
-            )
-        
-        with col_tab2:
-            st.markdown("**Processing Parameters**")
-            current_proc = [c for c in st.session_state.section1_selected_columns if c in processing_cols]
-            selected_processing = st.multiselect(
-                "Select processing columns:",
-                options=processing_cols,
-                default=current_proc,
-                key="section1_proc_multi",
-                help="Choose which processing parameters to display"
-            )
-        
-        with col_tab3:
-            st.markdown("**Cell Materials & Configuration**")
-            current_mat = [c for c in st.session_state.section1_selected_columns if c in materials_cols]
-            selected_materials = st.multiselect(
-                "Select material columns:",
-                options=materials_cols,
-                default=current_mat,
-                key="section1_mat_multi",
-                help="Choose which material info to display"
-            )
-        
-        with col_tab4:
-            st.markdown("**Component Formulation**")
-            if component_cols:
-                current_comp = [c for c in st.session_state.section1_selected_columns if c in component_cols]
-                selected_components = st.multiselect(
-                    "Select component columns:",
-                    options=component_cols,
-                    default=current_comp,
-                    key="section1_comp_multi",
-                    help="Choose which formulation components to display"
+                _set_column_filter_state(
+                    'section1',
+                    essential_selection,
+                    performance_filter_options,
+                    processing_cols,
+                    materials_cols,
+                    component_cols
                 )
-            else:
-                st.info("💡 No formulation components found in experiments")
-                selected_components = []
-            
-            # Advanced options
-            st.markdown("---")
-            st.markdown("**Quick Actions**")
-            adv_col1, adv_col2 = st.columns(2)
-            with adv_col1:
-                if st.button("Select All Components", key="section1_select_all_comp"):
-                    # Add all components to current selection
-                    new_selection = list(set(selected_performance + selected_processing + selected_materials + component_cols))
-                    st.session_state.section1_selected_columns = new_selection
-                    st.rerun()
-            with adv_col2:
-                if st.button("Clear All Components", key="section1_clear_all_comp"):
-                    # Remove all components from current selection
-                    new_selection = [c for c in (selected_performance + selected_processing + selected_materials) if c not in component_cols]
-                    st.session_state.section1_selected_columns = new_selection
-                    st.rerun()
-        
-        # Combine all selections
-        combined_selection = list(set(
+                st.rerun()
+        with preset_col2:
+            if st.button(
+                "Performance",
+                key="section1_preset_performance",
+                use_container_width=True,
+                help="Focus on cell performance metrics"
+            ):
+                perf_cols = [
+                    'Experiment', 'Flags', 'Reversible Capacity (mAh/g)',
+                    'Coulombic Efficiency (%)', '1st Discharge (mAh/g)',
+                    'First Efficiency (%)', 'Cycle Life (80%)',
+                    'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)', 'Areal Capacity (mAh/cm²)'
+                ]
+                performance_selection = [c for c in perf_cols if c in all_columns]
+                _set_column_filter_state(
+                    'section1',
+                    performance_selection,
+                    performance_filter_options,
+                    processing_cols,
+                    materials_cols,
+                    component_cols
+                )
+                st.rerun()
+        with preset_col3:
+            if st.button(
+                "Processing",
+                key="section1_preset_processing",
+                use_container_width=True,
+                help="Focus on cell preparation data"
+            ):
+                proc_cols = [
+                    'Experiment', 'Active Material (%)', 'Loading (mg/cm²)',
+                    'Pressed Thickness (μm)', 'Porosity (%)', 'Substrate',
+                    'Separator', 'Cutoff Voltages (V)', 'Date'
+                ]
+                processing_selection = [c for c in proc_cols if c in all_columns]
+                _set_column_filter_state(
+                    'section1',
+                    processing_selection,
+                    performance_filter_options,
+                    processing_cols,
+                    materials_cols,
+                    component_cols
+                )
+                st.rerun()
+        with preset_col4:
+            if st.button(
+                "All Data",
+                key="section1_preset_all",
+                use_container_width=True,
+                help="Show all available columns"
+            ):
+                _set_column_filter_state(
+                    'section1',
+                    all_columns.copy(),
+                    performance_filter_options,
+                    processing_cols,
+                    materials_cols,
+                    component_cols
+                )
+                st.rerun()
+
+        current_perf = [
+            c for c in st.session_state.section1_selected_columns
+            if c in (basic_cols + performance_cols)
+        ]
+        current_proc = [c for c in st.session_state.section1_selected_columns if c in processing_cols]
+        current_mat = [c for c in st.session_state.section1_selected_columns if c in materials_cols]
+        current_comp = [c for c in st.session_state.section1_selected_columns if c in component_cols]
+
+        selected_performance = _render_pill_filter_group(
+            "Performance",
+            _filter_multiselect_options(performance_filter_options, search_query, current_perf),
+            "section1_perf_multi",
+            "Choose the primary experiment metrics to display",
+            "No performance columns match the current search."
+        )
+        selected_processing = _render_pill_filter_group(
+            "Processing",
+            _filter_multiselect_options(processing_cols, search_query, current_proc),
+            "section1_proc_multi",
+            "Choose preparation and porosity columns",
+            "No processing columns match the current search."
+        )
+        selected_materials = _render_pill_filter_group(
+            "Materials",
+            _filter_multiselect_options(materials_cols, search_query, current_mat),
+            "section1_mat_multi",
+            "Choose electrolyte and hardware columns",
+            "No material columns match the current search."
+        )
+
+        if component_cols:
+            with st.expander("Formulation Components", expanded=bool(search_query or current_comp)):
+                st.markdown(
+                    '<div class="master-table-filter-hint">Use component filters when you want a deeper formulation view without crowding the main controls.</div>',
+                    unsafe_allow_html=True
+                )
+                selected_components = _render_pill_filter_group(
+                    "Components",
+                    _filter_multiselect_options(component_cols, search_query, current_comp),
+                    "section1_comp_multi",
+                    "Choose formulation component columns",
+                    "No formulation components match the current search."
+                )
+                comp_action_col1, comp_action_col2 = st.columns(2)
+                with comp_action_col1:
+                    if st.button("Select All Components", key="section1_select_all_comp", use_container_width=True):
+                        new_selection = list(dict.fromkeys(
+                            selected_performance + selected_processing + selected_materials + component_cols
+                        ))
+                        _set_column_filter_state(
+                            'section1',
+                            new_selection,
+                            performance_filter_options,
+                            processing_cols,
+                            materials_cols,
+                            component_cols
+                        )
+                        st.rerun()
+                with comp_action_col2:
+                    if st.button("Clear All Components", key="section1_clear_all_comp", use_container_width=True):
+                        new_selection = list(dict.fromkeys(
+                            selected_performance + selected_processing + selected_materials
+                        ))
+                        _set_column_filter_state(
+                            'section1',
+                            new_selection,
+                            performance_filter_options,
+                            processing_cols,
+                            materials_cols,
+                            component_cols
+                        )
+                        st.rerun()
+        else:
+            st.markdown(
+                '<div class="master-table-filter-hint">No formulation components were found for this project yet.</div>',
+                unsafe_allow_html=True
+            )
+            selected_components = []
+
+        combined_selection = list(dict.fromkeys(
             selected_performance + selected_processing + selected_materials + selected_components
         ))
-        
-        # Always ensure 'Experiment' is included and first if any columns are selected
         if combined_selection and 'Experiment' in all_columns and 'Experiment' not in combined_selection:
             combined_selection.insert(0, 'Experiment')
-        
-        # Only update session state if selection actually changed (prevents overwriting preset selections)
         if set(combined_selection) != set(st.session_state.section1_selected_columns):
             st.session_state.section1_selected_columns = combined_selection
-    
-    # Display selected columns info with better feedback
-    if st.session_state.section1_selected_columns:
-        col_count = len(st.session_state.section1_selected_columns)
-        total_count = len(all_columns)
-        percentage = (col_count / total_count) * 100
-        
-        # Color-coded feedback
-        if col_count < 5:
-            st.warning(f"⚠️ Showing only {col_count} of {total_count} columns ({percentage:.0f}%). Consider adding more columns for better insights.")
-        elif col_count > 15:
-            st.info(f"📊 Showing {col_count} of {total_count} columns ({percentage:.0f}%). Table may be wide - use horizontal scroll if needed.")
-        else:
-            st.success(f"✅ Showing {col_count} of {total_count} columns ({percentage:.0f}%) - Good selection!")
-        
-        # Show what's selected in a compact way
-        with st.expander("📋 View Selected Columns", expanded=False):
-            selected_display = ", ".join(st.session_state.section1_selected_columns)
-            st.markdown(f"**Selected:** {selected_display}")
-    else:
-        st.error("❌ No columns selected! Please select at least one column to display the table.")
-        st.info("💡 **Quick fix:** Click one of the preset buttons above to get started.")
+
+        if st.session_state.section1_selected_columns:
+            active_filters = []
+            if search_query:
+                active_filters.append(("Search", _truncate_filter_value(search_query)))
+            if selected_performance:
+                active_filters.append(("Performance", _summarize_filter_values(selected_performance)))
+            if selected_processing:
+                active_filters.append(("Processing", _summarize_filter_values(selected_processing)))
+            if selected_materials:
+                active_filters.append(("Materials", _summarize_filter_values(selected_materials)))
+            if selected_components:
+                active_filters.append(("Components", _summarize_filter_values(selected_components)))
+            _render_master_table_active_filters(
+                active_filters,
+                "Use a preset or pick columns from the groups below."
+            )
+            st.markdown(
+                (
+                    f'<div class="master-table-summary-line"><strong>{len(st.session_state.section1_selected_columns)}</strong> '
+                    f'of {len(all_columns)} columns selected</div>'
+                ),
+                unsafe_allow_html=True
+            )
+            with st.expander("View Selected Columns", expanded=False):
+                st.markdown("**Selected:** " + ", ".join(st.session_state.section1_selected_columns))
+
+    if not st.session_state.section1_selected_columns:
+        st.error("No columns selected. Choose a preset or add at least one column group to show the table.")
         return
     
     # Prepare data
@@ -432,172 +646,260 @@ def display_individual_cells_table(individual_cells, all_flags=None):
     for component in all_components:
         all_columns.append(f'{component} (%)')
     
-    # Modern Column Filter UI for Individual Cells
-    with st.expander("🎯 Customize Cell Table Columns", expanded=False):
-        # Initialize session state for column selection if not exists
-        if 'section2_selected_columns' not in st.session_state:
-            # Better default: Essential cell columns
-            default_cols = ['Cell Name', 'Experiment', 'Flags', 'Reversible Capacity (mAh/g)', 
-                          'Coulombic Efficiency (%)', 'Cycle Life (80%)', 
-                          'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)',
-                          'Areal Capacity (mAh/cm²)', 'Porosity (%)', 
-                          'Cutoff Voltages (V)', 'Electrolyte']
-            st.session_state.section2_selected_columns = [c for c in default_cols if c in all_columns]
-        
-        # Quick preset buttons
-        st.markdown("### 📋 Quick Presets")
+    default_cols = [
+        'Cell Name', 'Experiment', 'Flags', 'Reversible Capacity (mAh/g)',
+        'Coulombic Efficiency (%)', 'Cycle Life (80%)',
+        'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)',
+        'Areal Capacity (mAh/cm²)', 'Porosity (%)',
+        'Cutoff Voltages (V)', 'Electrolyte'
+    ]
+    if 'section2_selected_columns' not in st.session_state:
+        st.session_state.section2_selected_columns = [c for c in default_cols if c in all_columns]
+    if 'section2_column_search' not in st.session_state:
+        st.session_state.section2_column_search = ''
+
+    basic_cols = ['Cell Name', 'Experiment', 'Flags', 'Date']
+    processing_cols = ['Active Material (%)', 'Loading (mg/cm²)', 'Pressed Thickness (μm)', 'Porosity (%)']
+    performance_cols = [
+        'Reversible Capacity (mAh/g)', 'Coulombic Efficiency (%)',
+        'Areal Capacity (mAh/cm²)', '1st Discharge (mAh/g)',
+        'First Efficiency (%)', 'Cycle Life (80%)',
+        'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)'
+    ]
+    materials_cols = ['Electrolyte', 'Substrate', 'Separator', 'Cutoff Voltages (V)']
+    component_cols = [f'{comp} (%)' for comp in all_components]
+    performance_filter_options = basic_cols + performance_cols
+
+    render_master_table_filter_styles()
+    with st.container(border=True):
+        toolbar_cols = st.columns([0.82, 0.18])
+        with toolbar_cols[0]:
+            st.markdown("#### Find the cell columns that matter")
+            st.caption(
+                "Start with a quick view, search by column name, then fine-tune the cell table with multi-select filters."
+            )
+        with toolbar_cols[1]:
+            if st.button("Reset Filters", key="section2_reset_columns", use_container_width=True):
+                reset_selection = [c for c in default_cols if c in all_columns]
+                _set_column_filter_state(
+                    'section2',
+                    reset_selection,
+                    performance_filter_options,
+                    processing_cols,
+                    materials_cols,
+                    component_cols
+                )
+                st.session_state.section2_column_search = ''
+                st.rerun()
+
+        search_query = st.text_input(
+            "Find columns",
+            key="section2_column_search",
+            placeholder="Try cell name, porosity, fade, separator, or graphite"
+        ).strip()
+        st.markdown(
+            '<div class="master-table-filter-hint">Each pill group supports multi-select. Search narrows the options while keeping your current picks visible.</div>',
+            unsafe_allow_html=True
+        )
+
         preset_col1, preset_col2, preset_col3, preset_col4 = st.columns(4)
-        
         with preset_col1:
-            if st.button("✨ Essential", key="section2_preset_essential", use_container_width=True,
-                        help="Show only the most important cell data"):
-                st.session_state.section2_selected_columns = [
-                    'Cell Name', 'Experiment', 'Reversible Capacity (mAh/g)', 
+            if st.button(
+                "Essential",
+                key="section2_preset_essential",
+                use_container_width=True,
+                help="Show only the most important cell data"
+            ):
+                essential_selection = [
+                    'Cell Name', 'Experiment', 'Reversible Capacity (mAh/g)',
                     'Coulombic Efficiency (%)', 'Cycle Life (80%)'
                 ]
-                st.rerun()
-        
-        with preset_col2:
-            if st.button("🔬 Performance", key="section2_preset_performance", use_container_width=True,
-                        help="Focus on individual cell performance"):
-                perf_cols = ['Cell Name', 'Experiment', 'Flags', 'Reversible Capacity (mAh/g)', 
-                           'Coulombic Efficiency (%)', '1st Discharge (mAh/g)', 
-                           'First Efficiency (%)', 'Cycle Life (80%)', 
-                           'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)', 'Areal Capacity (mAh/cm²)']
-                st.session_state.section2_selected_columns = [c for c in perf_cols if c in all_columns]
-                st.rerun()
-        
-        with preset_col3:
-            if st.button("⚙️ Processing", key="section2_preset_processing", use_container_width=True,
-                        help="Focus on cell preparation details"):
-                proc_cols = ['Cell Name', 'Experiment', 'Active Material (%)', 'Loading (mg/cm²)', 
-                           'Pressed Thickness (μm)', 'Porosity (%)', 'Substrate', 
-                           'Separator', 'Cutoff Voltages (V)', 'Date']
-                st.session_state.section2_selected_columns = [c for c in proc_cols if c in all_columns]
-                st.rerun()
-        
-        with preset_col4:
-            if st.button("📊 All Data", key="section2_preset_all", use_container_width=True,
-                        help="Show all available columns"):
-                st.session_state.section2_selected_columns = all_columns.copy()
-                st.rerun()
-        
-        st.markdown("---")
-        
-        # Organize columns into logical groups
-        basic_cols = ['Cell Name', 'Experiment', 'Flags', 'Date']
-        processing_cols = ['Active Material (%)', 'Loading (mg/cm²)', 'Pressed Thickness (μm)', 'Porosity (%)']
-        performance_cols = ['Reversible Capacity (mAh/g)', 'Coulombic Efficiency (%)', 
-                          'Areal Capacity (mAh/cm²)', '1st Discharge (mAh/g)', 
-                          'First Efficiency (%)', 'Cycle Life (80%)', 
-                          'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)']
-        materials_cols = ['Electrolyte', 'Substrate', 'Separator', 'Cutoff Voltages (V)']
-        component_cols = [f'{comp} (%)' for comp in all_components]
-        
-        # Tabbed interface for better organization
-        col_tab1, col_tab2, col_tab3, col_tab4 = st.tabs([
-            "📊 Performance", "⚙️ Processing", "🧪 Materials", "🔍 Advanced"
-        ])
-        
-        with col_tab1:
-            st.markdown("**Cell Performance Metrics**")
-            current_perf = [c for c in st.session_state.section2_selected_columns if c in (basic_cols + performance_cols)]
-            selected_performance = st.multiselect(
-                "Select performance columns:",
-                options=basic_cols + performance_cols,
-                default=current_perf,
-                key="section2_perf_multi",
-                help="Choose which cell performance metrics to display"
-            )
-        
-        with col_tab2:
-            st.markdown("**Processing Parameters**")
-            current_proc = [c for c in st.session_state.section2_selected_columns if c in processing_cols]
-            selected_processing = st.multiselect(
-                "Select processing columns:",
-                options=processing_cols,
-                default=current_proc,
-                key="section2_proc_multi",
-                help="Choose which processing parameters to display"
-            )
-        
-        with col_tab3:
-            st.markdown("**Cell Materials & Configuration**")
-            current_mat = [c for c in st.session_state.section2_selected_columns if c in materials_cols]
-            selected_materials = st.multiselect(
-                "Select material columns:",
-                options=materials_cols,
-                default=current_mat,
-                key="section2_mat_multi",
-                help="Choose which material info to display"
-            )
-        
-        with col_tab4:
-            st.markdown("**Component Formulation**")
-            if component_cols:
-                current_comp = [c for c in st.session_state.section2_selected_columns if c in component_cols]
-                selected_components = st.multiselect(
-                    "Select component columns:",
-                    options=component_cols,
-                    default=current_comp,
-                    key="section2_comp_multi",
-                    help="Choose which formulation components to display"
+                _set_column_filter_state(
+                    'section2',
+                    essential_selection,
+                    performance_filter_options,
+                    processing_cols,
+                    materials_cols,
+                    component_cols
                 )
-            else:
-                st.info("💡 No formulation components found in cells")
-                selected_components = []
-            
-            # Advanced options
-            st.markdown("---")
-            st.markdown("**Quick Actions**")
-            adv_col1, adv_col2 = st.columns(2)
-            with adv_col1:
-                if st.button("Select All Components", key="section2_select_all_comp"):
-                    # Add all components to current selection
-                    new_selection = list(set(selected_performance + selected_processing + selected_materials + component_cols))
-                    st.session_state.section2_selected_columns = new_selection
-                    st.rerun()
-            with adv_col2:
-                if st.button("Clear All Components", key="section2_clear_all_comp"):
-                    # Remove all components from current selection
-                    new_selection = [c for c in (selected_performance + selected_processing + selected_materials) if c not in component_cols]
-                    st.session_state.section2_selected_columns = new_selection
-                    st.rerun()
-        
-        # Combine all selections
-        combined_selection = list(set(
+                st.rerun()
+        with preset_col2:
+            if st.button(
+                "Performance",
+                key="section2_preset_performance",
+                use_container_width=True,
+                help="Focus on individual cell performance"
+            ):
+                perf_cols = [
+                    'Cell Name', 'Experiment', 'Flags', 'Reversible Capacity (mAh/g)',
+                    'Coulombic Efficiency (%)', '1st Discharge (mAh/g)',
+                    'First Efficiency (%)', 'Cycle Life (80%)',
+                    'Fade Rate (%/cyc)', 'Fade Rate (%/100cyc)', 'Areal Capacity (mAh/cm²)'
+                ]
+                performance_selection = [c for c in perf_cols if c in all_columns]
+                _set_column_filter_state(
+                    'section2',
+                    performance_selection,
+                    performance_filter_options,
+                    processing_cols,
+                    materials_cols,
+                    component_cols
+                )
+                st.rerun()
+        with preset_col3:
+            if st.button(
+                "Processing",
+                key="section2_preset_processing",
+                use_container_width=True,
+                help="Focus on cell preparation details"
+            ):
+                proc_cols = [
+                    'Cell Name', 'Experiment', 'Active Material (%)', 'Loading (mg/cm²)',
+                    'Pressed Thickness (μm)', 'Porosity (%)', 'Substrate',
+                    'Separator', 'Cutoff Voltages (V)', 'Date'
+                ]
+                processing_selection = [c for c in proc_cols if c in all_columns]
+                _set_column_filter_state(
+                    'section2',
+                    processing_selection,
+                    performance_filter_options,
+                    processing_cols,
+                    materials_cols,
+                    component_cols
+                )
+                st.rerun()
+        with preset_col4:
+            if st.button(
+                "All Data",
+                key="section2_preset_all",
+                use_container_width=True,
+                help="Show all available columns"
+            ):
+                _set_column_filter_state(
+                    'section2',
+                    all_columns.copy(),
+                    performance_filter_options,
+                    processing_cols,
+                    materials_cols,
+                    component_cols
+                )
+                st.rerun()
+
+        current_perf = [
+            c for c in st.session_state.section2_selected_columns
+            if c in (basic_cols + performance_cols)
+        ]
+        current_proc = [c for c in st.session_state.section2_selected_columns if c in processing_cols]
+        current_mat = [c for c in st.session_state.section2_selected_columns if c in materials_cols]
+        current_comp = [c for c in st.session_state.section2_selected_columns if c in component_cols]
+
+        selected_performance = _render_pill_filter_group(
+            "Performance",
+            _filter_multiselect_options(performance_filter_options, search_query, current_perf),
+            "section2_perf_multi",
+            "Choose the primary cell metrics to display",
+            "No performance columns match the current search."
+        )
+        selected_processing = _render_pill_filter_group(
+            "Processing",
+            _filter_multiselect_options(processing_cols, search_query, current_proc),
+            "section2_proc_multi",
+            "Choose preparation and porosity columns",
+            "No processing columns match the current search."
+        )
+        selected_materials = _render_pill_filter_group(
+            "Materials",
+            _filter_multiselect_options(materials_cols, search_query, current_mat),
+            "section2_mat_multi",
+            "Choose electrolyte and hardware columns",
+            "No material columns match the current search."
+        )
+
+        if component_cols:
+            with st.expander("Formulation Components", expanded=bool(search_query or current_comp)):
+                st.markdown(
+                    '<div class="master-table-filter-hint">Use component filters when you want a deeper formulation view without crowding the main controls.</div>',
+                    unsafe_allow_html=True
+                )
+                selected_components = _render_pill_filter_group(
+                    "Components",
+                    _filter_multiselect_options(component_cols, search_query, current_comp),
+                    "section2_comp_multi",
+                    "Choose formulation component columns",
+                    "No formulation components match the current search."
+                )
+                comp_action_col1, comp_action_col2 = st.columns(2)
+                with comp_action_col1:
+                    if st.button("Select All Components", key="section2_select_all_comp", use_container_width=True):
+                        new_selection = list(dict.fromkeys(
+                            selected_performance + selected_processing + selected_materials + component_cols
+                        ))
+                        _set_column_filter_state(
+                            'section2',
+                            new_selection,
+                            performance_filter_options,
+                            processing_cols,
+                            materials_cols,
+                            component_cols
+                        )
+                        st.rerun()
+                with comp_action_col2:
+                    if st.button("Clear All Components", key="section2_clear_all_comp", use_container_width=True):
+                        new_selection = list(dict.fromkeys(
+                            selected_performance + selected_processing + selected_materials
+                        ))
+                        _set_column_filter_state(
+                            'section2',
+                            new_selection,
+                            performance_filter_options,
+                            processing_cols,
+                            materials_cols,
+                            component_cols
+                        )
+                        st.rerun()
+        else:
+            st.markdown(
+                '<div class="master-table-filter-hint">No formulation components were found for this project yet.</div>',
+                unsafe_allow_html=True
+            )
+            selected_components = []
+
+        combined_selection = list(dict.fromkeys(
             selected_performance + selected_processing + selected_materials + selected_components
         ))
-        
-        # Always ensure 'Cell Name' is included and first if any columns are selected
         if combined_selection and 'Cell Name' in all_columns and 'Cell Name' not in combined_selection:
             combined_selection.insert(0, 'Cell Name')
-        
-        # Only update session state if selection actually changed (prevents overwriting preset selections)
         if set(combined_selection) != set(st.session_state.section2_selected_columns):
             st.session_state.section2_selected_columns = combined_selection
-    
-    # Display selected columns info with better feedback
-    if st.session_state.section2_selected_columns:
-        col_count = len(st.session_state.section2_selected_columns)
-        total_count = len(all_columns)
-        percentage = (col_count / total_count) * 100
-        
-        # Color-coded feedback
-        if col_count < 5:
-            st.warning(f"⚠️ Showing only {col_count} of {total_count} columns ({percentage:.0f}%). Consider adding more columns for better insights.")
-        elif col_count > 15:
-            st.info(f"📊 Showing {col_count} of {total_count} columns ({percentage:.0f}%). Table may be wide - use horizontal scroll if needed.")
-        else:
-            st.success(f"✅ Showing {col_count} of {total_count} columns ({percentage:.0f}%) - Good selection!")
-        
-        # Show what's selected in a compact way
-        with st.expander("📋 View Selected Columns", expanded=False):
-            selected_display = ", ".join(st.session_state.section2_selected_columns)
-            st.markdown(f"**Selected:** {selected_display}")
-    else:
-        st.error("❌ No columns selected! Please select at least one column to display the table.")
-        st.info("💡 **Quick fix:** Click one of the preset buttons above to get started.")
+
+        if st.session_state.section2_selected_columns:
+            active_filters = []
+            if search_query:
+                active_filters.append(("Search", _truncate_filter_value(search_query)))
+            if selected_performance:
+                active_filters.append(("Performance", _summarize_filter_values(selected_performance)))
+            if selected_processing:
+                active_filters.append(("Processing", _summarize_filter_values(selected_processing)))
+            if selected_materials:
+                active_filters.append(("Materials", _summarize_filter_values(selected_materials)))
+            if selected_components:
+                active_filters.append(("Components", _summarize_filter_values(selected_components)))
+            _render_master_table_active_filters(
+                active_filters,
+                "Use a preset or pick columns from the groups below."
+            )
+            st.markdown(
+                (
+                    f'<div class="master-table-summary-line"><strong>{len(st.session_state.section2_selected_columns)}</strong> '
+                    f'of {len(all_columns)} columns selected</div>'
+                ),
+                unsafe_allow_html=True
+            )
+            with st.expander("View Selected Columns", expanded=False):
+                st.markdown("**Selected:** " + ", ".join(st.session_state.section2_selected_columns))
+
+    if not st.session_state.section2_selected_columns:
+        st.error("No columns selected. Choose a preset or add at least one column group to show the table.")
         return
     
     # Prepare data

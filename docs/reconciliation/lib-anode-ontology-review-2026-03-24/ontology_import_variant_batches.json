@@ -1,0 +1,1232 @@
+[
+  {
+    "batch_name": "T16a",
+    "parent_batch_name": "T16",
+    "process_run_name": "T16 anode sheet process",
+    "active_material_name": "Silicon",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 30.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "nano SI",
+        "Dry Mass Fraction (%)": 40.0,
+        "metadata": {
+          "source_name": "nano SI"
+        }
+      },
+      {
+        "Component": "Cx (beta)",
+        "Dry Mass Fraction (%)": 10.0,
+        "metadata": {
+          "source_name": "Cx(B)",
+          "manufacturer_hint": "Hexegen"
+        }
+      },
+      {
+        "Component": "LiPAA",
+        "Dry Mass Fraction (%)": 20.0,
+        "metadata": {
+          "source_name": "LiPAA"
+        }
+      }
+    ],
+    "notes": "Attempt to increase the portion of graphite to help stabilize the anode.",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T16",
+      "parent_batch_name": "T16",
+      "legacy_aliases": [
+        "T16a "
+      ],
+      "loading_backfill": {
+        "value": 10.1,
+        "sample_count": 3,
+        "record_ids": [
+          19
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "1M LiTFSI 3:7 +10% FEC",
+      "separator": "25um PP",
+      "substrate": "Copper",
+      "calendared": null,
+      "variant_descriptor": null,
+      "study_family": "silicon_formulation_optimization",
+      "purpose_summary": "Attempt to increase the portion of graphite to help stabilize the anode.",
+      "study_tags": [
+        "graphite"
+      ],
+      "hypothesis": "Higher graphite loading should improve mechanical stability and reduce failure.",
+      "loading_mg": 10.1
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-06-25 00:00:00",
+    "legacy_experiment_ids": [
+      19
+    ]
+  },
+  {
+    "batch_name": "T18 B2",
+    "parent_batch_name": "T18",
+    "process_run_name": "T18 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 79.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "LiPAA",
+        "Dry Mass Fraction (%)": 7.0,
+        "metadata": {
+          "source_name": "LiPAA"
+        }
+      },
+      {
+        "Component": "Silicon",
+        "Dry Mass Fraction (%)": 10.0,
+        "metadata": {
+          "source_name": "Silicon"
+        }
+      },
+      {
+        "Component": "Cx (beta)",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "Cx(B)",
+          "manufacturer_hint": "Hexegen"
+        }
+      }
+    ],
+    "notes": "Experiment used to train Lui/Kaitlyn. Altering graphite/silicon ratio to find optimal balance. \n\nNote: protocol was adjusted and updated after 8-10 cycles, voltage cutoffs were incorrect.",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T18",
+      "parent_batch_name": "T18",
+      "legacy_aliases": [
+        "T18 B2"
+      ],
+      "loading_backfill": {
+        "value": 13.33,
+        "sample_count": 2,
+        "record_ids": [
+          20
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "1M LiTFSI 3:7 +10% FEC",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": null,
+      "variant_descriptor": null,
+      "study_family": "silicon_formulation_optimization",
+      "purpose_summary": "Experiment used to train Lui/Kaitlyn. Altering graphite/silicon ratio to find optimal balance. \n\nNote: protocol was adjusted and updated after 8-10 cycles, voltage cutoffs were incorrect.",
+      "study_tags": [
+        "graphite",
+        "silicon",
+        "silicon_graphite_blend",
+        "training"
+      ],
+      "loading_mg": 13.33
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-07-14 00:00:00",
+    "legacy_experiment_ids": [
+      20
+    ]
+  },
+  {
+    "batch_name": "T19 B2",
+    "parent_batch_name": "T19",
+    "process_run_name": "T19 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 18.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "nano SI",
+        "Dry Mass Fraction (%)": 65.0,
+        "metadata": {
+          "source_name": "nano SI"
+        }
+      },
+      {
+        "Component": "Cx (beta)",
+        "Dry Mass Fraction (%)": 5.0,
+        "metadata": {
+          "source_name": "Cx(B)",
+          "manufacturer_hint": "Hexegen"
+        }
+      },
+      {
+        "Component": "LiPAA",
+        "Dry Mass Fraction (%)": 12.0,
+        "metadata": {
+          "source_name": "LiPAA"
+        }
+      }
+    ],
+    "notes": "Experiment used to train Lui/Kaitlyn. Altering graphite/silicon ratio to find optimal balance.",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T19",
+      "parent_batch_name": "T19",
+      "legacy_aliases": [
+        "T19 B2"
+      ],
+      "loading_backfill": {
+        "value": 8.57,
+        "sample_count": 3,
+        "record_ids": [
+          21
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "1M LiPF6 1:1:1",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": null,
+      "variant_descriptor": null,
+      "study_family": "silicon_formulation_optimization",
+      "purpose_summary": "Experiment used to train Lui/Kaitlyn. Altering graphite/silicon ratio to find optimal balance.",
+      "study_tags": [
+        "graphite",
+        "training"
+      ],
+      "loading_mg": 8.57
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-07-14 00:00:00",
+    "legacy_experiment_ids": [
+      21
+    ]
+  },
+  {
+    "batch_name": "T20 B2",
+    "parent_batch_name": "T20",
+    "process_run_name": "T20 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 79.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "nano SI",
+        "Dry Mass Fraction (%)": 10.0,
+        "metadata": {
+          "source_name": "nano SI"
+        }
+      },
+      {
+        "Component": "Cx (beta)",
+        "Dry Mass Fraction (%)": 4.0,
+        "metadata": {
+          "source_name": "Cx(B)",
+          "manufacturer_hint": "Hexegen"
+        }
+      },
+      {
+        "Component": "LiPAA",
+        "Dry Mass Fraction (%)": 7.0,
+        "metadata": {
+          "source_name": "LiPAA"
+        }
+      }
+    ],
+    "notes": "Repeat of T18 with Super P for comparison.",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T20",
+      "parent_batch_name": "T20",
+      "legacy_aliases": [
+        "T20 B2"
+      ],
+      "loading_backfill": {
+        "value": 10.53,
+        "sample_count": 3,
+        "record_ids": [
+          22
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "1M LiTFSI 3:7 +10% FEC",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": null,
+      "variant_descriptor": null,
+      "study_family": "silicon_formulation_optimization",
+      "purpose_summary": "Repeat of T18 with Super P for comparison.",
+      "study_tags": [
+        "super_p_comparison"
+      ],
+      "hypothesis": "The conductive additive choice should materially affect electrode quality and performance.",
+      "loading_mg": 10.53
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-07-15 00:00:00",
+    "legacy_experiment_ids": [
+      22
+    ]
+  },
+  {
+    "batch_name": "T21 B2",
+    "parent_batch_name": "T21",
+    "process_run_name": "T21 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 58.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "nano SI",
+        "Dry Mass Fraction (%)": 22.0,
+        "metadata": {
+          "source_name": "nano SI"
+        }
+      },
+      {
+        "Component": "LiPAA",
+        "Dry Mass Fraction (%)": 13.0,
+        "metadata": {
+          "source_name": "LiPAA"
+        }
+      },
+      {
+        "Component": "Cx (beta)",
+        "Dry Mass Fraction (%)": 7.0,
+        "metadata": {
+          "source_name": "Cx(B)",
+          "manufacturer_hint": "Hexegen"
+        }
+      }
+    ],
+    "notes": "Increase Si portion to balance capacity and stability.",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T21",
+      "parent_batch_name": "T21",
+      "legacy_aliases": [
+        "T21 B2"
+      ],
+      "loading_backfill": {
+        "value": 4.4,
+        "sample_count": 1,
+        "record_ids": [
+          23
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "1M LiTFSI 3:7 +10% FEC",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": null,
+      "variant_descriptor": null,
+      "study_family": "silicon_formulation_optimization",
+      "purpose_summary": "Increase Si portion to balance capacity and stability.",
+      "study_tags": [],
+      "hypothesis": "Higher silicon content should raise capacity while testing stability limits.",
+      "loading_mg": 4.4
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-07-16 00:00:00",
+    "legacy_experiment_ids": [
+      23
+    ]
+  },
+  {
+    "batch_name": "T27b",
+    "parent_batch_name": "T27",
+    "process_run_name": "T27 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 94.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "CMC",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "Carboxymethyl Cellulose (CMC)"
+        }
+      },
+      {
+        "Component": "SBR",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "Styrene Butadiene Rubber (SBR)"
+        }
+      },
+      {
+        "Component": "Cx (echo)",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "Cx(e)",
+          "manufacturer_hint": "Hexegen"
+        }
+      }
+    ],
+    "notes": "All graphite anode test. Second trial of all graphite, prepared with a fresh batch of CMC solution.\nLiPF6 1:1:1, fresh DMC soln.",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T27",
+      "parent_batch_name": "T27",
+      "legacy_aliases": [
+        "T27b"
+      ],
+      "loading_backfill": {
+        "value": 13.87,
+        "sample_count": 3,
+        "record_ids": [
+          37
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "1M LiPF6 1:1:1",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": null,
+      "variant_descriptor": null,
+      "study_family": "graphite_baseline_and_binder_screening",
+      "purpose_summary": "All graphite anode test. Second trial of all graphite, prepared with a fresh batch of CMC solution.\nLiPF6 1:1:1, fresh DMC soln.",
+      "study_tags": [
+        "graphite"
+      ],
+      "loading_mg": 13.87
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-09-11 00:00:00",
+    "legacy_experiment_ids": [
+      37
+    ]
+  },
+  {
+    "batch_name": "T27c",
+    "parent_batch_name": "T27",
+    "process_run_name": "T27 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 94.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "CMC",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "Carboxymethyl Cellulose (CMC)"
+        }
+      },
+      {
+        "Component": "SBR",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "Styrene Butadiene Rubber (SBR)"
+        }
+      },
+      {
+        "Component": "Cx (echo)",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "Cx(e)",
+          "manufacturer_hint": "Hexegen"
+        }
+      }
+    ],
+    "notes": "Testing of Cx(e) with pure graphite anode for baseline understanding. Uncalendared. Comparison against T27b, note the electrode quality was poor due to vacuum box transfer.\nuncalendered arm",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T27",
+      "parent_batch_name": "T27",
+      "legacy_aliases": [
+        "T27c",
+        "T27c - repaired"
+      ],
+      "loading_backfill": null,
+      "electrolyte": "1M LiTFSI 3:7 +10% FEC",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": false,
+      "variant_descriptor": "uncalendered arm",
+      "study_family": "graphite_baseline_and_binder_screening",
+      "purpose_summary": "Testing of Cx(e) with pure graphite anode for baseline understanding. Uncalendared. Comparison against T27b, note the electrode quality was poor due to vacuum box transfer.",
+      "study_tags": [
+        "calendering",
+        "graphite",
+        "uncalendered",
+        "uncalendered arm"
+      ]
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-09-11 00:00:00",
+    "legacy_experiment_ids": [
+      49,
+      53
+    ]
+  },
+  {
+    "batch_name": "T29a",
+    "parent_batch_name": "T29",
+    "process_run_name": "T29 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 92.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "LiPAA",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "LiPAA"
+        }
+      },
+      {
+        "Component": "SBR",
+        "Dry Mass Fraction (%)": 3.5,
+        "metadata": {
+          "source_name": "Styrene Butadiene Rubber (SBR)"
+        }
+      },
+      {
+        "Component": "CMC",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "Carboxymethyl Cellulose (CMC)"
+        }
+      }
+    ],
+    "notes": "Repeat of T27 but with increased binder to attempt to improve potential delamination issues. T29a uncal.\nuncal, LiTFSI + 10% FEC\nuncalendered arm",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T29",
+      "parent_batch_name": "T29",
+      "legacy_aliases": [
+        "T29a"
+      ],
+      "loading_backfill": {
+        "value": 19.67,
+        "sample_count": 3,
+        "record_ids": [
+          46
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "1M LiTFSI 3:7 +10% FEC",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": false,
+      "variant_descriptor": "uncalendered arm",
+      "study_family": "graphite_baseline_and_binder_screening",
+      "purpose_summary": "Repeat of T27 but with increased binder to attempt to improve potential delamination issues. T29a uncal.\nuncal, LiTFSI + 10% FEC",
+      "study_tags": [
+        "binder_screen",
+        "calendering",
+        "delamination",
+        "uncalendered",
+        "uncalendered arm"
+      ],
+      "hypothesis": "Binder and dispersion changes should improve adhesion and reduce delamination.",
+      "loading_mg": 19.67
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-09-24 00:00:00",
+    "legacy_experiment_ids": [
+      46
+    ]
+  },
+  {
+    "batch_name": "T29b",
+    "parent_batch_name": "T29",
+    "process_run_name": "T29 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 92.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "CMC",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "Carboxymethyl Cellulose (CMC)"
+        }
+      },
+      {
+        "Component": "SBR",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "Styrene Butadiene Rubber (SBR)"
+        }
+      },
+      {
+        "Component": "Cx (echo)",
+        "Dry Mass Fraction (%)": 3.5,
+        "metadata": {
+          "source_name": "Cx(e)",
+          "manufacturer_hint": "Hexegen"
+        }
+      }
+    ],
+    "notes": "Repeat of T27 with increased binder to attempt to improve potential delamination issues. T29b cal\ncal, LiTFSI + 10% FEC\ncalendered arm",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T29",
+      "parent_batch_name": "T29",
+      "legacy_aliases": [
+        "T29b"
+      ],
+      "loading_backfill": {
+        "value": 18.03,
+        "sample_count": 2,
+        "record_ids": [
+          47
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "1M LiTFSI 3:7 +10% FEC",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": true,
+      "variant_descriptor": "calendered arm",
+      "study_family": "graphite_baseline_and_binder_screening",
+      "purpose_summary": "Repeat of T27 with increased binder to attempt to improve potential delamination issues. T29b cal\ncal, LiTFSI + 10% FEC",
+      "study_tags": [
+        "binder_screen",
+        "calendered arm",
+        "calendering",
+        "delamination"
+      ],
+      "hypothesis": "Binder and dispersion changes should improve adhesion and reduce delamination.",
+      "loading_mg": 18.03
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-09-24 00:00:00",
+    "legacy_experiment_ids": [
+      47
+    ]
+  },
+  {
+    "batch_name": "T33a",
+    "parent_batch_name": "T33",
+    "process_run_name": "T33 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite (BTR)",
+        "Dry Mass Fraction (%)": 94.0,
+        "metadata": {
+          "source_name": "Graphite (BTR)"
+        }
+      },
+      {
+        "Component": "CMC",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "Carboxymethyl Cellulose (CMC)"
+        }
+      },
+      {
+        "Component": "SBR",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "Styrene Butadiene Rubber (SBR)"
+        }
+      },
+      {
+        "Component": "Super P",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "Super P"
+        }
+      }
+    ],
+    "notes": "Testing of newly received BTR graphite for comparison against MSE graphite.\nuncal, 2M LiFSI, 0.2M LiDFOB\nuncalendered arm",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T33",
+      "parent_batch_name": "T33",
+      "legacy_aliases": [
+        "T33a"
+      ],
+      "loading_backfill": {
+        "value": 12.3,
+        "sample_count": 2,
+        "record_ids": [
+          76
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "2M LiFSI + 0.2M LiDFOB 3:7 FEC:TEGDME",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": false,
+      "variant_descriptor": "uncalendered arm",
+      "study_family": "graphite_benchmarking_and_calendering",
+      "purpose_summary": "Testing of newly received BTR graphite for comparison against MSE graphite.\nuncal, 2M LiFSI, 0.2M LiDFOB",
+      "study_tags": [
+        "btr_graphite",
+        "calendering",
+        "graphite",
+        "uncalendered",
+        "uncalendered arm"
+      ],
+      "hypothesis": "Alternative graphite sourcing and calendaring may change loading uniformity and downstream performance.",
+      "result_takeaway": "Loading very asymetric left to right. Calibration of doctors blade required. Uncal ldg: 12.3mg, thick side Cal 13.53.",
+      "loading_mg": 12.3
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-11-11 00:00:00",
+    "legacy_experiment_ids": [
+      76
+    ]
+  },
+  {
+    "batch_name": "T33b",
+    "parent_batch_name": "T33",
+    "process_run_name": "T33 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 94.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "LiPAA",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "LiPAA"
+        }
+      },
+      {
+        "Component": "SBR",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "Styrene Butadiene Rubber (SBR)"
+        }
+      },
+      {
+        "Component": "Super P",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "Super P"
+        }
+      }
+    ],
+    "notes": "Testing of newly received BTR graphite for comparison against MSE graphite. Uncalendered\ncal, 2M LiFSI, 0.2M LiDFOB\nuncalendered arm",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T33",
+      "parent_batch_name": "T33",
+      "legacy_aliases": [
+        "T33b"
+      ],
+      "loading_backfill": {
+        "value": 12.3,
+        "sample_count": 1,
+        "record_ids": [
+          77
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "2M LiFSI + 0.2M LiDFOB 3:7 FEC:TEGDME",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": false,
+      "variant_descriptor": "uncalendered arm",
+      "study_family": "graphite_benchmarking_and_calendering",
+      "purpose_summary": "Testing of newly received BTR graphite for comparison against MSE graphite. Uncalendered\ncal, 2M LiFSI, 0.2M LiDFOB",
+      "study_tags": [
+        "btr_graphite",
+        "calendering",
+        "graphite",
+        "uncalendered",
+        "uncalendered arm"
+      ],
+      "hypothesis": "Alternative graphite sourcing and calendaring may change loading uniformity and downstream performance.",
+      "result_takeaway": "Loading very asymetric left to right. Calibration of doctors blade required. Uncal ldg: 12.3mg, thick side Cal 13.53.",
+      "loading_mg": 12.3
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-11-11 00:00:00",
+    "legacy_experiment_ids": [
+      77
+    ]
+  },
+  {
+    "batch_name": "T33c",
+    "parent_batch_name": "T33",
+    "process_run_name": "T33 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 94.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "LiPAA",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "LiPAA"
+        }
+      },
+      {
+        "Component": "SBR",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "Styrene Butadiene Rubber (SBR)"
+        }
+      },
+      {
+        "Component": "Super P",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "Super P"
+        }
+      }
+    ],
+    "notes": "Uncalendared, testing of newly received BTR graphite with different ELs.\nuncal, LiTFSI + 10% FEC\nuncalendered arm",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T33",
+      "parent_batch_name": "T33",
+      "legacy_aliases": [
+        "T33c"
+      ],
+      "loading_backfill": {
+        "value": 12.3,
+        "sample_count": 1,
+        "record_ids": [
+          78
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "1M LiTFSI 3:7 +10% FEC",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": false,
+      "variant_descriptor": "uncalendered arm",
+      "study_family": "graphite_benchmarking_and_calendering",
+      "purpose_summary": "Uncalendared, testing of newly received BTR graphite with different ELs.\nuncal, LiTFSI + 10% FEC",
+      "study_tags": [
+        "btr_graphite",
+        "calendering",
+        "graphite",
+        "uncalendered",
+        "uncalendered arm"
+      ],
+      "hypothesis": "Alternative graphite sourcing and calendaring may change loading uniformity and downstream performance.",
+      "result_takeaway": "Loading very asymetric left to right. Calibration of doctors blade required. Uncal ldg: 12.3mg, thick side Cal 13.53.",
+      "loading_mg": 12.3
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-11-11 00:00:00",
+    "legacy_experiment_ids": [
+      78
+    ]
+  },
+  {
+    "batch_name": "T33d",
+    "parent_batch_name": "T33",
+    "process_run_name": "T33 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 94.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "LiPAA",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "LiPAA"
+        }
+      },
+      {
+        "Component": "SBR",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "Styrene Butadiene Rubber (SBR)"
+        }
+      },
+      {
+        "Component": "Super P",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "Super P"
+        }
+      }
+    ],
+    "notes": "Similar to T33c, calendared, testing of different electrolytes.\ncal, LiTFSI + 10% FEC\ncalendered arm",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T33",
+      "parent_batch_name": "T33",
+      "legacy_aliases": [
+        "T33d"
+      ],
+      "loading_backfill": {
+        "value": 20.0,
+        "sample_count": 1,
+        "record_ids": [
+          79
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "1M LiTFSI 3:7 +10% FEC",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": true,
+      "variant_descriptor": "calendered arm",
+      "study_family": "graphite_benchmarking_and_calendering",
+      "purpose_summary": "Similar to T33c, calendared, testing of different electrolytes.\ncal, LiTFSI + 10% FEC",
+      "study_tags": [
+        "btr_graphite",
+        "calendered arm",
+        "calendering",
+        "electrolyte_screen",
+        "graphite",
+        "uncalendered"
+      ],
+      "hypothesis": "Alternative graphite sourcing and calendaring may change loading uniformity and downstream performance.",
+      "result_takeaway": "Loading very asymetric left to right. Calibration of doctors blade required. Uncal ldg: 12.3mg, thick side Cal 13.53.",
+      "loading_mg": 20.0
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2025-11-11 00:00:00",
+    "legacy_experiment_ids": [
+      79
+    ]
+  },
+  {
+    "batch_name": "T34a",
+    "parent_batch_name": "T34",
+    "process_run_name": "T34 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite (BTR)",
+        "Dry Mass Fraction (%)": 94.0,
+        "metadata": {
+          "source_name": "Graphite (BTR)"
+        }
+      },
+      {
+        "Component": "Hx-e",
+        "Dry Mass Fraction (%)": 3.0,
+        "metadata": {
+          "source_name": "Hx-e (HCl acid washed)",
+          "manufacturer_hint": "Hexegen",
+          "post_processing": "acid_wash"
+        }
+      },
+      {
+        "Component": "CMC",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "Carboxymethyl Cellulose (CMC)"
+        }
+      },
+      {
+        "Component": "SBR",
+        "Dry Mass Fraction (%)": 1.5,
+        "metadata": {
+          "source_name": "Styrene Butadiene Rubber (SBR)"
+        }
+      }
+    ],
+    "notes": "Retest of new BTR graphite for comparison against MSE graphite.\ncal, 1M LiPF6, 2% LiDFOB\ncalendered arm",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T34",
+      "parent_batch_name": "T34",
+      "legacy_aliases": [
+        "T34a"
+      ],
+      "loading_backfill": {
+        "value": 10.37,
+        "sample_count": 1,
+        "record_ids": [
+          87
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "1M LiPF6 EC:EMC:DMC 1:1:1 + 2% LiDFOB",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": true,
+      "variant_descriptor": "calendered arm",
+      "study_family": "graphite_benchmarking_and_calendering",
+      "purpose_summary": "Retest of new BTR graphite for comparison against MSE graphite.\ncal, 1M LiPF6, 2% LiDFOB",
+      "study_tags": [
+        "btr_graphite",
+        "calendered arm",
+        "calendering",
+        "graphite",
+        "uncalendered"
+      ],
+      "hypothesis": "Alternative graphite sourcing and calendaring may change loading uniformity and downstream performance.",
+      "result_takeaway": "Loading very asymetric left to right. Calibration of doctors blade required. Uncal ldg: 12.3mg, thick side Cal 13.53.",
+      "loading_mg": 10.37
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2026-01-16 00:00:00",
+    "legacy_experiment_ids": [
+      87
+    ]
+  },
+  {
+    "batch_name": "T35a",
+    "parent_batch_name": "T35",
+    "process_run_name": "T35 anode sheet process",
+    "active_material_name": "Silicon",
+    "formulation_json": [
+      {
+        "Component": "Silicon",
+        "Dry Mass Fraction (%)": 53.7,
+        "metadata": {
+          "source_name": "Si NPs"
+        }
+      },
+      {
+        "Component": "AST-9005(26)",
+        "Dry Mass Fraction (%)": 7.0,
+        "metadata": {
+          "source_name": "AST-9005(26)"
+        }
+      }
+    ],
+    "notes": "Testing of Jong\u2019s recipe with newly received AST-9005(26) binder.\ncal, 1M LiPF6, 2% LiDFOB\ncalendered arm",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T35",
+      "parent_batch_name": "T35",
+      "legacy_aliases": [
+        "T35a"
+      ],
+      "loading_backfill": {
+        "value": 15.3,
+        "sample_count": 1,
+        "record_ids": [
+          88
+        ],
+        "source": "legacy_cell_loadings"
+      },
+      "electrolyte": "2M LiFSI + 0.2M LiDFOB 3:7 FEC:TEGDME",
+      "separator": "2+12+2 CCS",
+      "substrate": "Copper",
+      "calendared": true,
+      "variant_descriptor": "calendered arm",
+      "study_family": "jong_recipe_and_binder_screening",
+      "purpose_summary": "Testing of Jong\u2019s recipe with newly received AST-9005(26) binder.\ncal, 1M LiPF6, 2% LiDFOB",
+      "study_tags": [
+        "agglomeration_control",
+        "ast_binder",
+        "binder_screen",
+        "calendered arm",
+        "calendering",
+        "cracking",
+        "silicon"
+      ],
+      "hypothesis": "Binder grade and agglomeration-control steps should determine whether the recipe coats cleanly without cracking.",
+      "result_takeaway": "Lot's of cracking and agglomerates visualized under microscope.",
+      "loading_mg": 15.3
+    },
+    "source_kind": "legacy_child_variant",
+    "source_created_at": "2026-01-16 00:00:00",
+    "legacy_experiment_ids": [
+      88
+    ]
+  },
+  {
+    "batch_name": "T8a",
+    "parent_batch_name": null,
+    "process_run_name": "T8 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 90.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "Cx (beta)",
+        "Dry Mass Fraction (%)": 5.0,
+        "metadata": {
+          "source_name": "Cx (beta)",
+          "manufacturer_hint": "Hexegen"
+        }
+      },
+      {
+        "Component": "CMC",
+        "Dry Mass Fraction (%)": 1.66,
+        "metadata": {
+          "source_name": "CMC"
+        }
+      },
+      {
+        "Component": "SBR",
+        "Dry Mass Fraction (%)": 3.34,
+        "metadata": {
+          "source_name": "SBR"
+        }
+      }
+    ],
+    "notes": "Conventional Gr Cell Evaluation vs Super P\nElectrodes sucessfully prepared. Awaiting Li-chips for Echem evaluation.\nCx (beta) comparison arm",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T8",
+      "source_kind": "workbook_panel",
+      "sheet_group_name": "T8",
+      "safe_metrics": {
+        "active_mass_density_g_cc": 0.0572,
+        "slurry_density_g_ml": 1.5316,
+        "thickness_reduction_pct": 21.2766,
+        "pre_press_thickness_um": 94.0,
+        "pressed_thickness_um": 74.0
+      },
+      "measurement_candidates": {
+        "active_mass_density_g_cc": [
+          0.0572
+        ],
+        "slurry_density_g_ml": [
+          1.5316
+        ],
+        "thickness_reduction_pct": [
+          21.2766
+        ],
+        "pre_press_thickness_um": [
+          94.0
+        ],
+        "pressed_thickness_um": [
+          74.0
+        ]
+      },
+      "variant_descriptor": "Cx (beta) comparison arm",
+      "study_family": "process_development",
+      "purpose_summary": "Conventional Gr Cell Evaluation vs Super P",
+      "study_tags": [
+        "Cx (beta) comparison arm",
+        "super_p_comparison"
+      ],
+      "result_takeaway": "Electrodes sucessfully prepared. Awaiting Li-chips for Echem evaluation."
+    },
+    "source_kind": "workbook_panel_root",
+    "source_created_at": "2024-11-07 00:00:00",
+    "legacy_experiment_ids": []
+  },
+  {
+    "batch_name": "T8b",
+    "parent_batch_name": null,
+    "process_run_name": "T8 anode sheet process",
+    "active_material_name": "Graphite",
+    "formulation_json": [
+      {
+        "Component": "Graphite",
+        "Dry Mass Fraction (%)": 90.0,
+        "metadata": {
+          "source_name": "Graphite"
+        }
+      },
+      {
+        "Component": "Super P",
+        "Dry Mass Fraction (%)": 5.0,
+        "metadata": {
+          "source_name": "Super P"
+        }
+      },
+      {
+        "Component": "CMC",
+        "Dry Mass Fraction (%)": 1.66,
+        "metadata": {
+          "source_name": "CMC"
+        }
+      },
+      {
+        "Component": "SBR",
+        "Dry Mass Fraction (%)": 3.34,
+        "metadata": {
+          "source_name": "SBR"
+        }
+      }
+    ],
+    "notes": "Conventional Gr Cell Evaluation vs Super P\nSuper P comparison arm",
+    "metadata_json": {
+      "source_workbook": "/Volumes/2TB SSD/Anode Formulations 2024-25.xlsx",
+      "source_sheet": "T8",
+      "source_kind": "workbook_panel",
+      "sheet_group_name": "T8",
+      "safe_metrics": {
+        "active_mass_density_g_cc": 0.0572,
+        "slurry_density_g_ml": 1.5316,
+        "pressed_thickness_um": 60.0
+      },
+      "measurement_candidates": {
+        "active_mass_density_g_cc": [
+          0.0572
+        ],
+        "slurry_density_g_ml": [
+          1.5316
+        ],
+        "pressed_thickness_um": [
+          60.0
+        ]
+      },
+      "variant_descriptor": "Super P comparison arm",
+      "study_family": "process_development",
+      "purpose_summary": "Conventional Gr Cell Evaluation vs Super P",
+      "study_tags": [
+        "Super P comparison arm",
+        "super_p_comparison"
+      ],
+      "result_takeaway": "Electrodes sucessfully prepared. Awaiting Li-chips for Echem evaluation."
+    },
+    "source_kind": "workbook_panel_root",
+    "source_created_at": "2024-11-07 00:00:00",
+    "legacy_experiment_ids": []
+  }
+]

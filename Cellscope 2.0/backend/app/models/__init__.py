@@ -1,5 +1,73 @@
 from app.models.project import Project
 from app.models.experiment import Experiment
 from app.models.cell import Cell
+from app.models.experiment_design import ExperimentDesign
+from app.models.ontology import (
+    Material,
+    MaterialLot,
+    ProtocolVersion,
+    Operator,
+    Fixture,
+    EquipmentAsset,
+    ProcessRun,
+    ElectrodeBatch,
+    CellBuild,
+    LineageEdge,
+)
+from app.models.live import (
+    CyclerSource,
+    CyclerChannel,
+    CyclerArtifact,
+    IngestionCheckpoint,
+    ParserRelease,
+    MappingDecision,
+    IngestionRun,
+    TestRun,
+    RunLifecycleEvent,
+    CyclePoint,
+    AnomalyEvent,
+    NotificationTarget,
+    DailyReportRun,
+)
+from app.models.metrics import (
+    MetricDefinition,
+    MetricVersion,
+    MetricRun,
+    RunMetricValue,
+    CycleMetricValue,
+)
 
-__all__ = ["Project", "Experiment", "Cell"]
+__all__ = [
+    "Project",
+    "Experiment",
+    "Cell",
+    "ExperimentDesign",
+    "Material",
+    "MaterialLot",
+    "ProtocolVersion",
+    "Operator",
+    "Fixture",
+    "EquipmentAsset",
+    "ProcessRun",
+    "ElectrodeBatch",
+    "CellBuild",
+    "LineageEdge",
+    "CyclerSource",
+    "CyclerChannel",
+    "CyclerArtifact",
+    "IngestionCheckpoint",
+    "ParserRelease",
+    "MappingDecision",
+    "IngestionRun",
+    "TestRun",
+    "RunLifecycleEvent",
+    "CyclePoint",
+    "AnomalyEvent",
+    "NotificationTarget",
+    "DailyReportRun",
+    "MetricDefinition",
+    "MetricVersion",
+    "MetricRun",
+    "RunMetricValue",
+    "CycleMetricValue",
+]

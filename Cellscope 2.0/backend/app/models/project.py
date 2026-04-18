@@ -29,7 +29,8 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text, default=None)
     project_type: Mapped[ProjectType] = mapped_column(
-        Enum(ProjectType), default=ProjectType.FULL_CELL
+        Enum(ProjectType, values_callable=lambda e: [m.value for m in e]),
+        default=ProjectType.FULL_CELL,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()

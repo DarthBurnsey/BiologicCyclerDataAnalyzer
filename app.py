@@ -1,6 +1,20 @@
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent
+
+from legacy_import_bootstrap import prefer_legacy_modules
+
+prefer_legacy_modules(
+    repo_root=ROOT_DIR,
+    backend_root=ROOT_DIR / "Cellscope 2.0" / "backend",
+    module_names=("database", "data_processing", "porosity_calculations"),
+)
+
 import streamlit as st
 import pandas as pd
 import io
+from collections import Counter
 from openpyxl import load_workbook
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,7 +23,7 @@ import re
 import sqlite3
 import json
 import os
-from pathlib import Path
+import html
 from io import StringIO
 
 # Import our modular components
@@ -33,6 +47,11 @@ from display_components import (
     display_experiment_summaries_table, display_individual_cells_table,
     display_best_performers_analysis
 )
+from draggable_tabs import (
+    get_available_main_tab_labels,
+    get_ordered_tab_labels,
+    render_tab_settings_section,
+)
 from file_processing import extract_date_from_filename
 from data_processing import load_and_preprocess_data, calculate_efficiency_based_on_project_type
 from dialogs import confirm_delete_project, confirm_delete_experiment, show_delete_dialogs
@@ -45,7 +64,7 @@ from ui_components import (
     get_all_battery_materials, render_toggle_section, render_experiment_color_customization,
     render_comparison_plot_options, render_comparison_color_customization, render_comparison_name_customization,
     display_summary_stats, display_averages, render_cell_inputs, get_initial_areal_capacity,
-    render_formulation_table, get_substrate_options
+    render_formulation_table, get_substrate_options, coerce_float_input, coerce_int_input
 )
 from plotting import plot_capacity_graph, plot_capacity_retention_graph, plot_comparison_capacity_graph, plot_combined_capacity_retention_graph
 from llm_summary import generate_experiment_summary
@@ -74,8 +93,26 @@ from interactive_plots import (
 )
 from cycler_tracking import (
     create_tracking_draft_experiment, get_tracking_dashboard_payload,
-    sync_tracking_rows_to_database
+    set_tracking_status_override, summarize_tracking_rows, sync_tracking_rows_to_database
 )
+from batch_builder import (
+    apply_batch_builder_cell_input_request,
+    clear_batch_builder_cell_input_state,
+    get_active_batch_builder_additional_data,
+    get_active_batch_builder_template,
+    queue_batch_builder_cell_inputs_request,
+    render_batch_builder,
+)
+from batch_builder_service import build_batch_cell_inputs_template
+from backend_analysis_client import get_cohort_snapshot_payload_preferred
+from cohort_explorer import render_cohort_explorer
+from cohort_tools import (
+    build_cohort_snapshot_export_payload,
+    format_cohort_snapshot_markdown,
+)
+from ontology_explorer import queue_lineage_explorer_focus, render_lineage_explorer
+from ontology_workflow import normalize_ontology_context
+from study_workspace_view import render_study_workspace
 
 EDITOR_STATE_PREFIXES = (
     'loading_', 'active_', 'testnum_', 'formation_cycles_', 'electrolyte_', 'substrate_',
@@ -160,6 +197,62 @@ def get_experiment_sort_date(raw_data_json, created_date):
     return created_date or ""
 
 
+def _format_ontology_summary_bits(ontology_metadata):
+    ontology = normalize_ontology_context(ontology_metadata)
+    if not ontology:
+        return []
+
+    batch_name = ontology.get('display_batch_name') or ontology.get('batch_name')
+    root_batch_name = ontology.get('display_root_batch_name') or ontology.get('root_batch_name') or batch_name
+    summary_bits = []
+    if batch_name:
+        summary_bits.append(f"Canonical batch: {batch_name}")
+    if root_batch_name:
+        summary_bits.append(f"Parent batch: {root_batch_name}")
+    linked_build_count = ontology.get('linked_cell_build_count')
+    if linked_build_count:
+        summary_bits.append(f"{linked_build_count} linked cell build(s)")
+    mapping_basis = ontology.get('mapping_basis')
+    if mapping_basis == 'cell_build_edge':
+        summary_bits.append("Mapped from ontology cell builds")
+    elif mapping_basis == 'direct_experiment_edge':
+        summary_bits.append("Mapped from ontology experiment lineage")
+    elif mapping_basis == 'exact_batch_name_lookup':
+        summary_bits.append("Matched by canonical batch name")
+    return summary_bits
+
+
+def render_ontology_context_banner(
+    ontology_metadata,
+    *,
+    key_prefix,
+    legacy_experiment_id=None,
+    legacy_experiment_name=None,
+):
+    ontology = normalize_ontology_context(ontology_metadata)
+    if not ontology:
+        return
+
+    summary_bits = _format_ontology_summary_bits(ontology)
+    banner_cols = st.columns([0.78, 0.22])
+    with banner_cols[0]:
+        if summary_bits:
+            st.caption(" | ".join(summary_bits))
+
+    focus_button_key = f"{key_prefix}_focus_lineage"
+    if banner_cols[1].button("Focus in Lineage Explorer", key=focus_button_key, use_container_width=True):
+        queue_lineage_explorer_focus(
+            ontology,
+            legacy_experiment_id=legacy_experiment_id,
+            legacy_experiment_name=legacy_experiment_name,
+        )
+        root_batch_name = ontology.get('display_root_batch_name') or ontology.get('root_batch_name') or ontology.get('display_batch_name') or ontology.get('batch_name')
+        if root_batch_name:
+            st.info(f"Lineage Explorer is focused on {root_batch_name}. Open the `🧬 Lineage Explorer` tab to inspect the graph.")
+        else:
+            st.info("Lineage Explorer focus updated. Open the `🧬 Lineage Explorer` tab to inspect the graph.")
+
+
 def open_experiment_from_sidebar(experiment_id, project_id, project_name):
     payload = load_sidebar_experiment_payload(experiment_id)
     if not payload:
@@ -199,94 +292,1003 @@ def open_tracking_row_from_dashboard(tracking_row):
     open_experiment_from_sidebar(experiment_id, project_id, project_name)
     st.session_state['show_cell_inputs_prompt'] = True
 
+
+def open_batch_in_cell_inputs(batch_id):
+    template = build_batch_cell_inputs_template(batch_id=batch_id)
+    if not template:
+        st.error("Unable to build a Cell Inputs template for that canonical batch.")
+        return False
+
+    project_id = template.get('project_id') or st.session_state.get('current_project_id')
+    project_name = template.get('project_name') or st.session_state.get('current_project_name')
+    if project_id and not project_name:
+        project_payload = get_project_by_id(project_id)
+        if project_payload:
+            project_name = project_payload[1]
+
+    if not project_id or not project_name:
+        st.error(
+            "This canonical batch does not have a default project yet. Select a project in the sidebar or add a default project in Batch Builder first."
+        )
+        return False
+
+    queued_template = dict(template)
+    queued_template['project_id'] = project_id
+    queued_template['project_name'] = project_name
+    queue_batch_builder_cell_inputs_request(queued_template)
+    st.session_state['_sidebar_pending_project_selector'] = project_id
+    set_active_project(project_id, project_name, start_new_experiment=True)
+    return True
+
+
+def render_tracking_lineage_batch_section(lineage_root_batches):
+    if not lineage_root_batches:
+        return
+
+    with st.container(border=True):
+        st.markdown("#### Canonical Batch Coverage")
+        st.caption(
+            "Root batches from the Lineage Explorer stay visible here even before a tracking sheet row exists, so parent batches like `N8` do not disappear between tabs."
+        )
+
+        lineage_frame = pd.DataFrame(
+            [
+                {
+                    'Status': row.get('status') or '',
+                    'Parent Batch': row.get('root_batch_name') or '',
+                    'Default Project': row.get('default_project_name') or '',
+                    'Legacy App Experiments': row.get('legacy_experiment_count', 0),
+                    'Tracking Rows': row.get('tracking_row_count', 0),
+                    'Active Rows': row.get('active_tracking_count', 0),
+                    'Completed Rows': row.get('completed_tracking_count', 0),
+                    'Study Focus': row.get('study_focus') or '',
+                }
+                for row in lineage_root_batches
+            ]
+        )
+        st.dataframe(lineage_frame, use_container_width=True, hide_index=True)
+
+        selected_root_batch_name = st.selectbox(
+            "Selected canonical batch",
+            options=[row.get('root_batch_name') for row in lineage_root_batches if row.get('root_batch_name')],
+            key='tracking_lineage_root_select',
+        )
+        selected_root_batch = next(
+            row for row in lineage_root_batches
+            if row.get('root_batch_name') == selected_root_batch_name
+        )
+
+        selected_template = None
+        selected_batch_id = selected_root_batch.get('batch_id')
+        if selected_batch_id:
+            selected_template = build_batch_cell_inputs_template(batch_id=int(selected_batch_id))
+
+        preview_bits = [selected_root_batch.get('status')]
+        if selected_template:
+            preview_bits.extend(
+                [
+                    selected_template.get('project_name'),
+                    selected_template.get('preferred_experiment_name'),
+                    (
+                        f"{len(selected_template.get('formulation') or [])} formulation component(s)"
+                        if selected_template.get('formulation')
+                        else "No saved formulation yet"
+                    ),
+                ]
+            )
+            defaults = selected_template.get('cell_inputs_defaults') or {}
+            if defaults.get('electrolyte'):
+                preview_bits.append(f"Electrolyte: {defaults['electrolyte']}")
+        elif selected_root_batch.get('default_project_name'):
+            preview_bits.append(selected_root_batch.get('default_project_name'))
+        if selected_root_batch.get('study_focus'):
+            preview_bits.append(f"Study focus: {selected_root_batch['study_focus']}")
+        st.caption(" | ".join(bit for bit in preview_bits if bit))
+
+        action_cols = st.columns(2)
+        if action_cols[0].button(
+            "Prepare in Cell Inputs",
+            key='tracking_lineage_prepare',
+            use_container_width=True,
+            disabled=not selected_batch_id,
+        ):
+            if selected_batch_id and open_batch_in_cell_inputs(int(selected_batch_id)):
+                st.rerun()
+
+        if action_cols[1].button(
+            "Focus in Lineage Explorer",
+            key='tracking_lineage_focus',
+            use_container_width=True,
+        ):
+            queue_lineage_explorer_focus(
+                {
+                    "root_batch_id": selected_batch_id,
+                    "root_batch_name": selected_root_batch_name,
+                    "display_root_batch_name": selected_root_batch_name,
+                    "batch_id": selected_batch_id,
+                    "batch_name": selected_root_batch_name,
+                    "display_batch_name": selected_root_batch_name,
+                }
+            )
+            st.info(f"Lineage Explorer is focused on {selected_root_batch_name}.")
+
+
+def queue_cohort_comparison(project_id, project_name, experiment_names, cohort_name=None):
+    canonical_names = sorted({str(name).strip() for name in experiment_names if str(name).strip()})
+    if len(canonical_names) < 2:
+        st.warning("A cohort needs at least two experiments from one project before it can be sent to Comparison.")
+        return
+
+    st.session_state['current_project_id'] = project_id
+    st.session_state['current_project_name'] = project_name
+    st.session_state['comparison_selected_experiments'] = canonical_names
+    cohort_label = cohort_name or "Current cohort"
+    st.session_state['comparison_prefill_notice'] = (
+        f"{cohort_label} is preloaded for comparison in {project_name}."
+    )
+
+
+def queue_dashboard_cohort_snapshot(snapshot_id, snapshot_name=None):
+    st.session_state['dashboard_cohort_snapshot_id'] = int(snapshot_id)
+    if snapshot_name:
+        st.session_state['dashboard_cohort_snapshot_notice'] = (
+            f"{snapshot_name} is focused on the Dashboard."
+        )
+
+
+def queue_study_workspace_snapshot(snapshot_id, snapshot_name=None):
+    st.session_state['study_workspace_pending_snapshot_id'] = int(snapshot_id)
+    if snapshot_name:
+        st.session_state['study_workspace_pending_snapshot_name'] = snapshot_name
+
+
+def render_dashboard_cohort_snapshot_panel(queue_workspace_callback=None):
+    snapshot_id = st.session_state.get('dashboard_cohort_snapshot_id')
+    if not snapshot_id:
+        return
+
+    snapshot = get_cohort_snapshot_payload_preferred(snapshot_id)
+    if not snapshot:
+        st.session_state.pop('dashboard_cohort_snapshot_id', None)
+        st.session_state.pop('dashboard_cohort_snapshot_notice', None)
+        st.warning("The selected cohort snapshot is no longer available.")
+        return
+
+    notice = st.session_state.pop('dashboard_cohort_snapshot_notice', None)
+    if notice:
+        st.info(notice)
+
+    summary = snapshot.get('summary') or {}
+    root_rows = pd.DataFrame(snapshot.get('root_batch_summary') or [])
+    export_payload = build_cohort_snapshot_export_payload(snapshot)
+
+    with st.container(border=True):
+        header_cols = st.columns([0.58, 0.14, 0.14, 0.14])
+        with header_cols[0]:
+            st.subheader(f"🗂️ Cohort Snapshot: {snapshot.get('name') or 'Unnamed Snapshot'}")
+            meta_bits = []
+            if snapshot.get('cohort_name'):
+                meta_bits.append(f"Cohort: {snapshot['cohort_name']}")
+            if snapshot.get('updated_date'):
+                meta_bits.append(f"Updated: {snapshot['updated_date']}")
+            if meta_bits:
+                st.caption(" | ".join(meta_bits))
+            if snapshot.get('description'):
+                st.caption(snapshot['description'])
+        if header_cols[1].download_button(
+            "Snapshot JSON",
+            data=json.dumps(export_payload, indent=2, default=str),
+            file_name="dashboard_cohort_snapshot.json",
+            mime="application/json",
+            key="dashboard_snapshot_json_download",
+            use_container_width=True,
+        ):
+            pass
+        if header_cols[2].button(
+            "Open Workspace",
+            key="dashboard_snapshot_open_workspace",
+            use_container_width=True,
+            disabled=queue_workspace_callback is None,
+        ):
+            queue_workspace_callback(snapshot_id, snapshot.get('name'))
+            st.info(f"{snapshot.get('name') or 'Snapshot'} is loaded into Study Workspace.")
+        if header_cols[3].button("Clear Focus", key="dashboard_clear_snapshot_focus", use_container_width=True):
+            st.session_state.pop('dashboard_cohort_snapshot_id', None)
+            st.session_state.pop('dashboard_cohort_snapshot_notice', None)
+            st.rerun()
+
+        metric_cols = st.columns(5)
+        metric_cols[0].metric("Experiments", summary.get('experiment_count', 0))
+        metric_cols[1].metric("Cells", summary.get('cell_count', 0))
+        metric_cols[2].metric("Metrics Ready", summary.get('metrics_ready_experiment_count', 0))
+        metric_cols[3].metric(
+            "Avg Retention",
+            f"{summary['avg_retention_pct']:.2f}%"
+            if summary.get('avg_retention_pct') is not None
+            else "N/A",
+        )
+        metric_cols[4].metric(
+            "Best Cycle Life",
+            f"{summary['best_cycle_life_80']:.0f}"
+            if summary.get('best_cycle_life_80') is not None
+            else "N/A",
+        )
+
+        if snapshot.get('ai_summary_text'):
+            with st.expander("AI-ready Cohort Brief", expanded=False):
+                st.text_area(
+                    "Snapshot Brief",
+                    value=snapshot['ai_summary_text'],
+                    height=220,
+                    key="dashboard_snapshot_ai_brief",
+                )
+                st.download_button(
+                    "Download Brief",
+                    data=format_cohort_snapshot_markdown(snapshot),
+                    file_name="dashboard_cohort_snapshot_brief.md",
+                    mime="text/markdown",
+                    key="dashboard_snapshot_brief_download",
+                )
+
+        if not root_rows.empty:
+            st.markdown("#### Parent Batch Rollup")
+            st.dataframe(root_rows, use_container_width=True, hide_index=True)
+
+
+TRACKING_STATUS_COLORS = {
+    'Completed': '#2e7d32',
+    'Ongoing': '#1565c0',
+    'Unknown / Missing': '#b58900',
+}
+TRACKING_STATUS_DISPLAY_LABELS = {
+    'Active': 'Ongoing',
+    'Completed': 'Completed',
+    'Unknown': 'Unknown / Missing',
+}
+TRACKING_STATUS_FILTER_OPTIONS = ['All', 'Ongoing', 'Completed', 'Unknown / Missing']
+TRACKING_FOCUS_FILTER_OPTIONS = ['Missing Cells', 'Issues']
+TRACKING_STATUS_OVERRIDE_OPTIONS = [
+    ('Auto (match sheet + database)', None),
+    ('Ongoing', 'Active'),
+    ('Completed', 'Completed'),
+    ('Unknown / Missing', 'Unknown'),
+]
+TRACKING_STATUS_OVERRIDE_LABELS = [label for label, _ in TRACKING_STATUS_OVERRIDE_OPTIONS]
+TRACKING_STATUS_OVERRIDE_VALUE_TO_LABEL = {
+    value: label for label, value in TRACKING_STATUS_OVERRIDE_OPTIONS
+}
+
+
+def get_tracking_display_status(tracking_row):
+    normalized_status = tracking_row.get('status')
+    if normalized_status in TRACKING_STATUS_DISPLAY_LABELS:
+        return TRACKING_STATUS_DISPLAY_LABELS[normalized_status]
+
+    alerts = tracking_row.get('alerts', [])
+    has_missing_channels = any('Missing cycler/channel assignments' in alert for alert in alerts)
+    unresolved_duplicate = tracking_row.get('is_duplicate_name') and not tracking_row.get('db_experiment_id')
+    unresolved_project = not tracking_row.get('project_name')
+
+    if has_missing_channels or unresolved_duplicate or unresolved_project:
+        return 'Unknown / Missing'
+    if tracking_row.get('status') == 'Completed':
+        return 'Completed'
+    return 'Ongoing'
+
+
+def get_tracking_override_label(manual_status):
+    return TRACKING_STATUS_OVERRIDE_VALUE_TO_LABEL.get(
+        manual_status,
+        TRACKING_STATUS_OVERRIDE_OPTIONS[0][0]
+    )
+
+
+def style_tracking_table_row(row):
+    color = TRACKING_STATUS_COLORS.get(row['Status'], '#111827')
+    return [f'color: {color}; font-weight: 600;' for _ in row]
+
+
+def reset_tracking_filters():
+    st.session_state['tracking_search_query'] = ''
+    st.session_state['tracking_status_scope'] = 'All'
+    st.session_state['tracking_project_scope'] = []
+    st.session_state['tracking_focus_scope'] = []
+
+
+def render_tracking_filter_styles():
+    st.markdown(
+        """
+        <style>
+        .tracking-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+            margin: 0.35rem 0 1rem 0;
+        }
+
+        .tracking-legend-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            padding: 0.42rem 0.8rem;
+            border-radius: 999px;
+            font-size: 0.84rem;
+            font-weight: 600;
+            border: 1px solid transparent;
+        }
+
+        .tracking-legend-dot {
+            width: 0.58rem;
+            height: 0.58rem;
+            border-radius: 999px;
+            display: inline-block;
+        }
+
+        .tracking-legend-completed {
+            color: #1b5e20;
+            background: rgba(46, 125, 50, 0.08);
+            border-color: rgba(46, 125, 50, 0.18);
+        }
+
+        .tracking-legend-ongoing {
+            color: #0d47a1;
+            background: rgba(21, 101, 192, 0.08);
+            border-color: rgba(21, 101, 192, 0.18);
+        }
+
+        .tracking-legend-unknown {
+            color: #8a6d00;
+            background: rgba(181, 137, 0, 0.12);
+            border-color: rgba(181, 137, 0, 0.22);
+        }
+
+        .tracking-filter-hint {
+            color: #6b7280;
+            font-size: 0.83rem;
+            margin-top: 0.2rem;
+        }
+
+        .tracking-active-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            margin: 0.4rem 0 0.25rem 0;
+        }
+
+        .tracking-active-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.35rem 0.65rem;
+            border-radius: 999px;
+            background: #f8fafc;
+            border: 1px solid #dbe4f0;
+            color: #334155;
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        .tracking-active-label {
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-size: 0.72rem;
+            font-weight: 700;
+        }
+
+        .tracking-summary-line {
+            color: #6b7280;
+            font-size: 0.95rem;
+            margin: 0.1rem 0 0.8rem 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def render_tracking_legend():
+    st.markdown(
+        """
+        <div class="tracking-legend">
+            <span class="tracking-legend-chip tracking-legend-completed">
+                <span class="tracking-legend-dot" style="background:#2e7d32;"></span>
+                Completed
+            </span>
+            <span class="tracking-legend-chip tracking-legend-ongoing">
+                <span class="tracking-legend-dot" style="background:#1565c0;"></span>
+                Ongoing
+            </span>
+            <span class="tracking-legend-chip tracking-legend-unknown">
+                <span class="tracking-legend-dot" style="background:#b58900;"></span>
+                Unknown / Missing
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def render_tracking_active_filters(search_query, status_scope, selected_projects, focus_filters):
+    active_filters = []
+    if search_query:
+        display_query = search_query if len(search_query) <= 28 else f"{search_query[:25]}..."
+        active_filters.append(("Search", display_query))
+    if status_scope != 'All':
+        active_filters.append(("Status", status_scope))
+    if selected_projects:
+        if len(selected_projects) <= 2:
+            project_label = ", ".join(selected_projects)
+        else:
+            project_label = f"{selected_projects[0]}, {selected_projects[1]} +{len(selected_projects) - 2}"
+        active_filters.append(("Projects", project_label))
+    for focus_filter in focus_filters:
+        active_filters.append(("Focus", focus_filter))
+
+    if not active_filters:
+        st.caption("No filters applied. Showing all tracking rows.")
+        return
+
+    chips = "".join(
+        (
+            f'<span class="tracking-active-chip">'
+            f'<span class="tracking-active-label">{html.escape(str(label or "Filter"))}</span>'
+            f'{html.escape(str(value if value is not None else "Unspecified"))}</span>'
+        )
+        for label, value in active_filters
+    )
+    st.markdown(f'<div class="tracking-active-filters">{chips}</div>', unsafe_allow_html=True)
+
+
+def render_cycler_tracking_tab():
+    st.header("⚡ Cycler Tracking")
+
+    tracking_payload = get_tracking_dashboard_payload()
+    source_path = tracking_payload.get('source_path')
+    lineage_root_batches = tracking_payload.get('lineage_root_batches') or []
+    if source_path:
+        st.caption(f"Tracking sheet: {source_path}")
+
+    render_tracking_lineage_batch_section(lineage_root_batches)
+
+    if not tracking_payload.get('available'):
+        if tracking_payload.get('reason') == 'missing_file':
+            st.info("The Cycler tracking comparison is ready, but the tracking sheet was not found.")
+            searched_paths = tracking_payload.get('searched_paths') or []
+            if searched_paths:
+                st.caption("Checked: " + " | ".join(searched_paths))
+        else:
+            st.info("The tracking sheet was found, but it doesn't contain any rows to compare yet.")
+        return
+
+    synced_records = sync_tracking_rows_to_database(tracking_payload['rows'])
+    if synced_records:
+        tracking_payload = get_tracking_dashboard_payload()
+
+    tracking_rows = [
+        {
+            **row,
+            'display_status': get_tracking_display_status(row)
+        }
+        for row in tracking_payload['rows']
+    ]
+    tracking_summary = tracking_payload['summary']
+    status_counts = Counter(row['display_status'] for row in tracking_rows)
+    available_projects = sorted({
+        row.get('project_name') or 'Unresolved'
+        for row in tracking_rows
+    })
+    current_project_id = st.session_state.get('current_project_id')
+    current_project_name = st.session_state.get('current_project_name')
+
+    if st.session_state.get('tracking_status_scope') not in TRACKING_STATUS_FILTER_OPTIONS:
+        st.session_state['tracking_status_scope'] = 'All'
+    metric_scope_options = ['Current Project', 'All Projects'] if current_project_id else ['All Projects']
+    preferred_metric_scope = 'Current Project' if current_project_id else 'All Projects'
+    if st.session_state.get('tracking_metric_scope') not in metric_scope_options:
+        st.session_state['tracking_metric_scope'] = preferred_metric_scope
+    if not isinstance(st.session_state.get('tracking_search_query', ''), str):
+        st.session_state['tracking_search_query'] = ''
+    existing_project_scope = st.session_state.get('tracking_project_scope', [])
+    if not isinstance(existing_project_scope, list):
+        existing_project_scope = []
+    st.session_state['tracking_project_scope'] = [
+        project for project in existing_project_scope if project in available_projects
+    ]
+    existing_focus_scope = st.session_state.get('tracking_focus_scope', [])
+    if not isinstance(existing_focus_scope, list):
+        existing_focus_scope = []
+    st.session_state['tracking_focus_scope'] = [
+        item for item in existing_focus_scope if item in TRACKING_FOCUS_FILTER_OPTIONS
+    ]
+
+    metric_scope = st.segmented_control(
+        "Metric Scope",
+        options=metric_scope_options,
+        key='tracking_metric_scope',
+        help="Choose whether the top summary cards represent the current open project or every tracked project."
+    )
+    if metric_scope == 'Current Project' and current_project_id:
+        metric_rows = [
+            row for row in tracking_rows
+            if row.get('project_id') == current_project_id
+        ]
+        metric_scope_label = current_project_name or 'Current Project'
+    else:
+        metric_rows = tracking_rows
+        metric_scope_label = 'All Tracked Projects'
+    tracking_summary = summarize_tracking_rows(metric_rows)
+
+    st.caption(
+        f"Top metrics currently represent: {metric_scope_label} ({len(metric_rows)} tracking row(s))."
+    )
+    tracking_metric_cols = st.columns(4)
+    tracking_metric_cols[0].metric("Active Experiments", tracking_summary['active_experiments'])
+    tracking_metric_cols[1].metric("Active Cells", tracking_summary['active_cells'])
+    tracking_metric_cols[2].metric("Completed Experiments", tracking_summary['completed_experiments'])
+    dud_value = tracking_summary['suspected_dud_cells']
+    dud_delta = (
+        f"{tracking_summary['defect_fraction']:.1%} dud rate"
+        if tracking_summary.get('defect_fraction') is not None
+        else None
+    )
+    tracking_metric_cols[3].metric("Suspected Dud Cells", dud_value, dud_delta)
+    render_tracking_filter_styles()
+    render_tracking_legend()
+
+    with st.container(border=True):
+        toolbar_cols = st.columns([0.82, 0.18])
+        with toolbar_cols[0]:
+            st.markdown("#### Find the rows that matter")
+            st.caption("Search by experiment, project, cycler, notes, or flags, then narrow the list with one-click filters.")
+        with toolbar_cols[1]:
+            st.button(
+                "Reset Filters",
+                key='tracking_reset_filters',
+                on_click=reset_tracking_filters,
+                use_container_width=True
+            )
+
+        search_query = st.text_input(
+            "Search rows",
+            key='tracking_search_query',
+            placeholder="Try T27, LIB Anodes, A6, SiCx, missing, or duplicate"
+        ).strip()
+
+        status_scope = st.segmented_control(
+            "Status",
+            options=TRACKING_STATUS_FILTER_OPTIONS,
+            key='tracking_status_scope',
+            format_func=lambda option: (
+                f"All ({len(tracking_rows)})"
+                if option == 'All'
+                else f"{option} ({status_counts.get(option, 0)})"
+            ),
+            help="Switch between all rows and the main workflow states."
+        ) or 'All'
+
+        selected_tracking_projects = st.pills(
+            "Projects",
+            options=available_projects,
+            selection_mode='multi',
+            key='tracking_project_scope',
+            help="Select one or more projects. Leave empty to keep every project visible."
+        ) or []
+        st.markdown(
+            '<div class="tracking-filter-hint">Projects are optional. If nothing is selected, the table shows every project.</div>',
+            unsafe_allow_html=True
+        )
+
+        focus_filters = st.pills(
+            "Focus",
+            options=TRACKING_FOCUS_FILTER_OPTIONS,
+            selection_mode='multi',
+            key='tracking_focus_scope',
+            help="Use focus filters to jump straight to missing-cell mismatches or tracking anomalies."
+        ) or []
+
+    filtered_tracking_rows = []
+    for row in tracking_rows:
+        if status_scope != 'All' and row['display_status'] != status_scope:
+            continue
+        project_label = row.get('project_name') or 'Unresolved'
+        if selected_tracking_projects and project_label not in selected_tracking_projects:
+            continue
+        if 'Missing Cells' in focus_filters and row.get('missing_cell_count', 0) <= 0:
+            continue
+        if 'Issues' in focus_filters and not row.get('alerts'):
+            continue
+        if search_query:
+            search_blob = " ".join([
+                row.get('experiment_name') or '',
+                project_label,
+                row.get('tracking_date_display') or '',
+                row.get('cycler_channel_text') or '',
+                row.get('loading_text') or '',
+                row.get('ontology_batch_name') or '',
+                row.get('ontology_root_batch_name') or '',
+                row.get('notes') or '',
+                " ".join(row.get('alerts', [])),
+                row.get('display_status') or '',
+            ]).casefold()
+            if search_query.casefold() not in search_blob:
+                continue
+        filtered_tracking_rows.append(row)
+
+    render_tracking_active_filters(
+        search_query=search_query,
+        status_scope=status_scope,
+        selected_projects=selected_tracking_projects,
+        focus_filters=focus_filters
+    )
+    st.markdown(
+        f'<div class="tracking-summary-line"><strong>{len(filtered_tracking_rows)}</strong> of {len(tracking_rows)} tracking row(s) shown</div>',
+        unsafe_allow_html=True
+    )
+
+    tracking_table = pd.DataFrame([
+        {
+            'Status': row['display_status'],
+            'Experiment': row['experiment_name'],
+            'Project': row.get('project_name') or 'Unresolved',
+            'Canonical Batch': row.get('ontology_batch_name') or '',
+            'Parent Batch': row.get('ontology_root_batch_name') or '',
+            'Tracking Date': row.get('tracking_date_display') or '',
+            'Tracked Cells': row.get('tracked_cell_count', 0),
+            'DB Cells': row.get('database_cell_count', 0),
+            'Missing Cells': row.get('missing_cell_count', 0),
+            'Cyclers': row.get('cycler_channel_text') or 'Missing',
+            'Notes': row.get('notes') or '',
+            'Flags': ' | '.join(row.get('alerts', []))
+        }
+        for row in filtered_tracking_rows
+    ])
+
+    if not tracking_table.empty:
+        styled_tracking_table = tracking_table.style.apply(style_tracking_table_row, axis=1)
+        st.dataframe(styled_tracking_table, use_container_width=True, hide_index=True)
+    else:
+        st.info("No tracking rows match the current filters. Reset filters or broaden the search to bring rows back.")
+
+    actionable_rows = [row for row in filtered_tracking_rows if row.get('can_open_in_editor')]
+    if actionable_rows:
+        selected_tracking_row_key = st.selectbox(
+            "Selected tracking row",
+            options=[row['row_key'] for row in actionable_rows],
+            format_func=lambda key: next(
+                (
+                    f"{row['experiment_name']} | {row.get('project_name') or 'Unresolved'} | "
+                    f"{row['display_status']} | {row.get('tracking_date_display') or 'No date'}"
+                )
+                for row in actionable_rows if row['row_key'] == key
+            ),
+            key='tracking_open_selector'
+        )
+        selected_tracking_row = next(
+            row for row in actionable_rows if row['row_key'] == selected_tracking_row_key
+        )
+        selected_experiment_id = selected_tracking_row.get('db_experiment_id')
+        current_manual_status = selected_tracking_row.get('manual_status')
+        current_override_label = get_tracking_override_label(current_manual_status)
+
+        selected_tracking_ontology = normalize_ontology_context(selected_tracking_row.get('ontology'))
+        if selected_tracking_ontology:
+            with st.container(border=True):
+                st.markdown("#### Canonical Lineage")
+                render_ontology_context_banner(
+                    selected_tracking_ontology,
+                    key_prefix=f"tracking_{selected_experiment_id or selected_tracking_row_key}",
+                    legacy_experiment_id=selected_experiment_id,
+                    legacy_experiment_name=selected_tracking_row.get('experiment_name'),
+                )
+
+        with st.container(border=True):
+            st.markdown("#### Status Control")
+            st.caption(
+                "Use a manual status when uploaded data is still partial. `Auto` keeps the sheet/database-derived state."
+            )
+            status_cols = st.columns([0.7, 0.3])
+            selected_override_label = status_cols[0].selectbox(
+                "Manual status override",
+                options=TRACKING_STATUS_OVERRIDE_LABELS,
+                index=TRACKING_STATUS_OVERRIDE_LABELS.index(current_override_label),
+                key=f"tracking_manual_status_{selected_experiment_id or selected_tracking_row_key}",
+                disabled=not selected_experiment_id
+            )
+            selected_override_value = next(
+                value
+                for label, value in TRACKING_STATUS_OVERRIDE_OPTIONS
+                if label == selected_override_label
+            )
+            if status_cols[1].button(
+                "Save Status",
+                key=f"tracking_save_status_{selected_experiment_id or selected_tracking_row_key}",
+                use_container_width=True,
+                disabled=not selected_experiment_id
+            ):
+                set_tracking_status_override(selected_experiment_id, selected_override_value)
+                clear_navigation_caches()
+                st.rerun()
+
+            if selected_experiment_id:
+                if current_manual_status:
+                    auto_status_label = TRACKING_STATUS_DISPLAY_LABELS.get(
+                        selected_tracking_row.get('auto_status'),
+                        'Unknown / Missing'
+                    )
+                    st.caption(
+                        f"Current status is manually pinned to {get_tracking_display_status(selected_tracking_row)}. "
+                        f"Auto status would be {auto_status_label}."
+                    )
+                else:
+                    st.caption(
+                        f"Current status is automatic: {get_tracking_display_status(selected_tracking_row)}."
+                    )
+            else:
+                st.caption(
+                    "Create a draft in Cell Inputs first if you want to save a manual status override for this row."
+                )
+
+        action_label = (
+            "Open Existing Experiment"
+            if selected_experiment_id
+            else "Create Draft in Cell Inputs"
+        )
+        if st.button(action_label, key='tracking_open_button', use_container_width=True):
+            open_tracking_row_from_dashboard(selected_tracking_row)
+            st.rerun()
+    else:
+        st.info("Rows with duplicate unresolved names or unknown projects cannot be opened automatically yet.")
+
 # =============================
 # Battery Data Gravimetric Capacity Calculator App
 # =============================
 
+st.markdown(
+    """
+    <style>
+    .block-container {
+        padding-top: 1.1rem;
+        padding-bottom: 2rem;
+    }
+
+    .cellscope-app-shell {
+        margin: 0 0 0.18rem 0;
+    }
+
+    .cellscope-app-shell-eyebrow {
+        color: #64748b;
+        font-size: 0.76rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 0.25rem;
+    }
+
+    .cellscope-app-shell-title-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.7rem;
+    }
+
+    .cellscope-app-shell-title {
+        margin: 0;
+        color: #2b2d42;
+        font-size: clamp(2.5rem, 3.2vw, 3.3rem);
+        line-height: 0.95;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+    }
+
+    .cellscope-app-shell-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        width: 100%;
+        min-height: 2.55rem;
+        padding: 0.38rem 0.9rem;
+        border-radius: 14px;
+        background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
+        border: 1px solid #c7ddff;
+        color: #0f4c8a;
+        font-size: 0.85rem;
+        font-weight: 700;
+        box-sizing: border-box;
+    }
+
+    .cellscope-app-shell-badge-label {
+        color: #1d4ed8;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-size: 0.68rem;
+        font-weight: 800;
+        flex-shrink: 0;
+    }
+
+    .cellscope-app-shell-badge-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .cellscope-app-shell-badge-muted {
+        background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+        border-color: #dbe4f0;
+        color: #475569;
+    }
+
+    .cellscope-app-shell-badge-muted .cellscope-app-shell-badge-label {
+        color: #64748b;
+    }
+
+    .cellscope-app-shell-divider {
+        height: 1px;
+        background: linear-gradient(90deg, rgba(203, 213, 225, 0.95) 0%, rgba(226, 232, 240, 0.25) 100%);
+        margin: 0.22rem 0 0.48rem 0;
+    }
+
+    div[class*="st-key-save_changes_btn"] button {
+        min-height: 2.55rem !important;
+        border-radius: 12px !important;
+        font-weight: 700 !important;
+        margin-top: 0.1rem !important;
+    }
+
+    div[data-testid="stTabs"] {
+        margin-top: 0.1rem;
+    }
+
+    div[data-testid="stTabs"] [role="tablist"] {
+        gap: 0.35rem;
+    }
+
+    div[data-testid="stTabs"] [role="tab"] {
+        min-height: 2.35rem !important;
+        padding: 0.35rem 0.9rem !important;
+    }
+
+    div[data-testid="stTabs"] [data-testid="stMarkdownContainer"] p {
+        font-size: 0.9rem;
+        font-weight: 600;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+loaded_experiment = st.session_state.get('loaded_experiment')
+current_project_name = st.session_state.get('current_project_name')
+
+header_badge_html = ""
+if loaded_experiment:
+    header_badge_html = (
+        '<div class="cellscope-app-shell-badge">'
+        '<span class="cellscope-app-shell-badge-label">Experiment</span>'
+        f'<span class="cellscope-app-shell-badge-text">{html.escape(loaded_experiment["experiment_name"])}</span>'
+        '</div>'
+    )
+elif current_project_name:
+    header_badge_html = (
+        '<div class="cellscope-app-shell-badge cellscope-app-shell-badge-muted">'
+        '<span class="cellscope-app-shell-badge-label">Project</span>'
+        f'<span class="cellscope-app-shell-badge-text">{html.escape(current_project_name)}</span>'
+        '</div>'
+    )
+
 # --- Top Bar ---
 with st.container():
-    col1, col2, col3 = st.columns([2, 1, 1])
-    
-    with col1:
-        st.title("CellScope")
-    
-    with col2:
-        # Show current experiment status
-        loaded_experiment = st.session_state.get('loaded_experiment')
-        if loaded_experiment:
-            st.info(f"{loaded_experiment['experiment_name']}")
-    
-    with col3:
-        # Save button for loaded experiments
-        if loaded_experiment:
-            if st.button("Save", key="save_changes_btn"):
+    if loaded_experiment:
+        header_title_col, header_badge_col, header_action_col = st.columns([0.58, 0.27, 0.15], gap="small")
+    elif header_badge_html:
+        header_title_col, header_badge_col = st.columns([0.72, 0.28], gap="small")
+        header_action_col = None
+    else:
+        header_title_col = None
+        header_badge_col = None
+        header_action_col = None
+
+    if header_title_col is None:
+        st.markdown(
+            f"""
+            <div class="cellscope-app-shell">
+                <div class="cellscope-app-shell-eyebrow">Battery Experiment Workspace</div>
+                <div class="cellscope-app-shell-title-row">
+                    <h1 class="cellscope-app-shell-title">CellScope</h1>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    else:
+        with header_title_col:
+            st.markdown(
+                f"""
+                <div class="cellscope-app-shell">
+                    <div class="cellscope-app-shell-eyebrow">Battery Experiment Workspace</div>
+                    <div class="cellscope-app-shell-title-row">
+                        <h1 class="cellscope-app-shell-title">CellScope</h1>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    if header_badge_col is not None:
+        with header_badge_col:
+            st.markdown(header_badge_html, unsafe_allow_html=True)
+
+    if header_action_col is not None:
+        with header_action_col:
+            # Save button for loaded experiments
+            if st.button("Save", key="save_changes_btn", use_container_width=True):
                 # Get current experiment data
                 experiment_data = loaded_experiment['experiment_data']
                 experiment_id = loaded_experiment['experiment_id']
                 project_id = loaded_experiment['project_id']
-                
+
                 # Get current values from session state or use loaded values
                 current_experiment_date = st.session_state.get('current_experiment_date', experiment_data.get('experiment_date'))
                 current_disc_diameter = st.session_state.get('current_disc_diameter_mm', experiment_data.get('disc_diameter_mm'))
                 current_group_assignments = st.session_state.get('current_group_assignments', experiment_data.get('group_assignments'))
                 current_group_names = st.session_state.get('current_group_names', experiment_data.get('group_names'))
-                
+
                 # Convert date string to date object if needed
                 if isinstance(current_experiment_date, str):
                     try:
                         current_experiment_date = datetime.fromisoformat(current_experiment_date).date()
                     except:
                         current_experiment_date = date.today()
-                
+
                 # Get updated cells data from session state (includes exclude changes)
                 current_datasets = st.session_state.get('datasets', [])
                 pressed_thickness = st.session_state.get('pressed_thickness', experiment_data.get('pressed_thickness'))
                 updated_cells_data = []
                 recalculated_cells = []
-                
+
                 for i, dataset in enumerate(current_datasets):
                     # Get original cell data
                     original_cell = experiment_data['cells'][i] if i < len(experiment_data['cells']) else {}
-                    
+
                     # Read current input values from session state widgets
                     # These might be more recent than the dataset values
                     widget_loading = st.session_state.get(f'edit_loading_{i}')
                     widget_active = st.session_state.get(f'edit_active_{i}')
                     widget_formation = st.session_state.get(f'edit_formation_{i}')
                     widget_testnum = st.session_state.get(f'edit_testnum_{i}')
-                    
+
                     # Use widget values if available, otherwise use dataset values
                     new_loading = widget_loading if widget_loading is not None else dataset.get('loading', 0)
                     new_active = widget_active if widget_active is not None else dataset.get('active', 0)
                     new_formation = widget_formation if widget_formation is not None else dataset.get('formation_cycles', 4)
                     new_testnum = widget_testnum if widget_testnum is not None else dataset.get('testnum', f'Cell {i+1}')
-                    
+
                     # Check if loading or active material has changed
                     original_loading = original_cell.get('loading', 0)
                     original_active = original_cell.get('active_material', 0)
-                    
+
                     # Recalculate gravimetric capacities if loading or active material changed
                     updated_data_json = original_cell.get('data_json')
                     if (new_loading != original_loading or new_active != original_active) and updated_data_json:
                         try:
                             # Parse the original DataFrame
                             original_df = pd.read_json(StringIO(updated_data_json))
-                            
+
                             # Recalculate gravimetric capacities
                             updated_df = recalculate_gravimetric_capacities(original_df, new_loading, new_active)
-                            
+
                             # Update the data JSON with recalculated values
                             updated_data_json = updated_df.to_json()
                             recalculated_cells.append(new_testnum)
-                        except Exception as e:
+                        except Exception:
                             # If recalculation fails, keep original data
                             pass
-                    
+
                     # Recalculate porosity if loading changed and we have the required data
                     porosity = original_cell.get('porosity')
-                    if (new_loading != original_loading and 
-                        pressed_thickness and pressed_thickness > 0 and 
-                        dataset.get('formulation') and 
+                    if (new_loading != original_loading and
+                        pressed_thickness and pressed_thickness > 0 and
+                        dataset.get('formulation') and
                         current_disc_diameter):
                         try:
                             from porosity_calculations import calculate_porosity_from_experiment_data
@@ -299,14 +1301,14 @@ with st.container():
                             porosity = porosity_data['porosity']
                         except Exception:
                             pass
-                    
+
                     # Read other widget values too
                     widget_electrolyte = st.session_state.get(f'edit_electrolyte_{i}') or st.session_state.get(f'edit_single_electrolyte_{i}')
                     widget_substrate = st.session_state.get(f'edit_substrate_{i}') or st.session_state.get(f'edit_single_substrate_{i}')
                     widget_separator = st.session_state.get(f'edit_separator_{i}') or st.session_state.get(f'edit_single_separator_{i}')
                     new_cutoff_lower = dataset.get('cutoff_voltage_lower', original_cell.get('cutoff_voltage_lower'))
                     new_cutoff_upper = dataset.get('cutoff_voltage_upper', original_cell.get('cutoff_voltage_upper'))
-                    
+
                     # Convert session state dataset back to cells data format
                     updated_cell = original_cell.copy()
                     updated_cell.update({
@@ -335,14 +1337,14 @@ with st.container():
                 # Get additional experiment data
                 solids_content = st.session_state.get('solids_content', experiment_data.get('solids_content'))
                 experiment_notes = st.session_state.get('experiment_notes', experiment_data.get('experiment_notes'))
-                
+
                 # Prepare cell format data if it's a Full Cell project
                 project_type = "Full Cell"  # Default
                 if project_id:
                     project_info = get_project_by_id(project_id)
                     if project_info:
                         project_type = project_info[3]
-                
+
                 cell_format_data = {}
                 if project_type == "Full Cell":
                     cell_format = st.session_state.get('current_cell_format', experiment_data.get('cell_format', 'Coin'))
@@ -368,7 +1370,7 @@ with st.container():
                     cell_format_data=cell_format_data
                 )
                 clear_navigation_caches()
-                
+
                 # Update the loaded experiment in session state with all current changes
                 st.session_state['loaded_experiment']['experiment_data'].update({
                     'experiment_date': current_experiment_date.isoformat(),
@@ -380,36 +1382,36 @@ with st.container():
                     'pressed_thickness': pressed_thickness,
                     'experiment_notes': experiment_notes
                 })
-                
+
                 # Add cell format data if applicable
                 if cell_format_data:
                     st.session_state['loaded_experiment']['experiment_data'].update(cell_format_data)
-                
+
                 # Clear any cached processed data to force recalculation
                 if 'processed_data_cache' in st.session_state:
                     del st.session_state['processed_data_cache']
                 if 'cache_key' in st.session_state:
                     del st.session_state['cache_key']
-                
+
                 # Set flag to indicate calculations have been updated
                 st.session_state['calculations_updated'] = True
                 st.session_state['update_timestamp'] = datetime.now()
-                
+
                 st.success("Changes saved!")
                 if recalculated_cells:
                     st.info(f"Recalculated specific capacity values for {len(recalculated_cells)} cell(s): {', '.join(recalculated_cells)}")
                 st.rerun()
 
-st.markdown("---")
+st.markdown('<div class="cellscope-app-shell-divider"></div>', unsafe_allow_html=True)
 # Show delete confirmation dialogs when triggered
 show_delete_dialogs()
 
 # --- Sidebar ---
 with st.sidebar:
     try:
-        st.image("logo.png", width=150)
+        st.image("logo.png", width=118)
     except Exception:
-        st.image("https://placehold.co/150x80?text=Logo", width=150)
+        st.image("https://placehold.co/150x80?text=Logo", width=118)
 
     st.markdown(
         """
@@ -418,6 +1420,17 @@ with st.sidebar:
             background:
                 radial-gradient(circle at top right, rgba(59, 130, 246, 0.14), transparent 34%),
                 linear-gradient(180deg, #0f172a 0%, #162033 100%);
+        }
+
+        section[data-testid="stSidebar"] div[data-testid="stSidebarUserContent"] {
+            padding-top: 0.45rem;
+        }
+
+        section[data-testid="stSidebar"] .block-container {
+            padding-top: 0.4rem !important;
+            padding-bottom: 1rem !important;
+            padding-left: 0.85rem !important;
+            padding-right: 0.85rem !important;
         }
 
         section[data-testid="stSidebar"] h1,
@@ -431,8 +1444,12 @@ with st.sidebar:
             color: #e2e8f0 !important;
         }
 
+        section[data-testid="stSidebar"] .stImage {
+            margin-bottom: 0.1rem !important;
+        }
+
         section[data-testid="stSidebar"] .element-container {
-            margin-bottom: 0.35rem !important;
+            margin-bottom: 0.25rem !important;
         }
 
         section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div,
@@ -452,15 +1469,117 @@ with st.sidebar:
             transition: all 0.15s ease !important;
         }
 
-        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="secondary"] {
-            background: rgba(30, 41, 59, 0.72) !important;
-            color: #e2e8f0 !important;
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_experiment_scroll_region"] {
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.24) 0%, rgba(15, 23, 42, 0.1) 100%);
+            border: 1px solid rgba(148, 163, 184, 0.14);
+            border-radius: 16px;
+            padding: 0.3rem 0.15rem 0.3rem 0.3rem;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+            scrollbar-gutter: stable both-edges;
         }
 
-        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="primary"] {
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_experiment_scroll_region"] [data-testid="stVerticalBlock"] {
+            gap: 0.35rem;
+            padding-right: 0.45rem;
+            scrollbar-gutter: stable both-edges;
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_experiment_scroll_region"]::-webkit-scrollbar,
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_experiment_scroll_region"] *::-webkit-scrollbar {
+            width: 12px;
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_experiment_scroll_region"]::-webkit-scrollbar-track,
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_experiment_scroll_region"] *::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.88);
+            border-radius: 999px;
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_experiment_scroll_region"]::-webkit-scrollbar-thumb,
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_experiment_scroll_region"] *::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, #93c5fd 0%, #60a5fa 100%);
+            border-radius: 999px;
+            border: 2px solid rgba(15, 23, 42, 0.92);
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_quick_experiment_"] {
+            padding-right: 0.45rem !important;
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_quick_experiment_"] button {
+            background: rgba(248, 250, 252, 0.98) !important;
+            color: #0f172a !important;
+            border: 1px solid rgba(203, 213, 225, 0.9) !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55) !important;
+            font-weight: 700 !important;
+            letter-spacing: 0.01em !important;
+            min-height: 3.15rem !important;
+            padding: 0.7rem 0.95rem !important;
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_quick_experiment_"] button div[data-testid="stMarkdownContainer"] {
+            width: 100% !important;
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_quick_experiment_"] button div[data-testid="stMarkdownContainer"] p {
+            color: #0f172a !important;
+            fill: #0f172a !important;
+            font-weight: 700 !important;
+            line-height: 1.15 !important;
+            text-align: center !important;
+            white-space: normal !important;
+            margin: 0 !important;
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_quick_experiment_"] button:hover {
+            background: #ffffff !important;
+            border-color: rgba(148, 163, 184, 0.95) !important;
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_quick_experiment_"] button[kind="primary"],
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_quick_experiment_"] button[data-testid="stBaseButton-primary"] {
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+            color: #ffffff !important;
+            border-color: rgba(96, 165, 250, 0.45) !important;
+            box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22) !important;
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_quick_experiment_"] button[kind="primary"] *,
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_quick_experiment_"] button[data-testid="stBaseButton-primary"] * {
+            color: #ffffff !important;
+            fill: #ffffff !important;
+        }
+
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="secondary"],
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[data-testid="stBaseButton-secondary"] {
+            background: rgba(30, 41, 59, 0.72) !important;
+            color: #e2e8f0 !important;
+            border: 1px solid rgba(148, 163, 184, 0.2) !important;
+        }
+
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="secondary"] *,
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[data-testid="stBaseButton-secondary"] * {
+            color: #e2e8f0 !important;
+            fill: #e2e8f0 !important;
+        }
+
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="secondary"]:hover,
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[data-testid="stBaseButton-secondary"]:hover {
+            background: rgba(51, 65, 85, 0.9) !important;
+            border-color: rgba(148, 163, 184, 0.34) !important;
+        }
+
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="primary"],
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[data-testid="stBaseButton-primary"] {
             background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
             color: #ffffff !important;
             box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22) !important;
+        }
+
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="primary"] *,
+        section[data-testid="stSidebar"] div[data-testid="stButton"] > button[data-testid="stBaseButton-primary"] * {
+            color: #ffffff !important;
+            fill: #ffffff !important;
         }
 
         section[data-testid="stSidebar"] div[data-testid="stPopover"] > button {
@@ -468,12 +1587,42 @@ with st.sidebar:
             min-height: 2.4rem !important;
         }
 
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_new_experiment_compact"] button {
+            min-width: 36px !important;
+            max-width: 36px !important;
+            width: 36px !important;
+            min-height: 36px !important;
+            height: 36px !important;
+            padding: 0 !important;
+            border-radius: 10px !important;
+            font-size: 1.15rem !important;
+            font-weight: 700 !important;
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_new_experiment_compact"] button {
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+            color: #ffffff !important;
+            border-color: rgba(96, 165, 250, 0.45) !important;
+            box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22) !important;
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_new_experiment_compact"] button * {
+            color: #ffffff !important;
+            fill: #ffffff !important;
+        }
+
+        section[data-testid="stSidebar"] div[class*="st-key-sidebar_new_experiment_compact"] button:disabled {
+            background: rgba(30, 41, 59, 0.46) !important;
+            color: #64748b !important;
+            box-shadow: none !important;
+        }
+
         .sidebar-card {
             background: linear-gradient(180deg, rgba(15, 23, 42, 0.84) 0%, rgba(30, 41, 59, 0.72) 100%);
             border: 1px solid rgba(148, 163, 184, 0.18);
             border-radius: 14px;
-            padding: 0.9rem 0.95rem;
-            margin: 0.45rem 0 0.8rem 0;
+            padding: 0.72rem 0.8rem;
+            margin: 0.25rem 0 0.55rem 0;
         }
 
         .sidebar-card-title {
@@ -503,7 +1652,7 @@ with st.sidebar:
         .sidebar-caption {
             color: #94a3b8;
             font-size: 0.76rem;
-            margin-top: 0.55rem;
+            margin-top: 0.35rem;
         }
 
         .sidebar-toolbar {
@@ -518,16 +1667,80 @@ with st.sidebar:
             font-size: 1rem;
             font-weight: 700;
         }
+
+        .sidebar-section-label {
+            color: #cbd5e1;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            margin: 0.05rem 0 0.2rem 0;
+        }
+
+        .sidebar-scroll-hint {
+            color: #dbeafe;
+            font-size: 0.76rem;
+            font-weight: 600;
+            margin-bottom: 0.35rem;
+        }
         </style>
         """,
         unsafe_allow_html=True
     )
 
-    toolbar_cols = st.columns([0.8, 0.2])
-    with toolbar_cols[0]:
-        st.markdown('<div class="sidebar-toolbar-title">Workspace</div>', unsafe_allow_html=True)
-    with toolbar_cols[1]:
-        with st.popover("+"):
+    st.markdown('<div class="sidebar-toolbar-title">Workspace</div>', unsafe_allow_html=True)
+
+    project_rows = load_sidebar_projects(TEST_USER_ID)
+    project_lookup = {row[0]: row for row in project_rows}
+    loaded_experiment = st.session_state.get('loaded_experiment')
+    current_project_id = st.session_state.get('current_project_id')
+
+    if current_project_id not in project_lookup and loaded_experiment and loaded_experiment.get('project_id') in project_lookup:
+        current_project_id = loaded_experiment['project_id']
+        st.session_state['current_project_id'] = current_project_id
+        st.session_state['current_project_name'] = project_lookup[current_project_id][1]
+
+    st.markdown('<div class="sidebar-section-label">Active Project</div>', unsafe_allow_html=True)
+    project_selector_key = "sidebar_project_selector"
+    project_options = [None] + [row[0] for row in project_rows]
+    selector_value = current_project_id if current_project_id in project_lookup else None
+    pending_project_id = st.session_state.pop('_sidebar_pending_project_selector', None)
+    if pending_project_id is not None and pending_project_id in project_options:
+        st.session_state[project_selector_key] = pending_project_id
+    elif project_selector_key not in st.session_state or st.session_state.get(project_selector_key) not in project_options:
+        st.session_state[project_selector_key] = selector_value
+
+    project_control_cols = st.columns([0.72, 0.12, 0.16], gap="small")
+    with project_control_cols[0]:
+        selected_project_id = st.selectbox(
+            "Active project",
+            options=project_options,
+            key=project_selector_key,
+            format_func=lambda option: "Select a project" if option is None else (
+                f"{project_lookup[option][1]} • {project_lookup[option][6]} experiments • {project_lookup[option][3]}"
+            ),
+            help="Type to search projects",
+            label_visibility="collapsed",
+            disabled=not project_rows
+        )
+
+    active_control_project_id = (
+        selected_project_id if selected_project_id in project_lookup
+        else current_project_id if current_project_id in project_lookup
+        else None
+    )
+
+    with project_control_cols[1]:
+        new_experiment_clicked = st.button(
+            "+",
+            key="sidebar_new_experiment_compact",
+            use_container_width=True,
+            disabled=active_control_project_id not in project_lookup,
+            help="Start a new experiment in the active project"
+        )
+
+    with project_control_cols[2]:
+        with st.popover("..."):
             with st.form("create_project_form"):
                 new_project_name = st.text_input("Project name")
                 new_project_description = st.text_area("Description")
@@ -549,70 +1762,10 @@ with st.sidebar:
                     else:
                         st.error("Please enter a project name.")
 
-    st.caption("Type in the selectors to jump directly to projects or experiments.")
-
-    project_rows = load_sidebar_projects(TEST_USER_ID)
-    project_lookup = {row[0]: row for row in project_rows}
-    loaded_experiment = st.session_state.get('loaded_experiment')
-    current_project_id = st.session_state.get('current_project_id')
-
-    if current_project_id not in project_lookup and loaded_experiment and loaded_experiment.get('project_id') in project_lookup:
-        current_project_id = loaded_experiment['project_id']
-        st.session_state['current_project_id'] = current_project_id
-        st.session_state['current_project_name'] = project_lookup[current_project_id][1]
-
-    if project_rows:
-        project_selector_key = "sidebar_project_selector"
-        project_options = [None] + [row[0] for row in project_rows]
-        selector_value = current_project_id if current_project_id in project_lookup else None
-        pending_project_id = st.session_state.pop('_sidebar_pending_project_selector', None)
-        if pending_project_id is not None and pending_project_id in project_options:
-            st.session_state[project_selector_key] = pending_project_id
-        elif project_selector_key not in st.session_state or st.session_state.get(project_selector_key) not in project_options:
-            st.session_state[project_selector_key] = selector_value
-
-        selected_project_id = st.selectbox(
-            "Active project",
-            options=project_options,
-            key=project_selector_key,
-            format_func=lambda option: "Select a project" if option is None else (
-                f"{project_lookup[option][1]} • {project_lookup[option][6]} experiments • {project_lookup[option][3]}"
-            ),
-            help="Type to search projects"
-        )
-
-        if selected_project_id != current_project_id:
-            if selected_project_id is None:
-                clear_experiment_editor_state(clear_loaded_experiment=True)
-                st.session_state['current_project_id'] = None
-                st.session_state['current_project_name'] = None
-                st.session_state['start_new_experiment'] = False
-            else:
-                selected_project = project_lookup[selected_project_id]
-                set_active_project(selected_project_id, selected_project[1], start_new_experiment=False)
-            current_project_id = st.session_state.get('current_project_id')
-            loaded_experiment = st.session_state.get('loaded_experiment')
-
-        if current_project_id in project_lookup:
-            active_project = project_lookup[current_project_id]
-            project_id, project_name, project_desc, project_type, created_date, last_modified, experiment_count = active_project
-            st.markdown(
-                f"""
-                <div class="sidebar-card">
-                    <div class="sidebar-card-title">{project_name}</div>
-                    <div class="sidebar-card-meta">
-                        <span class="sidebar-pill">{project_type}</span>
-                        <span class="sidebar-pill">{experiment_count} experiments</span>
-                    </div>
-                    <div class="sidebar-caption">Updated {format_nav_date(last_modified)}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            with st.popover("Project actions"):
-                if st.button("New Experiment", key=f"sidebar_new_experiment_{project_id}", use_container_width=True):
-                    set_active_project(project_id, project_name, start_new_experiment=True)
+            if active_control_project_id in project_lookup:
+                st.markdown("---")
+                active_project = project_lookup[active_control_project_id]
+                project_id, project_name, project_desc, project_type, created_date, last_modified, experiment_count = active_project
 
                 if st.button("Rename Project", key=f"sidebar_project_rename_{project_id}", use_container_width=True):
                     st.session_state[f'renaming_project_{project_id}'] = True
@@ -623,6 +1776,40 @@ with st.sidebar:
                 if st.button("Delete Project", key=f"sidebar_project_delete_{project_id}", use_container_width=True, type="primary"):
                     st.session_state['confirm_delete_project'] = project_id
                     st.rerun()
+
+    if selected_project_id != current_project_id:
+        if selected_project_id is None:
+            clear_experiment_editor_state(clear_loaded_experiment=True)
+            st.session_state['current_project_id'] = None
+            st.session_state['current_project_name'] = None
+            st.session_state['start_new_experiment'] = False
+        else:
+            selected_project = project_lookup[selected_project_id]
+            set_active_project(selected_project_id, selected_project[1], start_new_experiment=False)
+        current_project_id = st.session_state.get('current_project_id')
+        loaded_experiment = st.session_state.get('loaded_experiment')
+
+    if new_experiment_clicked and current_project_id in project_lookup:
+        active_project = project_lookup[current_project_id]
+        set_active_project(current_project_id, active_project[1], start_new_experiment=True)
+        st.rerun()
+
+    if current_project_id in project_lookup:
+            active_project = project_lookup[current_project_id]
+            project_id, project_name, project_desc, project_type, created_date, last_modified, experiment_count = active_project
+            st.markdown(
+                f"""
+                <div class="sidebar-card">
+                    <div class="sidebar-card-title">{html.escape(project_name)}</div>
+                    <div class="sidebar-card-meta">
+                        <span class="sidebar-pill">{project_type}</span>
+                        <span class="sidebar-pill">{experiment_count} experiments</span>
+                    </div>
+                    <div class="sidebar-caption">Updated {format_nav_date(last_modified)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
             if st.session_state.get(f'renaming_project_{project_id}', False):
                 with st.form(f"rename_project_form_{project_id}"):
@@ -675,16 +1862,24 @@ with st.sidebar:
             experiment_filter = st.text_input(
                 "Filter experiments",
                 key=f"sidebar_experiment_filter_{project_id}",
-                placeholder="Filter by experiment name"
+                placeholder="Search by experiment name"
             ).strip().lower()
+            sort_key = f"sidebar_experiment_sort_{project_id}"
+            valid_sort_options = ["recent", "exp_date", "name_asc", "name_desc"]
+            legacy_sort_value = st.session_state.get(sort_key)
+            if legacy_sort_value == "name":
+                st.session_state[sort_key] = "name_desc"
+            elif legacy_sort_value not in valid_sort_options:
+                st.session_state[sort_key] = "recent"
             sort_option = st.selectbox(
                 "Sort experiments",
-                options=["recent", "exp_date", "name"],
-                key=f"sidebar_experiment_sort_{project_id}",
+                options=valid_sort_options,
+                key=sort_key,
                 format_func=lambda option: {
                     "recent": "Recently uploaded",
                     "exp_date": "Experiment date",
-                    "name": "Name (Z-A)"
+                    "name_asc": "Name (A-Z)",
+                    "name_desc": "Name (Z-A)"
                 }[option]
             )
 
@@ -699,7 +1894,9 @@ with st.sidebar:
                     "sort_date": get_experiment_sort_date(raw_data_json, created_date)
                 })
 
-            if sort_option == "name":
+            if sort_option == "name_asc":
+                experiment_items.sort(key=lambda item: item["name"].lower())
+            elif sort_option == "name_desc":
                 experiment_items.sort(key=lambda item: item["name"].lower(), reverse=True)
             elif sort_option == "exp_date":
                 experiment_items.sort(key=lambda item: item["sort_date"] or "", reverse=True)
@@ -735,20 +1932,25 @@ with st.sidebar:
 
             if experiment_items:
                 st.caption(f"{len(experiment_items)} matching experiment(s)")
-                for item in experiment_items[:8]:
-                    label = f"{item['name']} • {format_nav_date(item['sort_date'])}"
-                    button_type = "primary" if item["id"] == current_loaded_id else "secondary"
-                    if st.button(
-                        label,
-                        key=f"sidebar_quick_experiment_{item['id']}",
-                        use_container_width=True,
-                        type=button_type
-                    ) and item["id"] != current_loaded_id:
-                        open_experiment_from_sidebar(item["id"], project_id, project_name)
-                        st.rerun()
-
-                if len(experiment_items) > 8:
-                    st.caption(f"Showing the first 8 results. Use the selector above to jump to any experiment.")
+                st.markdown('<div class="sidebar-section-label">Browse Results</div>', unsafe_allow_html=True)
+                if len(experiment_items) > 6:
+                    st.markdown(
+                        '<div class="sidebar-scroll-hint">Scroll this list to browse every matching experiment.</div>',
+                        unsafe_allow_html=True
+                    )
+                with st.container(height=420, border=True, key="sidebar_experiment_scroll_region"):
+                    for item in experiment_items:
+                        button_type = "primary" if item["id"] == current_loaded_id else "secondary"
+                        experiment_date = format_nav_date(item['sort_date'])
+                        clicked = st.button(
+                            f"**{item['name']}** · {experiment_date}",
+                            key=f"sidebar_quick_experiment_{item['id']}",
+                            use_container_width=True,
+                            type=button_type
+                        )
+                        if clicked and item["id"] != current_loaded_id:
+                            open_experiment_from_sidebar(item["id"], project_id, project_name)
+                            st.rerun()
             else:
                 st.info("No experiments match the current filter.")
 
@@ -759,7 +1961,7 @@ with st.sidebar:
                 st.markdown(
                     f"""
                     <div class="sidebar-card">
-                        <div class="sidebar-card-title">{active_experiment_name}</div>
+                        <div class="sidebar-card-title">{html.escape(active_experiment_name)}</div>
                         <div class="sidebar-caption">Active experiment</div>
                     </div>
                     """,
@@ -795,17 +1997,17 @@ with st.sidebar:
                         if exp_cancel:
                             st.session_state[f'renaming_experiment_{active_experiment_id}'] = False
                             st.rerun()
-    else:
-        st.info("No projects found. Create your first project below.")
-
-    if st.session_state.get('loaded_experiment'):
-        st.caption(f"Active: {st.session_state['loaded_experiment'].get('experiment_name', 'Unknown')}")
-
     st.markdown("---")
-    st.caption("Use Cell Inputs to create or update experiments. Summary, Plots, Comparison, and Master Table reflect the active selection.")
 
     if st.session_state.get('current_project_id'):
         render_preferences_sidebar(st.session_state['current_project_id'])
+
+    st.markdown("---")
+    with st.expander("Settings", expanded=False):
+        render_tab_settings_section(
+            get_available_main_tab_labels(bool(st.session_state.get('current_project_id'))),
+            section_label="Main Tabs",
+        )
 
 # --- Popover Menu Styling ---
 st.markdown(
@@ -899,21 +2101,28 @@ st.markdown(
     }
     
     /* Scrollbar styling for sidebar */
-    section[data-testid="stSidebar"]::-webkit-scrollbar {
-        width: 6px;
+    section[data-testid="stSidebar"]::-webkit-scrollbar,
+    section[data-testid="stSidebar"] *::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
     }
     
-    section[data-testid="stSidebar"]::-webkit-scrollbar-track {
-        background: rgba(30, 41, 59, 0.5);
+    section[data-testid="stSidebar"]::-webkit-scrollbar-track,
+    section[data-testid="stSidebar"] *::-webkit-scrollbar-track {
+        background: rgba(15, 23, 42, 0.78);
+        border-radius: 999px;
     }
     
-    section[data-testid="stSidebar"]::-webkit-scrollbar-thumb {
-        background: rgba(100, 116, 139, 0.5);
-        border-radius: 3px;
+    section[data-testid="stSidebar"]::-webkit-scrollbar-thumb,
+    section[data-testid="stSidebar"] *::-webkit-scrollbar-thumb {
+        background: linear-gradient(180deg, rgba(96, 165, 250, 0.95) 0%, rgba(59, 130, 246, 0.92) 100%);
+        border-radius: 999px;
+        border: 2px solid rgba(15, 23, 42, 0.88);
     }
     
-    section[data-testid="stSidebar"]::-webkit-scrollbar-thumb:hover {
-        background: rgba(148, 163, 184, 0.6);
+    section[data-testid="stSidebar"]::-webkit-scrollbar-thumb:hover,
+    section[data-testid="stSidebar"] *::-webkit-scrollbar-thumb:hover {
+        background: linear-gradient(180deg, rgba(147, 197, 253, 1) 0%, rgba(96, 165, 250, 0.98) 100%);
     }
     </style>
     """,
@@ -968,133 +2177,28 @@ if st.session_state.get('show_cell_inputs_prompt'):
 
 # Create tabs - Dashboard is always visible, others depend on project selection
 current_project_id = st.session_state.get('current_project_id')
-if current_project_id:
-    tab_inputs, tab_dashboard, tab1, tab2, tab_comparison, tab_master = st.tabs([
-        "Cell Inputs", "📊 Dashboard", "Plots", "Export", "Comparison", "Master Table"
-    ])
-else:
-    tab_inputs, tab_dashboard, tab1, tab2 = st.tabs([
-        "Cell Inputs", "📊 Dashboard", "Plots", "Export"
-    ])
-    tab_comparison = None
-    tab_master = None
+available_main_tab_labels = get_available_main_tab_labels(bool(current_project_id))
+visible_main_tab_labels = get_ordered_tab_labels(available_main_tab_labels)
+
+main_tab_map = dict(zip(visible_main_tab_labels, st.tabs(visible_main_tab_labels)))
+tab_inputs = main_tab_map["Cell Inputs"]
+tab_dashboard = main_tab_map["📊 Dashboard"]
+tab_tracking = main_tab_map["⚡ Cycler Tracking"]
+tab_cohorts = main_tab_map["🗂️ Cohorts"]
+tab_workspace = main_tab_map["🧪 Study Workspace"]
+tab_lineage = main_tab_map["🧬 Lineage Explorer"]
+tab_batch_builder = main_tab_map["🏗️ Batch Builder"]
+tab1 = main_tab_map["Plots"]
+tab2 = main_tab_map["Export"]
+tab_comparison = main_tab_map.get("Comparison")
+tab_master = main_tab_map.get("Master Table")
 
 # --- Dashboard Tab ---
 with tab_dashboard:
     st.header("📊 Battery Testing Dashboard")
-
-    tracking_payload = get_tracking_dashboard_payload()
-    if tracking_payload.get('available'):
-        synced_records = sync_tracking_rows_to_database(tracking_payload['rows'])
-        if synced_records:
-            tracking_payload = get_tracking_dashboard_payload()
-
-        tracking_rows = tracking_payload['rows']
-        tracking_summary = tracking_payload['summary']
-
-        st.subheader("⚡ Cycler Tracking")
-        tracking_metric_cols = st.columns(4)
-        tracking_metric_cols[0].metric("Active Experiments", tracking_summary['active_experiments'])
-        tracking_metric_cols[1].metric("Active Cells", tracking_summary['active_cells'])
-        tracking_metric_cols[2].metric("Completed Experiments", tracking_summary['completed_experiments'])
-        dud_value = tracking_summary['suspected_dud_cells']
-        dud_delta = (
-            f"{tracking_summary['defect_fraction']:.1%} dud rate"
-            if tracking_summary.get('defect_fraction') is not None
-            else None
-        )
-        tracking_metric_cols[3].metric("Suspected Dud Cells", dud_value, dud_delta)
-
-        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([2, 2, 1, 1])
-        available_statuses = sorted({row['status'] for row in tracking_rows})
-        selected_statuses = filter_col1.multiselect(
-            "Tracking Status",
-            options=available_statuses,
-            default=['Active'] if 'Active' in available_statuses else available_statuses,
-            key='tracking_status_filter'
-        )
-        available_projects = sorted({row['project_name'] for row in tracking_rows if row.get('project_name')})
-        selected_tracking_projects = filter_col2.multiselect(
-            "Tracking Projects",
-            options=available_projects,
-            default=available_projects,
-            key='tracking_project_filter'
-        )
-        dud_only = filter_col3.checkbox(
-            "Duds only",
-            value=False,
-            key='tracking_duds_only',
-            help="Only show experiments where fewer cells made it into the database than were placed on cyclers."
-        )
-        issue_only = filter_col4.checkbox(
-            "Issues only",
-            value=False,
-            key='tracking_issues_only',
-            help="Only show duplicate names, missing channels, or other tracking anomalies."
-        )
-
-        filtered_tracking_rows = []
-        for row in tracking_rows:
-            if selected_statuses and row['status'] not in selected_statuses:
-                continue
-            if selected_tracking_projects and row.get('project_name') not in selected_tracking_projects:
-                continue
-            if dud_only and row.get('missing_cell_count', 0) <= 0:
-                continue
-            if issue_only and not row.get('alerts'):
-                continue
-            filtered_tracking_rows.append(row)
-
-        tracking_table = pd.DataFrame([
-            {
-                'Status': row['status'],
-                'Experiment': row['experiment_name'],
-                'Project': row.get('project_name') or 'Unresolved',
-                'Tracking Date': row.get('tracking_date_display') or '',
-                'Tracked Cells': row.get('tracked_cell_count', 0),
-                'DB Cells': row.get('database_cell_count', 0),
-                'Missing Cells': row.get('missing_cell_count', 0),
-                'Cyclers': row.get('cycler_channel_text') or 'Missing',
-                'Notes': row.get('notes') or '',
-                'Flags': ' | '.join(row.get('alerts', []))
-            }
-            for row in filtered_tracking_rows
-        ])
-
-        st.caption(f"{len(filtered_tracking_rows)} tracking row(s) shown")
-        if not tracking_table.empty:
-            st.dataframe(tracking_table, use_container_width=True, hide_index=True)
-        else:
-            st.info("No tracking rows match the current filters.")
-
-        actionable_rows = [row for row in filtered_tracking_rows if row.get('can_open_in_editor')]
-        if actionable_rows:
-            selected_tracking_row_key = st.selectbox(
-                "Open in Cell Inputs",
-                options=[row['row_key'] for row in actionable_rows],
-                format_func=lambda key: next(
-                    (
-                        f"{row['experiment_name']} | {row.get('project_name') or 'Unresolved'} | "
-                        f"{row['status']} | {row.get('tracking_date_display') or 'No date'}"
-                    )
-                    for row in actionable_rows if row['row_key'] == key
-                ),
-                key='tracking_open_selector'
-            )
-            selected_tracking_row = next(
-                row for row in actionable_rows if row['row_key'] == selected_tracking_row_key
-            )
-            action_label = (
-                "Open Existing Experiment"
-                if selected_tracking_row.get('db_experiment_id')
-                else "Create Draft in Cell Inputs"
-            )
-            if st.button(action_label, key='tracking_open_button', use_container_width=True):
-                open_tracking_row_from_dashboard(selected_tracking_row)
-                st.rerun()
-        else:
-            st.info("Rows with duplicate unresolved names or unknown projects cannot be opened automatically yet.")
-
+    st.caption("The Cycler tracking comparison lives in the `⚡ Cycler Tracking` tab.")
+    render_dashboard_cohort_snapshot_panel(queue_workspace_callback=queue_study_workspace_snapshot)
+    if st.session_state.get('dashboard_cohort_snapshot_id'):
         st.markdown("---")
     
     # Render filter controls in sidebar
@@ -1287,10 +2391,40 @@ with tab_dashboard:
         else:
             st.info("No activity in the last 30 days.")
 
+with tab_tracking:
+    render_cycler_tracking_tab()
+
+with tab_cohorts:
+    render_cohort_explorer(
+        open_experiment_callback=open_experiment_from_sidebar,
+        queue_comparison_callback=queue_cohort_comparison,
+        queue_dashboard_snapshot_callback=queue_dashboard_cohort_snapshot,
+        queue_workspace_callback=queue_study_workspace_snapshot,
+        current_project_id=st.session_state.get('current_project_id'),
+        current_project_name=st.session_state.get('current_project_name'),
+    )
+
+with tab_workspace:
+    render_study_workspace(
+        open_experiment_callback=open_experiment_from_sidebar,
+        queue_comparison_callback=queue_cohort_comparison,
+    )
+
+with tab_lineage:
+    render_lineage_explorer(open_batch_in_cell_inputs_callback=open_batch_in_cell_inputs)
+
+with tab_batch_builder:
+    render_batch_builder(
+        activate_project_callback=set_active_project,
+        current_project_id=st.session_state.get('current_project_id'),
+        current_project_name=st.session_state.get('current_project_name'),
+    )
+
 # --- Cell Inputs Tab ---
 with tab_inputs:
     # If user started a new experiment, clear cell input state
     if st.session_state.get('start_new_experiment'):
+        clear_batch_builder_cell_input_state(preserve_request=True)
         project_defaults = get_default_values_for_experiment(st.session_state.get('current_project_id'))
         default_disc_diameter = project_defaults.get('disc_diameter_mm', 15.0)
         # Clear experiment-level session state
@@ -1369,11 +2503,27 @@ with tab_inputs:
                 f"Tracked on {tracking_metadata.get('tracking_date')}" if tracking_metadata.get('tracking_date') else None,
                 tracking_metadata.get('cycler_channel_text'),
                 f"Expected {tracking_metadata.get('tracked_cell_count')} cell(s)" if tracking_metadata.get('tracked_cell_count') else None,
+                (
+                    f"Manual status: {TRACKING_STATUS_DISPLAY_LABELS.get(tracking_metadata.get('manual_status'), tracking_metadata.get('manual_status'))}"
+                    if tracking_metadata.get('manual_status')
+                    else None
+                ),
             ]
             tracking_text = " | ".join(bit for bit in tracking_bits if bit)
             if tracking_text:
                 st.caption(f"Tracking metadata: {tracking_text}")
-        
+
+        ontology_metadata = normalize_ontology_context(experiment_data.get('ontology'))
+        if ontology_metadata:
+            with st.container(border=True):
+                st.markdown("#### Canonical Lineage")
+                render_ontology_context_banner(
+                    ontology_metadata,
+                    key_prefix=f"cell_inputs_{loaded_experiment_id}",
+                    legacy_experiment_id=loaded_experiment_id,
+                    legacy_experiment_name=loaded_experiment.get('experiment_name'),
+                )
+
         # Only hydrate editor state when loading a different experiment.
         if initialized_experiment_id != loaded_experiment_id:
             parsed_experiment_date = experiment_data.get('experiment_date')
@@ -1471,6 +2621,8 @@ with tab_inputs:
             st.session_state['pressed_thickness'] = 0.0
         if 'experiment_notes' not in st.session_state:
             st.session_state['experiment_notes'] = ''
+
+        apply_batch_builder_cell_input_request()
         
         current_experiment_name = st.session_state.get('current_experiment_name', "")
         current_experiment_date = st.session_state.get('current_experiment_date', date.today())
@@ -1491,6 +2643,23 @@ with tab_inputs:
             st.session_state['pressed_thickness'] = 0.0
         if 'experiment_notes' not in st.session_state:
             st.session_state['experiment_notes'] = ''
+
+    active_batch_builder_template = get_active_batch_builder_template()
+    if is_new_experiment and active_batch_builder_template:
+        with st.container(border=True):
+            st.markdown("#### Canonical Batch Starter")
+            st.caption("This experiment will save with canonical ontology context from the Batch Builder.")
+            render_ontology_context_banner(
+                active_batch_builder_template.get('ontology_context'),
+                key_prefix="cell_inputs_batch_builder_template",
+                legacy_experiment_name=active_batch_builder_template.get('preferred_experiment_name'),
+            )
+            batch_bits = [
+                active_batch_builder_template.get('project_name'),
+                active_batch_builder_template.get('ingestion_hints', {}).get('cell_build_naming'),
+            ]
+            if any(batch_bits):
+                st.caption(" | ".join(bit for bit in batch_bits if bit))
     
     # Experiment metadata inputs
     col1, col2 = st.columns(2)
@@ -1543,7 +2712,7 @@ with tab_inputs:
                 'Disc Diameter (mm) for Areal Capacity Calculation', 
                 min_value=1.0,
                 max_value=50.0,
-                value=float(current_disc_diameter),
+                value=coerce_float_input(current_disc_diameter, 15.0),
                 step=1.0,
                 help="Diameter of the coin cell disc for areal capacity calculations"
             )
@@ -1558,7 +2727,7 @@ with tab_inputs:
                     'Cathode Length (mm)',
                     min_value=1.0,
                     max_value=500.0,
-                    value=st.session_state.get('current_cathode_length', 50.0),
+                    value=coerce_float_input(st.session_state.get('current_cathode_length', 50.0), 50.0),
                     step=0.1,
                     key='cathode_length_input',
                     help="Length of the cathode active area"
@@ -1568,7 +2737,7 @@ with tab_inputs:
                     'Cathode Width (mm)',
                     min_value=1.0,
                     max_value=500.0,
-                    value=st.session_state.get('current_cathode_width', 50.0),
+                    value=coerce_float_input(st.session_state.get('current_cathode_width', 50.0), 50.0),
                     step=0.1,
                     key='cathode_width_input',
                     help="Width of the cathode active area"
@@ -1579,7 +2748,7 @@ with tab_inputs:
                     'Number of Stacked Cells',
                     min_value=1,
                     max_value=100,
-                    value=st.session_state.get('current_num_stacked_cells', 1),
+                    value=coerce_int_input(st.session_state.get('current_num_stacked_cells', 1), 1),
                     step=1,
                     key='num_stacked_cells_input',
                     help="Number of cells stacked in the pouch configuration"
@@ -1617,7 +2786,7 @@ with tab_inputs:
             'Disc Diameter (mm) for Areal Capacity Calculation', 
             min_value=1.0,
             max_value=50.0,
-            value=float(current_disc_diameter),
+            value=coerce_float_input(current_disc_diameter, 15.0),
             step=1.0,
             help="Diameter of the electrode disc for areal capacity calculations"
         )
@@ -2244,14 +3413,14 @@ with tab_inputs:
     solids_content = st.number_input(
         'Solids Content (%)',
         min_value=0.0, max_value=100.0, step=0.1,
-        value=st.session_state.get('solids_content', 0.0),
+        value=coerce_float_input(st.session_state.get('solids_content', 0.0), 0.0),
         key='solids_content',
         help='Percentage solids in the slurry formulation when the electrode was made.'
     )
     pressed_thickness = st.number_input(
         'Pressed Thickness (um)',
         min_value=0.0, step=0.1,
-        value=st.session_state.get('pressed_thickness', 0.0),
+        value=coerce_float_input(st.session_state.get('pressed_thickness', 0.0), 0.0),
         key='pressed_thickness',
         help='Pressed electrode thickness in microns (um).'
     )
@@ -2668,7 +3837,7 @@ with tab_inputs:
                                     cell_format_data['cathode_length'] = st.session_state.get('current_cathode_length', 50.0)
                                     cell_format_data['cathode_width'] = st.session_state.get('current_cathode_width', 50.0)
                                     cell_format_data['num_stacked_cells'] = st.session_state.get('current_num_stacked_cells', 1)
-                            
+
                             update_experiment(
                                 experiment_id=experiment_id,
                                 project_id=current_project_id,
@@ -2681,8 +3850,10 @@ with tab_inputs:
                                 solids_content=solids_content,
                                 pressed_thickness=pressed_thickness,
                                 experiment_notes=experiment_notes,
-                                cell_format_data=cell_format_data
+                                cell_format_data=cell_format_data,
+                                additional_data=get_active_batch_builder_additional_data(),
                             )
+                            clear_batch_builder_cell_input_state()
                             clear_navigation_caches()
                             st.success(f"Updated experiment '{exp_name}' in project '{current_project_name}'!")
                         else:
@@ -2707,8 +3878,10 @@ with tab_inputs:
                                 solids_content=solids_content,
                                 pressed_thickness=pressed_thickness,
                                 experiment_notes=experiment_notes,
-                                cell_format_data=cell_format_data
+                                cell_format_data=cell_format_data,
+                                additional_data=get_active_batch_builder_additional_data(),
                             )
+                            clear_batch_builder_cell_input_state()
                             clear_navigation_caches()
                             st.success(f"Saved experiment '{exp_name}' with {len(cells_data)} cells in project '{current_project_name}'!")
                         
@@ -2849,9 +4022,6 @@ if loaded_experiment:
         # Display experiment metadata
         if experiment_data.get('experiment_date'):
             st.info(f"📅 Experiment Date: {experiment_data['experiment_date']}")
-        if experiment_data.get('disc_diameter_mm'):
-            st.info(f"🔘 Disc Diameter: {experiment_data['disc_diameter_mm']} mm")
-        
         # LLM Summary Section
         experiment_id = loaded_experiment.get('experiment_id')
         with st.expander("🤖 Generate LLM-Ready Summary", expanded=False):
@@ -3321,7 +4491,7 @@ if ready:
                 st.plotly_chart(interactive_cap_fig, use_container_width=True)
                 
                 # Add info about interactive features
-                st.info("💡 **Tip**: Hover over data points for details, click-drag to zoom, double-click to reset view.")
+                st.info("💡 **Tip**: Hover over data points for cycle, capacity, and retention details. Retention uses the first valid post-formation cycle for each cell and skips clearly anomalous baseline cycles when needed.")
             else:
                 # Static matplotlib plot
                 fig = plot_capacity_graph(
@@ -3561,508 +4731,359 @@ if ready:
             st.markdown("---")
     with tab2:
         st.header("Export & Download")
-        st.markdown("---")
         
         # Only show export options if data is ready
         if ready:
-            st.subheader("PowerPoint Export Options")
-            st.markdown("*Configure what to include in your PowerPoint slide*")
-            
-            # Toggle Controls for Slide Content
-            with st.expander("Slide Content Selection", expanded=True):
-                content_col1, content_col2, content_col3 = st.columns(3)
-                
-                with content_col1:
-                    st.markdown("**Data & Tables**")
-                    include_summary_table = st.checkbox(
-                        "Main summary table",
-                        value=True,
-                        key="export_summary_table",
-                        help="Include the main summary table with key metrics"
-                    )
-                    
-                with content_col2:
-                    st.markdown("**Plots**")
-                    include_main_plot = st.checkbox(
-                        "Capacity comparison plot",
-                        value=True,
-                        key="export_main_plot",
-                        help="Include the main capacity vs cycle plot"
-                    )
-                    include_retention_plot = st.checkbox(
-                        "Capacity retention plot",
-                        value=True,
-                        key="export_retention_plot",
-                        help="Include the capacity retention plot"
-                    )
-                    
-                with content_col3:
-                    st.markdown("**Additional Data**")
-                    include_notes = st.checkbox(
-                        "Experiment notes",
-                        value=True,
-                        key="export_notes",
-                        help="Include experiment notes from the Cell Input page"
-                    )
-                    include_electrode_data = st.checkbox(
-                        "Electrode data group",
-                        value=True,
-                        key="export_electrode_group",
-                        help="Include electrode-related data"
-                    )
-                    include_formulation = st.checkbox(
-                        "Formulation table",
-                        value=True,
-                        key="export_formulation",
-                        help="Include formulation component table"
-                    )
-            
-            # Electrode Data Sub-toggles
-            if include_electrode_data:
-                with st.expander("Electrode Data Details", expanded=True):
-                    electrode_col1, electrode_col2, electrode_col3 = st.columns(3)
-                    
-                    with electrode_col1:
-                        include_porosity = st.checkbox(
-                            "Porosity",
-                            value=True,
-                            key="export_porosity",
-                            help="Include porosity calculations"
-                        )
-                    
-                    with electrode_col2:
-                        include_thickness = st.checkbox(
-                            "Pressed electrode thickness",
-                            value=True,
-                            key="export_thickness",
-                            help="Include electrode thickness data"
-                        )
-                    
-                    with electrode_col3:
-                        include_solids_content = st.checkbox(
-                            "Solids content",
-                            value=True,
-                            key="export_solids_content",
-                            help="Include solids content percentage"
-                        )
-            else:
-                include_porosity = False
-                include_thickness = False
-                include_solids_content = False
-            
-            # Get stored experiment notes from the current experiment
             stored_experiment_notes = ""
-            if include_notes and dfs:
-                # Get experiment notes from the first dataset (they should be the same for all cells in an experiment)
+            if dfs:
                 if 'experiment_notes' in dfs[0]:
                     stored_experiment_notes = dfs[0]['experiment_notes'] or ""
                 else:
-                    # Try to get from session state as fallback
                     stored_experiment_notes = st.session_state.get('experiment_notes', "")
+            has_experiment_notes = bool(stored_experiment_notes.strip())
             
-            st.markdown("---")
+            include_summary_table = True
+            include_electrode_data = False
+            include_porosity = False
+            include_thickness = False
+            include_solids_content = False
+            include_formulation = False
             
-            # Note: Retention plot settings are automatically synchronized with the Plots tab
-            if include_retention_plot:
-                st.info("**Retention plot settings are automatically synchronized with the Plots tab**")
-                st.info("Configure retention plot parameters in the Plots tab, and they will be used in the export.")
+            current_ref_cycle = st.session_state.get('reference_cycle', 5)
+            current_threshold = st.session_state.get('retention_threshold', 80.0)
             
-            st.markdown("---")
-            
-            # Generate Preview Summary
-            st.subheader("Slide Content Preview")
-            
-            content_items = []
-            if include_summary_table:
-                content_items.append("✅ Main summary table")
-            if include_main_plot:
-                content_items.append("✅ Capacity comparison plot")
-            if include_retention_plot:
-                # Get current settings from session state
-                current_ref_cycle = st.session_state.get('reference_cycle', 5)
-                current_threshold = st.session_state.get('retention_threshold', 80.0)
-                content_items.append(f"✅ Capacity retention plot (ref: cycle {current_ref_cycle}, threshold: {current_threshold}%)")
-            if include_notes and stored_experiment_notes.strip():
-                content_items.append("✅ Experiment notes (from Cell Input page)")
-            if include_electrode_data:
-                electrode_items = []
-                if include_porosity:
-                    electrode_items.append("Porosity")
-                if include_thickness:
-                    electrode_items.append("Thickness")
-                if include_solids_content:
-                    electrode_items.append("Solids Content")
-                if electrode_items:
-                    content_items.append(f"✅ Electrode data: {', '.join(electrode_items)}")
-            if include_formulation:
-                content_items.append("✅ Formulation table")
-                # Debug: Check formulation data availability
-                formulation_data = None
-                if dfs and len(dfs) > 0:
-                    formulation_data = dfs[0].get('formulation', [])
-                if not formulation_data or len(formulation_data) == 0:
-                    loaded_experiment = st.session_state.get('loaded_experiment')
-                    if loaded_experiment:
-                        experiment_data = loaded_experiment.get('experiment_data', {})
-                        cells_data = experiment_data.get('cells', [])
-                        if cells_data and len(cells_data) > 0:
-                            formulation_data = cells_data[0].get('formulation', [])
+            with st.container(border=True):
+                header_cols = st.columns([0.75, 0.25], gap="small")
+                with header_cols[0]:
+                    st.subheader("PowerPoint")
+                    st.caption("Create a clean single-slide summary for the current experiment.")
+                with header_cols[1]:
+                    st.metric("Visible cells", len(dfs))
                 
-                # Enhanced debug output
-                with st.expander("🔍 Debug: Formulation Data", expanded=False):
-                    st.write(f"**Formulation data length:** {len(formulation_data) if formulation_data else 0}")
-                    if formulation_data:
-                        st.write(f"**Data type:** {type(formulation_data)}")
-                        st.write(f"**First item:** {formulation_data[0] if len(formulation_data) > 0 else 'N/A'}")
-                        st.write(f"**Full data:** {formulation_data}")
-                        # Show keys if it's a dict
-                        if formulation_data and len(formulation_data) > 0 and isinstance(formulation_data[0], dict):
-                            st.write(f"**Keys in first item:** {list(formulation_data[0].keys())}")
+                control_cols = st.columns([0.58, 0.42], gap="large")
+                
+                with control_cols[0]:
+                    powerpoint_chart = st.radio(
+                        "Chart on the slide",
+                        options=["Capacity retention", "Capacity comparison"],
+                        index=0,
+                        horizontal=True,
+                        key="export_plot_focus",
+                        help="Choose which chart to feature on the PowerPoint slide."
+                    )
+                    include_retention_plot = powerpoint_chart == "Capacity retention"
+                    include_main_plot = not include_retention_plot
+                    
+                    if has_experiment_notes:
+                        include_notes = st.checkbox(
+                            "Include experiment notes",
+                            value=True,
+                            key="export_include_notes",
+                            help="Add the notes saved for this experiment."
+                        )
                     else:
-                        st.warning("No formulation data found in dfs or loaded_experiment")
-            
-            # Debug: Show summary table data and averages
-            if include_summary_table and len(dfs) > 1:
-                with st.expander("🔍 Debug: Summary Table & Averages", expanded=False):
-                    import pandas as pd
-                    from export import get_cell_metrics
+                        include_notes = False
+                        st.caption("No experiment notes are saved for this experiment yet.")
                     
-                    # Create a DataFrame-like structure for display
-                    debug_data = []
-                    for i, d in enumerate(dfs):
-                        df_cell = d['df']
-                        cell_name = d.get('testnum', f'Cell {i+1}') or f'Cell {i+1}'
-                        metrics = get_cell_metrics(df_cell, dfs[0].get('formation_cycles', 4))
-                        debug_data.append({
-                            'Cell': cell_name,
-                            '1st Cycle Discharge Capacity (mAh/g)': metrics.get('max_qdis'),
-                            'First Cycle Efficiency (%)': metrics.get('eff_pct'),
-                            'Cycle Life (80%)': metrics.get('cycle_life'),
-                            'Reversible Capacity (mAh/g)': metrics.get('reversible_capacity'),
-                            'Coulombic Efficiency (%)': metrics.get('coulombic_eff')
-                        })
+                    if include_retention_plot:
+                        st.caption(
+                            f"Retention settings stay synced with the Plots tab: reference cycle {current_ref_cycle}, threshold {current_threshold:.0f}%."
+                        )
+                    else:
+                        st.caption("Capacity comparison uses the current plot styling and cell visibility from the Plots tab.")
+                
+                with control_cols[1]:
+                    st.markdown("**Included on the slide**")
+                    slide_contents = [
+                        "Summary metrics table",
+                        "Experiment metadata",
+                        "Selected chart",
+                    ]
+                    if include_notes:
+                        slide_contents.append("Experiment notes")
                     
-                    debug_df = pd.DataFrame(debug_data)
-                    st.write("**Cell Data:**")
-                    st.dataframe(debug_df)
-                    st.write("**DataFrame Statistics:**")
-                    st.write(debug_df.describe())
+                    for item in slide_contents:
+                        st.markdown(f"- {item}")
                     
-                    # Calculate and show averages
-                    avg_row = {
-                        'Cell': 'Average Performance',
-                        '1st Cycle Discharge Capacity (mAh/g)': debug_df['1st Cycle Discharge Capacity (mAh/g)'].mean() if '1st Cycle Discharge Capacity (mAh/g)' in debug_df.columns else None,
-                        'First Cycle Efficiency (%)': debug_df['First Cycle Efficiency (%)'].mean() if 'First Cycle Efficiency (%)' in debug_df.columns else None,
-                        'Cycle Life (80%)': debug_df['Cycle Life (80%)'].mean() if 'Cycle Life (80%)' in debug_df.columns else None,
-                        'Reversible Capacity (mAh/g)': debug_df['Reversible Capacity (mAh/g)'].mean() if 'Reversible Capacity (mAh/g)' in debug_df.columns else None,
-                        'Coulombic Efficiency (%)': debug_df['Coulombic Efficiency (%)'].mean() if 'Coulombic Efficiency (%)' in debug_df.columns else None
-                    }
-                    st.write("**Average Performance Row:**")
-                    st.write(avg_row)
-            
-            if content_items:
-                for item in content_items:
-                    st.markdown(f"- {item}")
-            else:
-                st.warning("No content selected for export")
-            
-            st.markdown("---")
-            
-            # PowerPoint Export
-            st.subheader("Generate PowerPoint")
-            
-            if content_items:  # Only show export if something is selected
+                    summary_cols = st.columns(2)
+                    with summary_cols[0]:
+                        st.metric("Chart", "Retention" if include_retention_plot else "Capacity")
+                    with summary_cols[1]:
+                        st.metric("Notes", "Included" if include_notes else "Off")
+                
                 from export import export_powerpoint
                 
-                # Generate PowerPoint with selected options
                 try:
-                    pptx_bytes, pptx_file_name = export_powerpoint(
-                        dfs=dfs,
-                        show_averages=show_average_performance,
-                        experiment_name=experiment_name,
-                        show_lines=show_lines,
-                        show_efficiency_lines=show_efficiency_lines,
-                        remove_last_cycle=remove_last_cycle,
-                        # Advanced slide content control
-                        include_summary_table=include_summary_table,
-                        include_main_plot=include_main_plot,
-                        include_retention_plot=include_retention_plot,
-                        include_notes=include_notes,
-                        include_electrode_data=include_electrode_data,
-                        include_porosity=include_porosity,
-                        include_thickness=include_thickness,
-                        include_solids_content=include_solids_content,
-                        include_formulation=include_formulation,
-                        experiment_notes=stored_experiment_notes,
-                        # Retention plot parameters (use session state from Plots tab)
-                        retention_threshold=st.session_state.get('retention_threshold', 80.0),
-                        reference_cycle=st.session_state.get('reference_cycle', 5),
-                        formation_cycles=dfs[0].get('formation_cycles', 4) if dfs and len(dfs) > 0 else st.session_state.get('current_formation_cycles', 4),
-                        retention_show_lines=show_lines,  # Use same lines as main plot
-                        retention_remove_markers=remove_markers,
-                        retention_hide_legend=hide_legend,
-                        retention_show_title=show_graph_title,
-                        show_baseline_line=st.session_state.get('retention_show_baseline', True),
-                        show_threshold_line=st.session_state.get('retention_show_threshold', True),
-                        y_axis_min=st.session_state.get('y_axis_min', 0.0),
-                        y_axis_max=st.session_state.get('y_axis_max', 110.0),
-                        # Plot customization parameters (from session state)
-                        show_graph_title=st.session_state.get('show_graph_title', True),
-                        show_average_performance=show_average_performance,
-                        avg_line_toggles=st.session_state.get('avg_line_toggles', {}),
-                        remove_markers=st.session_state.get('remove_markers', False),
-                        hide_legend=st.session_state.get('hide_legend', False)
-                    )
+                    with st.spinner("Preparing PowerPoint..."):
+                        pptx_bytes, pptx_file_name = export_powerpoint(
+                            dfs=dfs,
+                            show_averages=show_average_performance,
+                            experiment_name=experiment_name,
+                            show_lines=show_lines,
+                            show_efficiency_lines=show_efficiency_lines,
+                            remove_last_cycle=remove_last_cycle,
+                            include_summary_table=include_summary_table,
+                            include_main_plot=include_main_plot,
+                            include_retention_plot=include_retention_plot,
+                            include_notes=include_notes,
+                            include_electrode_data=include_electrode_data,
+                            include_porosity=include_porosity,
+                            include_thickness=include_thickness,
+                            include_solids_content=include_solids_content,
+                            include_formulation=include_formulation,
+                            experiment_notes=stored_experiment_notes if include_notes else "",
+                            retention_threshold=current_threshold,
+                            reference_cycle=current_ref_cycle,
+                            formation_cycles=dfs[0].get('formation_cycles', 4) if dfs else st.session_state.get('current_formation_cycles', 4),
+                            retention_show_lines=show_lines,
+                            retention_remove_markers=remove_markers,
+                            retention_hide_legend=hide_legend,
+                            retention_show_title=show_graph_title,
+                            show_baseline_line=st.session_state.get('retention_show_baseline', True),
+                            show_threshold_line=st.session_state.get('retention_show_threshold', True),
+                            y_axis_min=st.session_state.get('y_axis_min', 0.0),
+                            y_axis_max=st.session_state.get('y_axis_max', 110.0),
+                            show_graph_title=st.session_state.get('show_graph_title', True),
+                            show_average_performance=show_average_performance,
+                            avg_line_toggles=st.session_state.get('avg_line_toggles', {}),
+                            remove_markers=st.session_state.get('remove_markers', False),
+                            hide_legend=st.session_state.get('hide_legend', False)
+                        )
                     
-                    st.success("PowerPoint generated successfully!")
                     st.download_button(
-                        f"Download PowerPoint: {pptx_file_name}",
+                        "Download PowerPoint",
                         data=pptx_bytes,
                         file_name=pptx_file_name,
                         mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',
                         key='download_enhanced_pptx',
                         use_container_width=True
                     )
-                    
-                    # Show file details
-                    st.info(f"**File:** {pptx_file_name}")
-                    
+                    st.caption(f"Ready: {pptx_file_name}")
                 except Exception as e:
                     st.error(f"Error generating PowerPoint: {str(e)}")
                     st.error("Please check your data and settings, then try again.")
-            else:
-                st.info("Please select at least one content item to include in the PowerPoint slide.")
-            
-            st.markdown("---")
             
             # Project-Level Export Section
             if current_project_id:
-                st.markdown("---")
-                st.subheader("📦 Export Entire Project")
-                st.markdown("*Export all experiments in the current project to a single PowerPoint file*")
-                
-                if st.button("Export Entire Project", type="secondary", use_container_width=True):
-                    try:
-                        from database import get_all_project_experiments_data, get_project_by_id
-                        from export import export_powerpoint
-                        from io import BytesIO
-                        from pptx import Presentation
-                        from pptx.util import Inches, Pt
-                        from pptx.enum.text import PP_ALIGN
-                        import json
-                        from io import StringIO
-                        from data_processing import calculate_efficiency_based_on_project_type
-                        
-                        # Get all experiments for the project, sorted by creation date
-                        all_experiments_data = get_all_project_experiments_data(current_project_id)
-                        
-                        if not all_experiments_data:
-                            st.error("No experiments found in this project.")
-                        else:
-                            # Sort by creation date (chronologically)
-                            # Handle None values by using a far-future date for sorting
-                            from datetime import datetime
-                            def get_sort_key(exp_data):
-                                created_date = exp_data[13] if len(exp_data) > 13 else None  # created_date is index 13
-                                if created_date is None:
-                                    return datetime.max  # Put None dates at the end
-                                # If it's already a datetime, use it directly
-                                if isinstance(created_date, datetime):
-                                    return created_date
-                                # If it's a string, try to parse it
-                                if isinstance(created_date, str):
-                                    try:
-                                        return datetime.fromisoformat(created_date.replace('Z', '+00:00'))
-                                    except:
-                                        return datetime.max
-                                return datetime.max
-                            
-                            all_experiments_data.sort(key=get_sort_key)
-                            
-                            st.info(f"Found {len(all_experiments_data)} experiment(s). Generating slides...")
-                            
-                            # Create a new presentation for the project
-                            project_prs = Presentation()
-                            project_prs.slide_layouts[6]  # Blank layout
-                            
-                            # Get project info
-                            project_info = get_project_by_id(current_project_id)
-                            project_name = project_info[1] if project_info else "Project"
-                            project_type = project_info[3] if project_info and len(project_info) > 3 else "Full Cell"
-                            
-                            # Process each experiment
-                            experiments_processed = 0
-                            for exp_data in all_experiments_data:
-                                exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes, cutoff_voltage_lower, cutoff_voltage_upper = exp_data
-                                
-                                try:
-                                    # Parse experiment data
-                                    parsed_data = json.loads(data_json)
-                                    
-                                    # Load cells data
-                                    cells_data = parsed_data.get('cells', [])
-                                    if not cells_data:
-                                        # Single cell experiment
-                                        cells_data = [{
-                                            'data_json': data_json,
-                                            'cell_name': exp_name,
-                                            'test_number': test_number,
-                                            'loading': loading,
-                                            'active_material': active_material,
-                                            'formation_cycles': formation_cycles,
-                                            'formulation': json.loads(formulation_json) if formulation_json else []
-                                        }]
-                                    
-                                    # Build dfs structure for this experiment
-                                    exp_dfs = []
-                                    for cell_data in cells_data:
-                                        if cell_data.get('excluded', False):
-                                            continue
-                                        
-                                        cell_data_json = cell_data.get('data_json', '')
-                                        if not cell_data_json:
-                                            continue
-                                        
-                                        df = pd.read_json(StringIO(cell_data_json))
-                                        
-                                        # Recalculate efficiency based on project type
-                                        if 'Q charge (mA.h)' in df.columns and 'Q discharge (mA.h)' in df.columns:
-                                            df['Efficiency (-)'] = calculate_efficiency_based_on_project_type(
-                                                df['Q charge (mA.h)'], 
-                                                df['Q discharge (mA.h)'], 
-                                                project_type
-                                            ) / 100
-                                        
-                                        # Get formulation
-                                        formulation = cell_data.get('formulation', [])
-                                        if not formulation and formulation_json:
-                                            try:
-                                                formulation = json.loads(formulation_json)
-                                            except:
-                                                formulation = []
-                                        
-                                        exp_dfs.append({
-                                            'df': df,
-                                            'testnum': cell_data.get('test_number', cell_data.get('cell_name', 'Unknown')),
-                                            'loading': cell_data.get('loading', loading),
-                                            'active': cell_data.get('active_material', active_material),
-                                            'formation_cycles': cell_data.get('formation_cycles', formation_cycles),
-                                            'project_type': project_type,
-                                            'excluded': False,
-                                            'pressed_thickness': parsed_data.get('pressed_thickness'),
-                                            'solids_content': parsed_data.get('solids_content'),
-                                            'porosity': cell_data.get('porosity', porosity),
-                                            'formulation': formulation
-                                        })
-                                    
-                                    if not exp_dfs:
-                                        st.warning(f"Skipping {exp_name}: No valid cell data found.")
-                                        continue
-                                    
-                                    # Add slides for this experiment to the project presentation
-                                    export_powerpoint(
-                                        dfs=exp_dfs,
-                                        show_averages=True,
-                                        experiment_name=exp_name,
-                                        show_lines=show_lines,
-                                        show_efficiency_lines=show_efficiency_lines,
-                                        remove_last_cycle=remove_last_cycle,
-                                        include_summary_table=include_summary_table,
-                                        include_main_plot=include_main_plot,
-                                        include_retention_plot=include_retention_plot,
-                                        include_notes=include_notes,
-                                        include_electrode_data=include_electrode_data,
-                                        include_porosity=include_porosity,
-                                        include_thickness=include_thickness,
-                                        include_solids_content=include_solids_content,
-                                        include_formulation=include_formulation,
-                                        experiment_notes=experiment_notes or "",
-                                        retention_threshold=st.session_state.get('retention_threshold', 80.0),
-                                        reference_cycle=st.session_state.get('reference_cycle', 5),
-                                        formation_cycles=formation_cycles or 4,
-                                        retention_show_lines=show_lines,
-                                        retention_remove_markers=remove_markers,
-                                        retention_hide_legend=hide_legend,
-                                        retention_show_title=show_graph_title,
-                                        show_baseline_line=st.session_state.get('retention_show_baseline', True),
-                                        show_threshold_line=st.session_state.get('retention_show_threshold', True),
-                                        y_axis_min=st.session_state.get('y_axis_min', 0.0),
-                                        y_axis_max=st.session_state.get('y_axis_max', 110.0),
-                                        show_graph_title=st.session_state.get('show_graph_title', True),
-                                        show_average_performance=show_average_performance,
-                                        avg_line_toggles=st.session_state.get('avg_line_toggles', {}),
-                                        remove_markers=st.session_state.get('remove_markers', False),
-                                        hide_legend=st.session_state.get('hide_legend', False),
-                                        existing_prs=project_prs  # Append to project presentation
-                                    )
-                                    
-                                    experiments_processed += 1
-                                    
-                                except Exception as e:
-                                    st.warning(f"Error processing experiment {exp_name}: {str(e)}")
-                                    import logging
-                                    logging.error(f"Error processing experiment {exp_name}: {e}")
-                                    continue
-                            
-                            if experiments_processed > 0:
-                                # Save project presentation
-                                project_bio = BytesIO()
-                                project_prs.save(project_bio)
-                                project_bio.seek(0)
-                                
-                                st.success(f"Project export completed! Processed {experiments_processed} experiment(s).")
-                                st.download_button(
-                                    "Download Project PowerPoint",
-                                    data=project_bio,
-                                    file_name="project_summary.pptx",
-                                    mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                                    key='download_project_pptx',
-                                    use_container_width=True
-                                )
-                            else:
-                                st.error("No experiments could be processed for export.")
+                with st.container(border=True):
+                    st.subheader("Project PowerPoint")
+                    st.caption("Build one deck with a slide for every experiment in the current project using the same chart choice above.")
                     
-                    except Exception as e:
-                        st.error(f"Error exporting project: {str(e)}")
-                        import traceback
-                        st.error(traceback.format_exc())
+                    if st.button("Build Project PowerPoint", type="secondary", use_container_width=True):
+                        try:
+                            from database import get_all_project_experiments_data, get_project_by_id
+                            from export import export_powerpoint
+                            from io import BytesIO
+                            from pptx import Presentation
+                            import json
+                            from io import StringIO
+                            from data_processing import calculate_efficiency_based_on_project_type
+                            
+                            # Get all experiments for the project, sorted by creation date
+                            all_experiments_data = get_all_project_experiments_data(current_project_id)
+                            
+                            if not all_experiments_data:
+                                st.error("No experiments found in this project.")
+                            else:
+                                # Sort by creation date (chronologically)
+                                # Handle None values by using a far-future date for sorting
+                                from datetime import datetime
+                                def get_sort_key(exp_data):
+                                    created_date = exp_data[13] if len(exp_data) > 13 else None  # created_date is index 13
+                                    if created_date is None:
+                                        return datetime.max  # Put None dates at the end
+                                    # If it's already a datetime, use it directly
+                                    if isinstance(created_date, datetime):
+                                        return created_date
+                                    # If it's a string, try to parse it
+                                    if isinstance(created_date, str):
+                                        try:
+                                            return datetime.fromisoformat(created_date.replace('Z', '+00:00'))
+                                        except:
+                                            return datetime.max
+                                    return datetime.max
+                                
+                                all_experiments_data.sort(key=get_sort_key)
+                                
+                                st.info(f"Found {len(all_experiments_data)} experiment(s). Generating slides...")
+                                
+                                # Create a new presentation for the project
+                                project_prs = Presentation()
+                                project_prs.slide_layouts[6]  # Blank layout
+                                
+                                # Get project info
+                                project_info = get_project_by_id(current_project_id)
+                                project_name = project_info[1] if project_info else "Project"
+                                project_type = project_info[3] if project_info and len(project_info) > 3 else "Full Cell"
+                                
+                                # Process each experiment
+                                experiments_processed = 0
+                                for exp_data in all_experiments_data:
+                                    exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes, cutoff_voltage_lower, cutoff_voltage_upper = exp_data
+                                    
+                                    try:
+                                        # Parse experiment data
+                                        parsed_data = json.loads(data_json)
+                                        
+                                        # Load cells data
+                                        cells_data = parsed_data.get('cells', [])
+                                        if not cells_data:
+                                            # Single cell experiment
+                                            cells_data = [{
+                                                'data_json': data_json,
+                                                'cell_name': exp_name,
+                                                'test_number': test_number,
+                                                'loading': loading,
+                                                'active_material': active_material,
+                                                'formation_cycles': formation_cycles,
+                                                'formulation': json.loads(formulation_json) if formulation_json else []
+                                            }]
+                                        
+                                        # Build dfs structure for this experiment
+                                        exp_dfs = []
+                                        for cell_data in cells_data:
+                                            if cell_data.get('excluded', False):
+                                                continue
+                                            
+                                            cell_data_json = cell_data.get('data_json', '')
+                                            if not cell_data_json:
+                                                continue
+                                            
+                                            df = pd.read_json(StringIO(cell_data_json))
+                                            
+                                            # Recalculate efficiency based on project type
+                                            if 'Q charge (mA.h)' in df.columns and 'Q discharge (mA.h)' in df.columns:
+                                                df['Efficiency (-)'] = calculate_efficiency_based_on_project_type(
+                                                    df['Q charge (mA.h)'], 
+                                                    df['Q discharge (mA.h)'], 
+                                                    project_type
+                                                ) / 100
+                                            
+                                            # Get formulation
+                                            formulation = cell_data.get('formulation', [])
+                                            if not formulation and formulation_json:
+                                                try:
+                                                    formulation = json.loads(formulation_json)
+                                                except:
+                                                    formulation = []
+                                            
+                                            exp_dfs.append({
+                                                'df': df,
+                                                'testnum': cell_data.get('test_number', cell_data.get('cell_name', 'Unknown')),
+                                                'loading': cell_data.get('loading', loading),
+                                                'active': cell_data.get('active_material', active_material),
+                                                'formation_cycles': cell_data.get('formation_cycles', formation_cycles),
+                                                'project_type': project_type,
+                                                'excluded': False,
+                                                'pressed_thickness': parsed_data.get('pressed_thickness'),
+                                                'solids_content': parsed_data.get('solids_content'),
+                                                'porosity': cell_data.get('porosity', porosity),
+                                                'formulation': formulation
+                                            })
+                                        
+                                        if not exp_dfs:
+                                            st.warning(f"Skipping {exp_name}: No valid cell data found.")
+                                            continue
+                                        
+                                        # Add slides for this experiment to the project presentation
+                                        export_powerpoint(
+                                            dfs=exp_dfs,
+                                            show_averages=True,
+                                            experiment_name=exp_name,
+                                            show_lines=show_lines,
+                                            show_efficiency_lines=show_efficiency_lines,
+                                            remove_last_cycle=remove_last_cycle,
+                                            include_summary_table=include_summary_table,
+                                            include_main_plot=include_main_plot,
+                                            include_retention_plot=include_retention_plot,
+                                            include_notes=include_notes,
+                                            include_electrode_data=include_electrode_data,
+                                            include_porosity=include_porosity,
+                                            include_thickness=include_thickness,
+                                            include_solids_content=include_solids_content,
+                                            include_formulation=include_formulation,
+                                            experiment_notes=(experiment_notes or "") if include_notes else "",
+                                            retention_threshold=current_threshold,
+                                            reference_cycle=current_ref_cycle,
+                                            formation_cycles=formation_cycles or 4,
+                                            retention_show_lines=show_lines,
+                                            retention_remove_markers=remove_markers,
+                                            retention_hide_legend=hide_legend,
+                                            retention_show_title=show_graph_title,
+                                            show_baseline_line=st.session_state.get('retention_show_baseline', True),
+                                            show_threshold_line=st.session_state.get('retention_show_threshold', True),
+                                            y_axis_min=st.session_state.get('y_axis_min', 0.0),
+                                            y_axis_max=st.session_state.get('y_axis_max', 110.0),
+                                            show_graph_title=st.session_state.get('show_graph_title', True),
+                                            show_average_performance=show_average_performance,
+                                            avg_line_toggles=st.session_state.get('avg_line_toggles', {}),
+                                            remove_markers=st.session_state.get('remove_markers', False),
+                                            hide_legend=st.session_state.get('hide_legend', False),
+                                            existing_prs=project_prs  # Append to project presentation
+                                        )
+                                        
+                                        experiments_processed += 1
+                                        
+                                    except Exception as e:
+                                        st.warning(f"Error processing experiment {exp_name}: {str(e)}")
+                                        import logging
+                                        logging.error(f"Error processing experiment {exp_name}: {e}")
+                                        continue
+                                
+                                if experiments_processed > 0:
+                                    # Save project presentation
+                                    project_bio = BytesIO()
+                                    project_prs.save(project_bio)
+                                    project_bio.seek(0)
+                                    
+                                    st.success(f"Project export completed! Processed {experiments_processed} experiment(s).")
+                                    st.download_button(
+                                        "Download Project PowerPoint",
+                                        data=project_bio,
+                                        file_name=f"{project_name} Project Export.pptx",
+                                        mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                                        key='download_project_pptx',
+                                        use_container_width=True
+                                    )
+                                else:
+                                    st.error("No experiments could be processed for export.")
+                        
+                        except Exception as e:
+                            st.error(f"Error exporting project: {str(e)}")
+                            import traceback
+                            st.error(traceback.format_exc())
             
-            st.markdown("---")
-            
-            # Excel Export Section
-            st.subheader("Excel Export")
-            st.markdown("*Download detailed data in Excel format*")
-            
-            from export import export_excel
-            
-            try:
-                excel_bytes, excel_file_name = export_excel(dfs, show_average_performance, experiment_name)
+            with st.container(border=True):
+                st.subheader("Excel")
+                st.caption("Download the processed data and summary sheets for the current experiment.")
                 
-                st.success("Excel file ready for download!")
-                st.download_button(
-                    f"Download Excel: {excel_file_name}",
-                    data=excel_bytes,
-                    file_name=excel_file_name,
-                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                    key='download_enhanced_excel',
-                    use_container_width=True
-                )
+                from export import export_excel
                 
-                st.info(f"**File:** {excel_file_name}")
-                
-            except Exception as e:
-                st.error(f"Error generating Excel file: {str(e)}")
-                st.error("Please check your data and try again.")
+                try:
+                    with st.spinner("Preparing Excel workbook..."):
+                        excel_bytes, excel_file_name = export_excel(dfs, show_average_performance, experiment_name)
+                    
+                    st.download_button(
+                        "Download Excel",
+                        data=excel_bytes,
+                        file_name=excel_file_name,
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        key='download_enhanced_excel',
+                        use_container_width=True
+                    )
+                    st.caption(f"Ready: {excel_file_name}")
+                except Exception as e:
+                    st.error(f"Error generating Excel file: {str(e)}")
+                    st.error("Please check your data and try again.")
         else:
-            st.info("Upload and process data files to access export options.")
-            st.markdown("""
-            **Export Features:**
-            - 📊 **PowerPoint:** Customizable slides with toggleable content
-            - 📈 **Multiple Plots:** Main capacity plot + retention plot
-            - 📝 **Notes & Data:** Include experiment notes and electrode data
-            - 📋 **Summary Tables:** Key metrics and comparisons
-            - 📊 **Excel:** Detailed data export with charts
-            """)
+            with st.container(border=True):
+                st.subheader("Exports unlock after data is processed")
+                st.caption(
+                    "Load an experiment from the sidebar, or create one in Cell Inputs and upload data to enable downloads."
+                )
+                st.markdown("- PowerPoint summary slides")
+                st.markdown("- Excel workbooks with charts")
+                st.markdown("- Project-wide PowerPoint export")
 
 if not ready:
     with tab1:
@@ -4101,12 +5122,33 @@ if tab_comparison and current_project_id:
                 exp_id, exp_name, file_name, loading, active_material, formation_cycles, test_number, electrolyte, substrate, separator, formulation_json, data_json, created_date, porosity, experiment_notes, cutoff_voltage_lower, cutoff_voltage_upper = exp_data
                 experiment_options.append(exp_name)
                 experiment_dict[exp_name] = exp_data
+
+            if 'comparison_selected_experiments' not in st.session_state:
+                st.session_state['comparison_selected_experiments'] = []
+
+            # Build a lookup that maps stripped names to actual DB names
+            # so prefilled selections (which strip whitespace) still match
+            stripped_to_actual = {name.strip(): name for name in experiment_options}
+
+            sanitized_selection = []
+            for experiment_name in st.session_state.get('comparison_selected_experiments', []):
+                if experiment_name in experiment_options:
+                    sanitized_selection.append(experiment_name)
+                elif experiment_name.strip() in stripped_to_actual:
+                    sanitized_selection.append(stripped_to_actual[experiment_name.strip()])
+
+            if sanitized_selection != st.session_state.get('comparison_selected_experiments', []):
+                st.session_state['comparison_selected_experiments'] = sanitized_selection
+
+            comparison_prefill_notice = st.session_state.pop('comparison_prefill_notice', None)
+            if comparison_prefill_notice:
+                st.info(comparison_prefill_notice)
             
             # Experiment Selection
             selected_experiments = st.multiselect(
                 "Select experiments to compare",
                 options=experiment_options,
-                default=[],
+                key='comparison_selected_experiments',
                 help="Select two or more experiments to compare"
             )
             
@@ -4313,7 +5355,8 @@ if tab_comparison and current_project_id:
                                             'df': df,
                                             'testnum': test_num,
                                             'loading': cell_data.get('loading', loading),
-                                            'active_material': cell_data.get('active_material', active_material)
+                                            'active_material': cell_data.get('active_material', active_material),
+                                            'formation_cycles': cell_data.get('formation_cycles', formation_cycles)
                                         })
                             else:
                                 # Single cell experiment - data_json is at the top level
@@ -4323,7 +5366,8 @@ if tab_comparison and current_project_id:
                                     'df': df,
                                     'testnum': test_num,
                                     'loading': loading,
-                                    'active_material': active_material
+                                    'active_material': active_material,
+                                    'formation_cycles': formation_cycles
                                 })
                             
                             if dfs:  # Only add if we have valid data
@@ -4387,7 +5431,7 @@ if tab_comparison and current_project_id:
                                 )
                                 # Display the interactive plot
                                 st.plotly_chart(comparison_fig, use_container_width=True)
-                                st.info("💡 **Tip**: Hover over data points for details, click-drag to zoom, double-click to reset view.")
+                                st.info("💡 **Tip**: Hover over data points for cycle, capacity, and retention details. Retention uses the first valid post-formation cycle for each cell and skips clearly anomalous baseline cycles when needed.")
                             else:
                                 comparison_fig = plot_comparison_capacity_graph(
                                     experiments_plot_data,
@@ -4511,7 +5555,9 @@ if tab_comparison and current_project_id:
                             )
                     else:
                         st.error("No valid data found for selected experiments.")
-            
+                else:
+                    st.warning("Could not load comparison data for the selected experiments. Try re-selecting them.")
+
             # Formulation-Based Comparison Section
             st.subheader("Formulation-Based Comparison")
             

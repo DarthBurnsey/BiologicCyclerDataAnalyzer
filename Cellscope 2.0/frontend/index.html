@@ -1,0 +1,1414 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>CellScope 2.0</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+  </head>
+  <body class="cellscope-shell">
+    <div id="appShell" class="app-shell">
+      <header class="shell-header">
+        <div class="brand-block">
+          <div class="brand-mark" aria-hidden="true">CS</div>
+          <h1 class="brand-title">CellScope</h1>
+        </div>
+
+        <div class="header-actions">
+          <div class="status-chip" aria-live="polite">
+            <span id="apiStatusBadge" class="status-badge status-badge--idle"></span>
+            <span id="apiStatusText" class="status-text">Backend</span>
+          </div>
+          <button id="refreshAllButton" class="primary-button" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <nav id="viewNav" class="view-nav" aria-label="Application views">
+        <button class="view-tab" data-view="projects" type="button">Projects</button>
+        <button class="view-tab" data-view="workspaces" type="button">Workspaces</button>
+        <button class="view-tab is-active" data-view="overview" type="button">Overview</button>
+        <button class="view-tab" data-view="review" type="button">Mapping review</button>
+        <button class="view-tab" data-view="runs" type="button">Comparison</button>
+        <button class="view-tab" data-view="analytics" type="button">Analytics</button>
+        <button class="view-tab" data-view="ontology" type="button">Ontology</button>
+      </nav>
+
+      <main class="shell-main">
+        <!-- ===== Projects & Experiments ===== -->
+        <section id="view-projects" class="view-section" aria-labelledby="projectsTitle">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Projects</p>
+              <h2 id="projectsTitle">Manage projects, experiments, and cells</h2>
+            </div>
+            <div class="section-head-actions">
+              <button id="masterTableToggle" class="secondary-button" type="button">Master Table</button>
+            </div>
+          </div>
+
+          <!-- Master Table (full-width, hidden by default) -->
+          <div id="masterTableView" hidden>
+            <div class="master-table-toolbar">
+              <div class="master-table-column-toggles">
+                <span class="master-toggle-label">Columns:</span>
+                <button class="master-col-toggle is-active" data-mt-group="performance" type="button">Performance</button>
+                <button class="master-col-toggle is-active" data-mt-group="processing" type="button">Processing</button>
+                <button class="master-col-toggle is-active" data-mt-group="materials" type="button">Materials</button>
+              </div>
+              <div class="master-table-actions">
+                <span id="masterTableCount" class="panel-subtitle"></span>
+                <button id="masterTableExport" class="export-button" type="button">Export CSV</button>
+              </div>
+            </div>
+            <div id="masterTableFilters" class="master-filter-pills"></div>
+            <div id="masterTableContainer" class="master-table-wrap">
+              <div class="loading-block">Loading master table…</div>
+            </div>
+          </div>
+
+          <!-- Finder-style breadcrumb path -->
+          <div id="finderBreadcrumb" class="finder-breadcrumb">
+            <span class="finder-breadcrumb-segment is-active">All Projects</span>
+          </div>
+
+          <div id="projectsBrowseView" class="finder-browser">
+            <!-- Column 1: Projects -->
+            <div class="finder-col" id="finderColProjects">
+              <div class="finder-col-header">
+                <input id="projectSearchInput" type="text" class="finder-search" placeholder="Filter…" autocomplete="off" />
+              </div>
+              <div id="projectsList" class="finder-list">
+                <div class="empty-state">Loading projects…</div>
+              </div>
+              <details id="createProjectDetails" class="create-form-details finder-col-footer">
+                <summary class="create-form-toggle">New project</summary>
+                <form id="createProjectForm" class="form-stack form-stack--compact">
+                  <label class="field">
+                    <span>Name</span>
+                    <input id="newProjectName" name="name" type="text" placeholder="e.g. Silicon Anode Study" required />
+                  </label>
+                  <label class="field">
+                    <span>Type</span>
+                    <select id="newProjectType" name="project_type">
+                      <option value="Cathode">Cathode</option>
+                      <option value="Anode">Anode</option>
+                      <option value="Full Cell" selected>Full Cell</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Description</span>
+                    <textarea id="newProjectDescription" name="description" rows="2" placeholder="Optional description"></textarea>
+                  </label>
+                  <div class="form-actions">
+                    <button class="primary-button" type="submit">Create project</button>
+                  </div>
+                </form>
+              </details>
+            </div>
+
+            <!-- Column 2: Experiments (shown when project selected) -->
+            <div class="finder-col finder-col--hidden" id="finderColExperiments">
+              <div class="finder-col-header">
+                <span id="projectDetailTitle" class="finder-col-title">Experiments</span>
+                <span id="projectDetailMeta" class="finder-col-meta"></span>
+                <input id="experimentSearchInput" type="text" class="finder-search" placeholder="Filter…" autocomplete="off" />
+              </div>
+              <div id="projectDetailBody" class="finder-col-desc"></div>
+              <div id="experimentsList" class="finder-list"></div>
+              <details id="createExperimentDetails" class="create-form-details finder-col-footer" hidden>
+                <summary class="create-form-toggle">New experiment</summary>
+                <form id="createExperimentForm" class="form-stack form-stack--compact">
+                  <label class="field">
+                    <span>Experiment name</span>
+                    <input id="newExperimentName" name="name" type="text" placeholder="e.g. Exp-001 NMC811" required />
+                  </label>
+                  <div class="field-row">
+                    <label class="field">
+                      <span>Date</span>
+                      <input id="newExperimentDate" name="experiment_date" type="date" />
+                    </label>
+                    <label class="field">
+                      <span>Disc diameter (mm)</span>
+                      <input id="newExperimentDisc" name="disc_diameter_mm" type="number" step="0.1" value="15.0" />
+                    </label>
+                  </div>
+                  <label class="field">
+                    <span>Notes</span>
+                    <textarea id="newExperimentNotes" name="notes" rows="2" placeholder="Optional notes"></textarea>
+                  </label>
+                  <div class="form-actions">
+                    <button class="primary-button" type="submit">Create experiment</button>
+                  </div>
+                </form>
+              </details>
+            </div>
+
+            <!-- Column 3: Detail (shown when experiment selected) -->
+            <div class="finder-col finder-col--detail finder-col--hidden" id="finderColDetail">
+              <section id="cellsSection">
+                <div class="panel-head">
+                  <h3 id="cellsSectionTitle">Cells</h3>
+                  <button id="generateReportButton" class="export-button" type="button">Generate Report</button>
+                  <button id="exportCellsData" class="export-button" type="button">Export CSV</button>
+                  <span id="cellsSectionMeta" class="panel-subtitle"></span>
+                </div>
+                <div id="cellsTableContainer"></div>
+
+                <div id="experimentChartsContainer" class="charts-container"></div>
+
+                <!-- Experiment statistics panel -->
+                <section id="experimentStatsPanel" hidden>
+                  <details class="create-form-details" open>
+                    <summary class="create-form-toggle">Batch Statistics <span id="experimentStatsMeta" style="font-weight:400;color:#8a7e6d;margin-left:6px"></span></summary>
+                    <div id="experimentStatsSummary" class="stats-summary-grid"></div>
+                    <div id="experimentStatsCharts" class="charts-container"></div>
+                    <details class="create-form-details">
+                      <summary class="create-form-toggle">Cell ranking — fade rate</summary>
+                      <div id="experimentFadeRateTable"></div>
+                    </details>
+                  </details>
+                </section>
+
+                <!-- Cell detail drilldown -->
+                <section id="cellDetailPanel" class="cell-detail-panel" hidden>
+                  <div class="panel-head">
+                    <h3 id="cellDetailTitle">Cell detail</h3>
+                    <button id="cellDetailClose" class="close-button" type="button" aria-label="Close cell detail">&times;</button>
+                  </div>
+                  <div id="cellDetailMeta" class="cell-detail-meta"></div>
+                  <div id="cellDetailChartsContainer" class="charts-container"></div>
+                  <div id="cellDetailDataTable" class="cell-detail-data-table"></div>
+                </section>
+
+                <details id="createCellDetails" class="create-form-details">
+                  <summary class="create-form-toggle">Add cell</summary>
+                  <form id="createCellForm" class="form-stack form-stack--compact">
+                    <div class="field-row">
+                      <label class="field">
+                        <span>Cell name</span>
+                        <input id="newCellName" name="cell_name" type="text" placeholder="Cell 1" required />
+                      </label>
+                      <label class="field">
+                        <span>Loading</span>
+                        <input id="newCellLoading" name="loading" type="number" step="0.01" placeholder="mg/cm²" />
+                      </label>
+                      <label class="field">
+                        <span>AM %</span>
+                        <input id="newCellAM" name="active_material_pct" type="number" step="0.1" placeholder="92" />
+                      </label>
+                    </div>
+                    <div class="field-row">
+                      <label class="field">
+                        <span>Electrolyte</span>
+                        <input id="newCellElectrolyte" name="electrolyte" type="text" placeholder="1M LiPF6 EC:DMC" />
+                      </label>
+                      <label class="field">
+                        <span>Separator</span>
+                        <input id="newCellSeparator" name="separator" type="text" placeholder="25um PP" />
+                      </label>
+                      <label class="field">
+                        <span>Formation cycles</span>
+                        <input id="newCellFormation" name="formation_cycles" type="number" value="4" min="0" max="50" />
+                      </label>
+                    </div>
+                    <div class="form-actions">
+                      <button class="primary-button" type="submit">Add cell</button>
+                    </div>
+                  </form>
+                </details>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== Workspaces & Analysis ===== -->
+        <section id="view-workspaces" class="view-section" aria-labelledby="workspacesTitle">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Workspaces</p>
+              <h2 id="workspacesTitle">Study workspaces and cohort snapshots</h2>
+            </div>
+          </div>
+
+          <!-- Sub-navigation -->
+          <nav id="workspacesSubNav" class="sub-nav sub-nav--workspaces" aria-label="Workspace modes">
+            <button class="sub-nav-tab is-active" data-ws-tab="my" type="button">My Workspaces</button>
+            <button class="sub-nav-tab" data-ws-tab="search" type="button">Search &amp; Filter</button>
+          </nav>
+
+          <!-- Pane: Search & Filter -->
+          <div id="wsPaneSearch" class="ws-pane" hidden>
+            <div class="sf-layout">
+              <aside class="sf-sidebar">
+                <div class="sf-sidebar-head">
+                  <h3>Filters</h3>
+                  <button id="sfResetAll" class="sf-reset-btn" type="button">Reset All</button>
+                </div>
+                <div class="sf-search">
+                  <input id="sfSearchInput" class="sf-search-input" type="search" placeholder="Search experiments, batches…" autocomplete="off" />
+                </div>
+                <div id="sfAccordion" class="sf-accordion">
+                  <details class="sf-acc-section" open>
+                    <summary class="sf-acc-summary">
+                      <span class="sf-acc-chevron">&#9656;</span>
+                      <span class="sf-acc-label">Projects</span>
+                      <span class="sf-acc-count" id="sfProjectCount"></span>
+                    </summary>
+                    <div id="sfProjectFilter" class="sf-filter-checkboxes"></div>
+                  </details>
+                  <details class="sf-acc-section">
+                    <summary class="sf-acc-summary">
+                      <span class="sf-acc-chevron">&#9656;</span>
+                      <span class="sf-acc-label">Parent batch</span>
+                      <span class="sf-acc-count" id="sfBatchCount"></span>
+                    </summary>
+                    <div id="sfBatchFilter" class="sf-filter-checkboxes"></div>
+                  </details>
+                  <details class="sf-acc-section">
+                    <summary class="sf-acc-summary">
+                      <span class="sf-acc-chevron">&#9656;</span>
+                      <span class="sf-acc-label">Electrolyte</span>
+                      <span class="sf-acc-count" id="sfElectrolyteCount"></span>
+                    </summary>
+                    <div id="sfElectrolyteFilter" class="sf-filter-checkboxes"></div>
+                  </details>
+                  <details class="sf-acc-section">
+                    <summary class="sf-acc-summary">
+                      <span class="sf-acc-chevron">&#9656;</span>
+                      <span class="sf-acc-label">Tracking status</span>
+                      <span class="sf-acc-count" id="sfStatusCount"></span>
+                    </summary>
+                    <div id="sfStatusFilter" class="sf-filter-checkboxes"></div>
+                  </details>
+                  <details class="sf-acc-section">
+                    <summary class="sf-acc-summary">
+                      <span class="sf-acc-chevron">&#9656;</span>
+                      <span class="sf-acc-label">Experiment date</span>
+                      <span class="sf-acc-count" id="sfDateCount"></span>
+                    </summary>
+                    <div class="sf-metric-inputs">
+                      <label class="sf-input-label">
+                        From
+                        <input id="sfDateFrom" class="sf-input" type="date" />
+                      </label>
+                      <label class="sf-input-label">
+                        To
+                        <input id="sfDateTo" class="sf-input" type="date" />
+                      </label>
+                    </div>
+                  </details>
+                  <details class="sf-acc-section">
+                    <summary class="sf-acc-summary">
+                      <span class="sf-acc-chevron">&#9656;</span>
+                      <span class="sf-acc-label">Performance</span>
+                    </summary>
+                    <div class="sf-metric-inputs">
+                      <label class="sf-input-label">
+                        Min retention (%)
+                        <input id="sfMinRetention" class="sf-input" type="number" step="0.1" min="0" max="100" placeholder="e.g. 80" />
+                      </label>
+                      <label class="sf-input-label">
+                        Min CE (%)
+                        <input id="sfMinCE" class="sf-input" type="number" step="0.1" min="0" max="100" placeholder="e.g. 95" />
+                      </label>
+                      <label class="sf-input-label">
+                        Max fade (%/100c)
+                        <input id="sfMaxFade" class="sf-input" type="number" step="0.01" min="0" placeholder="e.g. 0.5" />
+                      </label>
+                      <label class="sf-input-label">
+                        Min cycle life (80%)
+                        <input id="sfMinCycleLife" class="sf-input" type="number" step="1" min="0" placeholder="e.g. 500" />
+                      </label>
+                    </div>
+                  </details>
+                </div>
+              </aside>
+
+              <div class="sf-results-panel">
+                <div class="sf-toolbar">
+                  <div class="sf-toolbar-left">
+                    <span id="sfSelectionCount" class="sf-selection-count">0 selected</span>
+                    <span id="sfResultsCount" class="sf-results-count">Loading experiments…</span>
+                  </div>
+                  <div class="sf-toolbar-right">
+                    <div class="sf-col-picker-wrap">
+                      <button id="sfColumnsBtn" class="secondary-button small-button sf-col-picker-btn" type="button" aria-haspopup="true" aria-expanded="false" title="Choose visible columns">
+                        <span class="sf-col-picker-icon" aria-hidden="true">&#9881;</span>
+                        <span>Columns</span>
+                      </button>
+                      <div id="sfColumnsMenu" class="sf-col-picker-menu" hidden role="menu" aria-label="Toggle columns"></div>
+                    </div>
+                    <button id="sfClearSelectionBtn" class="secondary-button small-button" type="button" hidden>Clear selection</button>
+                    <button id="sfCreateWorkspaceBtn" class="primary-button small-button" type="button" disabled>Create workspace</button>
+                  </div>
+                </div>
+                <div id="sfCreateForm" class="sf-create-form" hidden>
+                  <input id="sfWorkspaceName" class="sf-input" type="text" placeholder="Workspace name (required)" />
+                  <input id="sfWorkspaceDesc" class="sf-input" type="text" placeholder="Description (optional)" />
+                  <button id="sfConfirmCreateBtn" class="primary-button small-button" type="button">Create</button>
+                  <button id="sfCancelCreateBtn" class="secondary-button small-button" type="button">Cancel</button>
+                </div>
+                <div id="sfResultsTableContainer" class="sf-results-table-wrap">
+                  <div class="empty-state">Loading experiments…</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Pane: My Workspaces -->
+          <div id="wsPaneMy" class="ws-pane">
+          <div class="split-layout">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Study workspaces</h3>
+                <span class="panel-subtitle">Saved analysis contexts with cohort data</span>
+              </div>
+              <div id="workspacesList" class="stack-list">
+                <div class="empty-state">Loading workspaces…</div>
+              </div>
+
+              <div class="panel-head" style="margin-top:18px">
+                <h3>Cohort snapshots</h3>
+                <span class="panel-subtitle">Frozen cohort membership and summaries</span>
+              </div>
+              <div id="cohortSnapshotsList" class="stack-list">
+                <div class="empty-state">Loading cohort snapshots…</div>
+              </div>
+            </section>
+
+            <section id="workspaceDetailPanel" class="panel panel--detail">
+              <div class="panel-head">
+                <h3 id="workspaceDetailTitle">Select a workspace or cohort</h3>
+                <span id="workspaceDetailMeta" class="panel-subtitle">Details appear here</span>
+              </div>
+
+              <!-- Action bar: open-as-workspace for snapshots, delete for workspaces -->
+              <div id="workspaceActions" class="detail-actions" hidden>
+                <button id="openAsWorkspaceButton" class="primary-button" type="button" hidden>Open as workspace</button>
+                <button id="deleteWorkspaceButton" class="danger-button" type="button" hidden>Delete workspace</button>
+              </div>
+
+              <div id="workspaceDetailBody" class="summary-body">
+                <div class="empty-state">Choose a workspace or cohort snapshot from the list.</div>
+              </div>
+
+              <!-- Widget canvas + Manage Widgets sidebar -->
+              <div class="workspace-content-wrapper">
+                <div id="widgetCanvas" class="widget-canvas" hidden>
+                  <div class="widget-canvas-toolbar">
+                    <span class="widget-canvas-label">Analysis Widgets</span>
+                    <button id="addWidgetButton" class="mw-add-widget-btn" type="button">+ Add Widget</button>
+                  </div>
+                  <div id="widgetGrid" class="widget-grid"></div>
+                </div>
+
+                <!-- Manage Widgets sidebar -->
+                <aside id="manageWidgetsSidebar" class="manage-widgets-sidebar" hidden>
+                  <div class="mw-header">
+                    <span class="mw-title">MANAGE WIDGETS</span>
+                    <button id="manageWidgetsClose" class="mw-close-btn" type="button" title="Close">&#x2715;</button>
+                  </div>
+
+                  <div class="mw-body">
+                    <div class="mw-section">
+                      <p class="mw-section-label">WIDGET TYPE</p>
+                      <div class="mw-field-wrap">
+                        <label class="mw-field-label">Select Widget Type</label>
+                        <select id="wWidgetType" class="mw-select">
+                          <option value="line">Line Chart</option>
+                          <option value="bar">Bar Chart</option>
+                          <option value="scatter">Scatter</option>
+                          <option value="box">Box Plot</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div class="mw-section">
+                      <p class="mw-section-label">DATA TYPE</p>
+                      <div class="mw-field-wrap">
+                        <label class="mw-field-label">Select Data Type</label>
+                        <select id="wDataType" class="mw-select">
+                          <option value="per_cycle">Per-Cycle Metrics</option>
+                          <option value="summary">Summary Statistics</option>
+                        </select>
+                      </div>
+                      <div class="mw-analysis-group">
+                        <span class="mw-group-icon">&#x2B23;</span>
+                        <span class="mw-group-name">Analysis Group 1</span>
+                        <span class="mw-group-count" id="wGroupCount">0 cells</span>
+                      </div>
+                    </div>
+
+                    <div class="mw-section">
+                      <div class="mw-section-header">
+                        <p class="mw-section-label">GROUPS &amp; CATEGORIES</p>
+                        <button class="mw-clear-btn" id="wClearGroupings" type="button">Clear All</button>
+                      </div>
+                      <div id="wGroupingsList" class="mw-chips-list"></div>
+                      <div class="mw-field-wrap" id="wGroupByWrap">
+                        <label class="mw-field-label">Color by</label>
+                        <select id="wGroupBy" class="mw-select">
+                          <option value="">None</option>
+                          <option value="experiment">Experiment</option>
+                          <option value="project">Project</option>
+                          <option value="electrolyte">Electrolyte</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div class="mw-section">
+                      <div class="mw-section-header">
+                        <p class="mw-section-label">METRICS</p>
+                        <button class="mw-clear-btn" id="wClearMetrics" type="button">Clear All</button>
+                      </div>
+                      <div class="mw-field-wrap" id="wXAxisWrap">
+                        <label class="mw-field-label">Select x-Axis</label>
+                        <select id="wXAxis" class="mw-select">
+                          <option value="cycle_number">Cycle Number</option>
+                          <option value="experiment">Experiment</option>
+                        </select>
+                      </div>
+                      <div class="mw-field-wrap" style="margin-top:10px">
+                        <label class="mw-field-label">Select y-Axis</label>
+                        <select id="wYAxis" class="mw-select">
+                          <option value="capacity_retention">Capacity Retention (%)</option>
+                          <option value="coulombic_efficiency">Coulombic Efficiency (%)</option>
+                          <option value="discharge_capacity">Discharge Capacity (mAh/g)</option>
+                          <option value="charge_capacity">Charge Capacity (mAh/g)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div class="mw-section">
+                      <div class="mw-section-header">
+                        <p class="mw-section-label">NORMALIZATION &amp; TRANSFORMS</p>
+                        <button class="mw-clear-btn" id="wClearNormalization" type="button">Clear All</button>
+                      </div>
+                      <button id="wAddNormalization" class="mw-add-btn" type="button">Add Values</button>
+                    </div>
+
+                    <div class="mw-section">
+                      <div class="mw-section-header">
+                        <p class="mw-section-label">FILTERS</p>
+                        <button class="mw-clear-btn" id="wClearFilters" type="button">Clear All</button>
+                      </div>
+                      <div id="wFiltersList" class="mw-items-list"></div>
+                      <button id="wAddFilter" class="mw-add-btn" type="button">Add Filter</button>
+                    </div>
+
+                    <div class="mw-section">
+                      <div class="mw-section-header">
+                        <p class="mw-section-label">CYCLE SELECTOR</p>
+                        <button class="mw-clear-btn" id="wClearCycleSelector" type="button">Clear All</button>
+                      </div>
+                      <div id="wCycleSelectorList" class="mw-items-list"></div>
+                      <button id="wAddCycleSelector" class="mw-add-btn" type="button">Add Selector</button>
+                    </div>
+                  </div>
+
+                  <div class="mw-footer">
+                    <button id="wGenerateButton" class="mw-generate-btn" type="button">Generate</button>
+                  </div>
+                </aside>
+              </div>
+
+              <div id="workspaceMembersContainer"></div>
+
+              <div id="workspaceAnnotationsContainer"></div>
+
+              <!-- Add annotation form (only visible when a workspace is selected) -->
+              <div id="workspaceAnnotationFormContainer" hidden>
+                <div class="panel-head" style="margin-top:14px">
+                  <h3>Add note</h3>
+                </div>
+                <form id="workspaceAnnotationForm" class="inline-form">
+                  <label class="inline-form-label">
+                    Title
+                    <input id="annotationTitle" class="inline-form-input" type="text" placeholder="Optional title" autocomplete="off" />
+                  </label>
+                  <label class="inline-form-label">
+                    Note <span style="color:var(--muted)">(required)</span>
+                    <textarea id="annotationBody" class="inline-form-input" rows="3" placeholder="Write your observation, interpretation, or note…" required></textarea>
+                  </label>
+                  <label class="inline-form-label">
+                    Type
+                    <select id="annotationType" class="inline-form-input">
+                      <option value="NOTE">Note</option>
+                      <option value="INTERPRETATION">Interpretation</option>
+                      <option value="ALERT">Alert</option>
+                      <option value="ACTION_ITEM">Action item</option>
+                    </select>
+                  </label>
+                  <div class="form-actions">
+                    <button class="primary-button" type="submit">Save note</button>
+                  </div>
+                </form>
+              </div>
+            </section>
+          </div>
+          </div>
+        </section>
+
+        <section id="view-overview" class="view-section is-active" aria-labelledby="overviewTitle">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Overview</p>
+              <h2 id="overviewTitle">Live system pulse and quick actions</h2>
+            </div>
+            <button id="runCollectorButton" class="secondary-button" type="button">
+              Run collector once
+            </button>
+          </div>
+
+          <div id="overviewCards" class="overview-cards">
+            <article class="metric-card">
+              <p class="metric-label">Live sources</p>
+              <p class="metric-value">0</p>
+              <p class="metric-note">Waiting for backend data</p>
+            </article>
+            <article class="metric-card">
+              <p class="metric-label">Pending review</p>
+              <p class="metric-value">0</p>
+              <p class="metric-note">Mapping queue is ready</p>
+            </article>
+            <article class="metric-card">
+              <p class="metric-label">Active runs</p>
+              <p class="metric-value">0</p>
+              <p class="metric-note">Collector and live runs appear here</p>
+            </article>
+            <article class="metric-card metric-card--wide">
+              <p class="metric-label">Backend target</p>
+              <p class="metric-value metric-value--small">http://localhost:8000</p>
+              <p class="metric-note">FastAPI API powering this shell</p>
+            </article>
+          </div>
+
+          <div class="dashboard-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Active runs</h3>
+                <span class="panel-subtitle">Most recent first</span>
+              </div>
+              <div id="overviewActiveRuns" class="stack-list">
+                <div class="empty-state">No runs loaded yet.</div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Recent anomalies</h3>
+                <span class="panel-subtitle">Live alerts and health signals</span>
+              </div>
+              <div id="overviewRecentAnomalies" class="stack-list">
+                <div class="empty-state">No anomalies to show.</div>
+              </div>
+            </section>
+
+            <section class="panel panel--full">
+              <div class="panel-head">
+                <h3>Recent reports</h3>
+                <span class="panel-subtitle">Daily summaries and delivery state</span>
+              </div>
+              <div id="overviewRecentReports" class="stack-list">
+                <div class="empty-state">No reports available yet.</div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-review" class="view-section" aria-labelledby="reviewTitle">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Mapping review</p>
+              <h2 id="reviewTitle">Resolve pending file-to-cell mappings</h2>
+            </div>
+          </div>
+
+          <div class="split-layout">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Review queue</h3>
+                <span class="panel-subtitle">Confirm, reject, or reprocess one item at a time</span>
+              </div>
+              <div id="reviewQueueEmpty" class="empty-state">
+                No pending review items yet.
+              </div>
+              <div id="reviewQueueList" class="queue-list" aria-live="polite"></div>
+            </section>
+
+            <section id="reviewDetailPanel" class="panel panel--detail">
+              <div class="panel-head">
+                <h3 id="reviewItemTitle">Select a review item</h3>
+                <span id="reviewArtifactMeta" class="panel-subtitle">Artifact details will appear here</span>
+              </div>
+
+              <pre id="reviewPayloadJson" class="payload-block" aria-label="Selected review payload">Pick an item from the queue to inspect the raw review payload.</pre>
+
+              <form id="reviewResolveForm" class="form-stack">
+                <label class="field">
+                  <span>Resolution</span>
+                  <select id="reviewResolution" name="reviewResolution">
+                    <option value="confirmed">Confirm</option>
+                    <option value="rejected">Reject</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>Reviewed by</span>
+                  <input id="reviewedBy" name="reviewedBy" type="text" placeholder="operator" />
+                </label>
+
+                <div class="field-row">
+                  <label class="field">
+                    <span>Channel ID</span>
+                    <input id="reviewChannelId" name="reviewChannelId" type="number" min="1" step="1" />
+                  </label>
+                  <label class="field">
+                    <span>Cell ID</span>
+                    <input id="reviewCellId" name="reviewCellId" type="number" min="1" step="1" />
+                  </label>
+                  <label class="field">
+                    <span>Cell build ID</span>
+                    <input id="reviewCellBuildId" name="reviewCellBuildId" type="number" min="1" step="1" />
+                  </label>
+                </div>
+
+                <label class="field">
+                  <span>File pattern</span>
+                  <input id="reviewFilePattern" name="reviewFilePattern" type="text" placeholder="*B1*" />
+                </label>
+
+                <label class="field">
+                  <span>Review reason</span>
+                  <textarea
+                    id="reviewReason"
+                    name="reviewReason"
+                    rows="4"
+                    placeholder="Explain the mapping decision, or why this item was rejected."
+                  ></textarea>
+                </label>
+
+                <label class="toggle-row">
+                  <input id="reviewReprocessNow" name="reviewReprocessNow" type="checkbox" checked />
+                  <span>Reprocess immediately after confirmation</span>
+                </label>
+
+                <div class="form-actions">
+                  <button class="primary-button" type="submit">Apply review</button>
+                  <button id="reviewRejectButton" class="danger-button" type="button">Reject only</button>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-runs" class="view-section" aria-labelledby="runsTitle">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Comparison</p>
+              <h2 id="runsTitle">Compare runs, cells, and metrics side by side</h2>
+            </div>
+          </div>
+
+          <nav id="runsSubNav" class="sub-nav" aria-label="Comparison sub-views">
+            <button class="sub-nav-tab is-active" data-runs-tab="expcompare" type="button">Compare experiments</button>
+            <button class="sub-nav-tab" data-runs-tab="inspector" type="button">Run inspector</button>
+            <button class="sub-nav-tab" data-runs-tab="compare" type="button">Compare runs</button>
+            <button class="sub-nav-tab" data-runs-tab="cellcompare" type="button">Compare cells</button>
+            <button class="sub-nav-tab" data-runs-tab="registry" type="button">Metric registry</button>
+          </nav>
+
+          <div id="runsInspectorPane" hidden>
+            <div class="split-layout">
+              <section class="panel">
+                <div class="panel-head">
+                  <h3>Run list</h3>
+                  <span class="panel-subtitle">Click a run to load its details</span>
+                </div>
+                <div id="runsList" class="stack-list">
+                  <div class="empty-state">No runs loaded yet.</div>
+                </div>
+              </section>
+
+              <section id="runDetailPanel" class="panel panel--detail">
+                <div class="panel-head">
+                  <h3>Run details</h3>
+                  <button id="exportRunCycleData" class="export-button" type="button" hidden>Export cycle CSV</button>
+                  <span id="runSummaryMeta" class="panel-subtitle">Summary metadata will appear here</span>
+                </div>
+
+                <div id="runChartsContainer" class="charts-container"></div>
+
+                <div class="detail-grid">
+                  <section class="subpanel">
+                    <h4>Metrics</h4>
+                    <div id="runMetricsList" class="stack-list">
+                      <div class="empty-state">Select a run to view metrics.</div>
+                    </div>
+                  </section>
+
+                  <section class="subpanel">
+                    <h4>Provenance</h4>
+                    <div id="runProvenanceList" class="stack-list">
+                      <div class="empty-state">Select a run to view provenance.</div>
+                    </div>
+                  </section>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <div id="runsRegistryPane" hidden>
+            <div class="registry-header">
+              <h3>Metric definitions</h3>
+              <p class="panel-subtitle">All metrics the platform can compute, grouped by scope</p>
+              <div class="registry-scope-filters">
+                <button class="scope-filter-btn is-active" data-scope="all" type="button">All</button>
+                <button class="scope-filter-btn" data-scope="cycle" type="button">Per-cycle</button>
+                <button class="scope-filter-btn" data-scope="run" type="button">Per-run</button>
+                <button class="scope-filter-btn" data-scope="cohort" type="button">Per-cohort</button>
+              </div>
+            </div>
+            <div id="metricRegistryList" class="registry-grid">
+              <div class="empty-state">Loading metric definitions…</div>
+            </div>
+          </div>
+
+          <div id="runsComparePane" hidden>
+            <div class="compare-layout">
+              <section class="panel">
+                <div class="panel-head">
+                  <h3>Select runs to compare</h3>
+                  <span class="panel-subtitle">Check 2–8 runs, then click Compare</span>
+                </div>
+                <div id="compareRunPickerList" class="stack-list stack-list--scrollable"></div>
+                <div class="compare-actions">
+                  <button id="compareRunsButton" class="primary-button" type="button" disabled>Compare selected (0)</button>
+                  <button id="compareClearButton" class="secondary-button" type="button">Clear</button>
+                </div>
+              </section>
+
+              <section id="compareDetailPanel" class="panel panel--detail">
+                <div class="panel-head">
+                  <h3>Run comparison</h3>
+                  <span id="compareSummaryMeta" class="panel-subtitle">Select runs and click Compare</span>
+                </div>
+                <div id="compareChartsContainer" class="charts-container"></div>
+                <div id="compareMetricsTable"></div>
+              </section>
+            </div>
+          </div>
+
+          <div id="expComparePane">
+            <div class="compare-layout">
+              <section class="panel">
+                <div class="panel-head">
+                  <h3>Select experiments to compare</h3>
+                  <span class="panel-subtitle">Pick 2–8 experiments from any project</span>
+                </div>
+                <label class="field" style="margin-bottom:8px">
+                  <span>Filter by project</span>
+                  <select id="expCompareProjectFilter"><option value="">All projects</option></select>
+                </label>
+                <div id="expComparePickerList" class="stack-list stack-list--scrollable"></div>
+                <div class="compare-actions">
+                  <button id="expCompareButton" class="primary-button" type="button" disabled>Compare selected (0)</button>
+                  <button id="expCompareClearButton" class="secondary-button" type="button">Clear</button>
+                </div>
+              </section>
+
+              <section class="panel panel--detail">
+                <div class="panel-head">
+                  <h3>Experiment comparison</h3>
+                  <span id="expCompareSummaryMeta" class="panel-subtitle">Select experiments and click Compare</span>
+                </div>
+                <div id="expCompareChartsContainer" class="charts-container"></div>
+                <div id="expCompareMetricsTable"></div>
+              </section>
+            </div>
+          </div>
+
+          <div id="cellComparePane" hidden>
+            <div class="compare-layout">
+              <section class="panel">
+                <div class="panel-head">
+                  <h3>Select cells to compare</h3>
+                  <span class="panel-subtitle">Pick a project and experiment, then check 2–8 cells</span>
+                </div>
+                <label class="field" style="margin-bottom:8px">
+                  <span>Project</span>
+                  <select id="cellCompareProject"><option value="">Choose project…</option></select>
+                </label>
+                <label class="field" style="margin-bottom:8px">
+                  <span>Experiment</span>
+                  <select id="cellCompareExperiment" disabled><option value="">Choose experiment…</option></select>
+                </label>
+                <div id="cellComparePickerList" class="stack-list stack-list--scrollable"></div>
+                <div class="compare-actions">
+                  <button id="cellCompareButton" class="primary-button" type="button" disabled>Compare selected (0)</button>
+                  <button id="cellCompareClearButton" class="secondary-button" type="button">Clear</button>
+                </div>
+              </section>
+
+              <section id="cellCompareDetailPanel" class="panel panel--detail">
+                <div class="panel-head">
+                  <h3>Cell comparison</h3>
+                  <span id="cellCompareSummaryMeta" class="panel-subtitle">Select cells and click Compare</span>
+                </div>
+                <div id="cellCompareChartsContainer" class="charts-container"></div>
+                <div id="cellCompareMetricsTable"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-ontology" class="view-section" aria-labelledby="ontologyTitle">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Ontology</p>
+              <h2 id="ontologyTitle">Battery ontology explorer</h2>
+            </div>
+            <div class="section-head-actions">
+              <div class="search-filter" style="margin:0; min-width:220px;">
+                <input id="ontologyGlobalSearch" type="text" placeholder="Search all entities…" autocomplete="off" />
+              </div>
+            </div>
+          </div>
+
+          <div id="ontologySummaryBar" class="analytics-kpi-bar"></div>
+
+          <nav id="ontologySubNav" class="sub-nav" aria-label="Ontology entity types">
+            <button class="sub-nav-tab is-active" data-onto-tab="materials" type="button">Materials</button>
+            <button class="sub-nav-tab" data-onto-tab="materialLots" type="button">Material lots</button>
+            <button class="sub-nav-tab" data-onto-tab="cellBuilds" type="button">Cell builds</button>
+            <button class="sub-nav-tab" data-onto-tab="batches" type="button">Electrode batches</button>
+            <button class="sub-nav-tab" data-onto-tab="processRuns" type="button">Process runs</button>
+            <button class="sub-nav-tab" data-onto-tab="equipment" type="button">Equipment</button>
+            <button class="sub-nav-tab" data-onto-tab="protocols" type="button">Protocols</button>
+            <button class="sub-nav-tab" data-onto-tab="people" type="button">People</button>
+            <button class="sub-nav-tab" data-onto-tab="lineage" type="button">Lineage</button>
+            <span class="sub-nav-divider"></span>
+            <button class="sub-nav-tab" data-onto-tab="designer" type="button">New Experiment</button>
+          </nav>
+
+          <div id="ontologyCatalogView" class="split-layout">
+            <section class="panel">
+              <div class="panel-head">
+                <h3 id="ontologyListTitle">Materials</h3>
+                <button id="exportOntologyList" class="export-button" type="button">Export CSV</button>
+                <span id="ontologyListSubtitle" class="panel-subtitle">Canonical material catalog</span>
+              </div>
+              <div class="search-filter">
+                <input id="ontologyFilterInput" type="text" placeholder="Filter…" autocomplete="off" />
+              </div>
+              <div id="ontologyEntityList" class="stack-list stack-list--scrollable">
+                <div class="empty-state">Loading…</div>
+              </div>
+              <details id="ontologyCreateDetails" class="create-form-details">
+                <summary class="create-form-toggle">New record</summary>
+                <form id="ontologyCreateForm" class="inline-form">
+                  <div id="ontologyCreateFields"></div>
+                  <div class="form-actions">
+                    <button class="primary-button" type="submit">Create</button>
+                  </div>
+                </form>
+              </details>
+            </section>
+
+            <section id="ontologyDetailPanel" class="panel panel--detail">
+              <div class="panel-head">
+                <h3 id="ontologyDetailTitle">Select an entity</h3>
+                <span id="ontologyDetailSubtitle" class="panel-subtitle">Details, lineage, and traceability appear here</span>
+              </div>
+              <div id="ontologyDetailActions" class="detail-actions" hidden>
+                <button id="ontologyEditButton" class="secondary-button" type="button">Edit</button>
+                <button id="ontologyDeleteButton" class="danger-button" type="button">Delete</button>
+              </div>
+              <div id="ontologyEditFormContainer" hidden></div>
+              <div id="ontologyDetailBody" class="summary-body">
+                <div class="empty-state">Choose an item from the list.</div>
+              </div>
+              <div id="ontologyLineageContainer"></div>
+            </section>
+          </div>
+
+          <!-- ===== Experiment Designer ===== -->
+          <div id="experimentDesignerView" class="designer-view" hidden>
+            <div class="designer-layout">
+              <!-- Left: saved designs list -->
+              <section class="designer-sidebar panel">
+                <div class="panel-head">
+                  <h3>Experiments</h3>
+                  <span id="designerListCount" class="panel-subtitle"></span>
+                </div>
+                <div class="search-filter">
+                  <input id="designerFilterInput" type="text" placeholder="Filter experiments…" autocomplete="off" />
+                </div>
+                <div id="designerList" class="stack-list stack-list--scrollable">
+                  <div class="empty-state">Loading…</div>
+                </div>
+                <div class="designer-sidebar-actions">
+                  <button id="designerNewButton" class="primary-button" type="button" style="width:100%">+ New Experiment</button>
+                </div>
+              </section>
+
+              <!-- Right: design form -->
+              <section id="designerFormPanel" class="designer-form-panel panel">
+                <div id="designerEmptyState" class="empty-state" style="padding:40px 20px">
+                  Select an experiment or create a new one to get started.
+                </div>
+
+                <div id="designerFormContent" hidden>
+                  <!-- Header -->
+                  <div class="designer-header">
+                    <div class="designer-header-main">
+                      <input id="designerName" type="text" class="designer-name-input" placeholder="Experiment name…" autocomplete="off" />
+                      <div class="designer-header-meta">
+                        <span id="designerStatusBadge" class="designer-status-badge">draft</span>
+                        <span id="designerTimestamp" class="designer-timestamp"></span>
+                      </div>
+                    </div>
+                    <div class="designer-header-actions">
+                      <button id="designerSaveButton" class="primary-button" type="button">Save</button>
+                      <button id="designerDuplicateButton" class="secondary-button" type="button">Duplicate</button>
+                      <button id="designerDeleteButton" class="danger-button" type="button">Delete</button>
+                    </div>
+                  </div>
+
+                  <!-- Form sections in a grid -->
+                  <div class="designer-sections">
+
+                    <!-- Formulation -->
+                    <section class="designer-card">
+                      <h4 class="designer-card-title">Electrode formulation</h4>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Electrode role</span>
+                          <select id="designerElectrodeRole" class="inline-form-input">
+                            <option value="">-- select --</option>
+                            <option value="cathode">Cathode</option>
+                            <option value="anode">Anode</option>
+                          </select>
+                        </label>
+                        <label class="designer-field">
+                          <span>Target project</span>
+                          <select id="designerTargetProject" class="inline-form-input">
+                            <option value="">-- none --</option>
+                          </select>
+                        </label>
+                      </div>
+
+                      <div class="designer-formulation-header">
+                        <span class="designer-formulation-col-label" style="flex:2">Material</span>
+                        <span class="designer-formulation-col-label" style="flex:1">Category</span>
+                        <span class="designer-formulation-col-label" style="flex:0.7">Wt %</span>
+                        <span class="designer-formulation-col-label" style="flex:0 0 32px"></span>
+                      </div>
+                      <div id="designerFormulationRows"></div>
+                      <div class="designer-formulation-footer">
+                        <button id="designerAddComponent" class="secondary-button" type="button" style="font-size:0.82rem">+ Add component</button>
+                        <span id="designerFormulationTotal" class="designer-formulation-total">Total: 0%</span>
+                      </div>
+                    </section>
+
+                    <!-- Electrode Parameters -->
+                    <section class="designer-card">
+                      <h4 class="designer-card-title">Electrode parameters</h4>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Disc diameter (mm)</span>
+                          <input id="designerDiscDiameter" type="number" class="inline-form-input" step="0.1" value="15.0" />
+                        </label>
+                        <label class="designer-field">
+                          <span>Target loading (mg/cm2)</span>
+                          <input id="designerLoading" type="number" class="inline-form-input" step="0.01" placeholder="e.g. 5.0" />
+                        </label>
+                      </div>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Target thickness (um)</span>
+                          <input id="designerThickness" type="number" class="inline-form-input" step="0.1" placeholder="e.g. 60" />
+                        </label>
+                        <label class="designer-field">
+                          <span>Pressed thickness (um)</span>
+                          <input id="designerPressedThickness" type="number" class="inline-form-input" step="0.1" placeholder="e.g. 45" />
+                        </label>
+                      </div>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Target porosity (0-1)</span>
+                          <input id="designerPorosity" type="number" class="inline-form-input" step="0.01" min="0" max="1" placeholder="e.g. 0.35" />
+                        </label>
+                        <label class="designer-field">
+                          <span>Solids content (%)</span>
+                          <input id="designerSolidsContent" type="number" class="inline-form-input" step="0.1" placeholder="e.g. 45" />
+                        </label>
+                      </div>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Active mass density (g/cc)</span>
+                          <input id="designerActiveMassDensity" type="number" class="inline-form-input" step="0.01" placeholder="e.g. 4.7" />
+                        </label>
+                        <label class="designer-field">
+                          <span>Slurry density (g/mL)</span>
+                          <input id="designerSlurryDensity" type="number" class="inline-form-input" step="0.01" placeholder="e.g. 1.8" />
+                        </label>
+                      </div>
+                    </section>
+
+                    <!-- Cell Assembly -->
+                    <section class="designer-card">
+                      <h4 class="designer-card-title">Cell assembly</h4>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Form factor</span>
+                          <select id="designerFormFactor" class="inline-form-input">
+                            <option value="">-- select --</option>
+                            <option value="coin">Coin cell</option>
+                            <option value="pouch">Pouch</option>
+                            <option value="cylindrical">Cylindrical</option>
+                            <option value="prismatic">Prismatic</option>
+                          </select>
+                        </label>
+                        <label class="designer-field">
+                          <span>Current collector</span>
+                          <select id="designerCurrentCollector" class="inline-form-input">
+                            <option value="">-- select --</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Electrolyte</span>
+                          <select id="designerElectrolyte" class="inline-form-input">
+                            <option value="">-- select --</option>
+                          </select>
+                        </label>
+                        <label class="designer-field">
+                          <span>Separator</span>
+                          <select id="designerSeparator" class="inline-form-input">
+                            <option value="">-- select --</option>
+                          </select>
+                        </label>
+                      </div>
+                    </section>
+
+                    <!-- Test Protocol -->
+                    <section class="designer-card">
+                      <h4 class="designer-card-title">Test protocol</h4>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Formation protocol</span>
+                          <select id="designerFormationProtocol" class="inline-form-input" data-async-picker="formation_protocol">
+                            <option value="">-- none --</option>
+                          </select>
+                        </label>
+                        <label class="designer-field">
+                          <span>Cycling protocol</span>
+                          <select id="designerCyclingProtocol" class="inline-form-input" data-async-picker="cycling_protocol">
+                            <option value="">-- none --</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Formation cycles</span>
+                          <input id="designerFormationCycles" type="number" class="inline-form-input" value="4" min="0" max="50" />
+                        </label>
+                        <label class="designer-field">
+                          <span>Temperature (C)</span>
+                          <input id="designerTemperature" type="number" class="inline-form-input" step="0.1" placeholder="e.g. 25" />
+                        </label>
+                      </div>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Cutoff voltage lower (V)</span>
+                          <input id="designerCutoffLower" type="number" class="inline-form-input" step="0.01" placeholder="e.g. 2.5" />
+                        </label>
+                        <label class="designer-field">
+                          <span>Cutoff voltage upper (V)</span>
+                          <input id="designerCutoffUpper" type="number" class="inline-form-input" step="0.01" placeholder="e.g. 4.3" />
+                        </label>
+                      </div>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Charge C-rate</span>
+                          <input id="designerCRateCharge" type="number" class="inline-form-input" step="0.01" placeholder="e.g. 0.5" />
+                        </label>
+                        <label class="designer-field">
+                          <span>Discharge C-rate</span>
+                          <input id="designerCRateDischarge" type="number" class="inline-form-input" step="0.01" placeholder="e.g. 1.0" />
+                        </label>
+                      </div>
+                    </section>
+
+                    <!-- Cell Plan & Cycler -->
+                    <section class="designer-card">
+                      <h4 class="designer-card-title">Cell plan</h4>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Number of cells</span>
+                          <input id="designerNumCells" type="number" class="inline-form-input" value="3" min="1" max="100" />
+                        </label>
+                        <label class="designer-field">
+                          <span>Naming pattern</span>
+                          <input id="designerNamingPattern" type="text" class="inline-form-input" placeholder="{name}-Cell-{n}" />
+                        </label>
+                      </div>
+                      <div class="designer-field-row">
+                        <label class="designer-field">
+                          <span>Target cycler</span>
+                          <select id="designerTargetEquipment" class="inline-form-input" data-async-picker="equipment">
+                            <option value="">-- none --</option>
+                          </select>
+                        </label>
+                        <label class="designer-field">
+                          <span>Designed by</span>
+                          <select id="designerDesignedBy" class="inline-form-input" data-async-picker="operator">
+                            <option value="">-- none --</option>
+                          </select>
+                        </label>
+                      </div>
+                      <label class="designer-field" style="margin-top:4px">
+                        <span>Notes</span>
+                        <textarea id="designerNotes" class="inline-form-input" rows="2" placeholder="Additional notes…"></textarea>
+                      </label>
+                    </section>
+
+                    <!-- Calculated Values -->
+                    <section class="designer-card designer-card--calculated">
+                      <h4 class="designer-card-title">Calculated values</h4>
+                      <div class="designer-calc-grid" id="designerCalcGrid">
+                        <div class="designer-calc-item">
+                          <span class="designer-calc-label">Disc area</span>
+                          <span class="designer-calc-value" id="calcDiscArea">--</span>
+                          <span class="designer-calc-unit">cm2</span>
+                        </div>
+                        <div class="designer-calc-item">
+                          <span class="designer-calc-label">Active material mass</span>
+                          <span class="designer-calc-value" id="calcActiveMass">--</span>
+                          <span class="designer-calc-unit">mg</span>
+                        </div>
+                        <div class="designer-calc-item">
+                          <span class="designer-calc-label">Disc mass (est.)</span>
+                          <span class="designer-calc-value" id="calcDiscMass">--</span>
+                          <span class="designer-calc-unit">mg</span>
+                        </div>
+                        <div class="designer-calc-item">
+                          <span class="designer-calc-label">Thickness reduction</span>
+                          <span class="designer-calc-value" id="calcThicknessReduction">--</span>
+                          <span class="designer-calc-unit">%</span>
+                        </div>
+                        <div class="designer-calc-item">
+                          <span class="designer-calc-label">Electrode density</span>
+                          <span class="designer-calc-value" id="calcElectrodeDensity">--</span>
+                          <span class="designer-calc-unit">g/mL</span>
+                        </div>
+                        <div class="designer-calc-item">
+                          <span class="designer-calc-label">Theoretical capacity</span>
+                          <span class="designer-calc-value" id="calcTheoCapacity">--</span>
+                          <span class="designer-calc-unit">mAh</span>
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+
+                  <!-- Realize action -->
+                  <div class="designer-realize-bar" id="designerRealizeBar">
+                    <div class="designer-realize-info">
+                      <span id="designerRealizeStatus"></span>
+                    </div>
+                    <button id="designerMarkReady" class="secondary-button" type="button">Mark ready</button>
+                    <button id="designerRealizeButton" class="primary-button" type="button">Realize to project</button>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== Analytics ===== -->
+        <section id="view-analytics" class="view-section" aria-labelledby="analyticsTitle">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Analytics</p>
+              <h2 id="analyticsTitle">Performance analytics</h2>
+            </div>
+            <div class="section-head-actions">
+              <button id="analyticsRefreshButton" class="secondary-button" type="button">Refresh data</button>
+              <button id="analyticsExportButton" class="export-button" type="button">Export CSV</button>
+            </div>
+          </div>
+
+          <!-- KPI cards -->
+          <div id="analyticsKpiBar" class="analytics-kpi-bar"></div>
+
+          <!-- Filter bar (always visible) -->
+          <div class="analytics-filter-bar" id="analyticsFilterBar">
+            <div class="analytics-filter-controls">
+              <label class="analytics-filter-field">
+                <span>Project</span>
+                <select id="analyticsFilterProject"><option value="">All projects</option></select>
+              </label>
+              <label class="analytics-filter-field">
+                <span>Electrolyte</span>
+                <select id="analyticsFilterElectrolyte"><option value="">All electrolytes</option></select>
+              </label>
+              <label class="analytics-filter-field">
+                <span>Batch</span>
+                <select id="analyticsFilterBatch"><option value="">All batches</option></select>
+              </label>
+              <label class="analytics-filter-field">
+                <span>Status</span>
+                <select id="analyticsFilterStatus"><option value="">All statuses</option></select>
+              </label>
+              <label class="analytics-filter-check" title="Hide experiments with physically impossible metric values (e.g. fade rates in the millions)">
+                <input type="checkbox" id="analyticsOutlierToggle" checked>
+                <span>Exclude impossible values</span>
+              </label>
+              <div class="analytics-filter-actions">
+                <button id="analyticsFilterApply" class="primary-button" type="button">Apply</button>
+                <button id="analyticsFilterClear" class="secondary-button" type="button">Clear</button>
+              </div>
+            </div>
+            <div id="analyticsActiveFilters" class="analytics-active-filters"></div>
+          </div>
+
+          <!-- Chart Studio -->
+          <div class="analytics-studio" id="analyticsStudio">
+            <!-- Studio Toolbar -->
+            <div class="analytics-studio-toolbar">
+              <div class="analytics-studio-tabs">
+                <button class="studio-tab is-active" data-studio-tab="distribution" type="button">Distribution</button>
+                <button class="studio-tab" data-studio-tab="scatter" type="button">Scatter</button>
+                <button class="studio-tab" data-studio-tab="histogram" type="button">Histogram</button>
+                <button class="studio-tab" data-studio-tab="correlation" type="button">Correlation</button>
+              </div>
+
+              <!-- Scatter config (hidden by default) -->
+              <div class="studio-config" id="studioScatterConfig" hidden>
+                <label class="studio-config-field">
+                  <span>X axis</span>
+                  <select id="studioScatterX">
+                    <option value="avg_retention_pct">Retention (%)</option>
+                    <option value="avg_coulombic_efficiency_pct">CE (%)</option>
+                    <option value="avg_fade_rate_pct_per_100_cycles">Fade Rate</option>
+                    <option value="avg_reversible_capacity_mAh_g">Capacity (mAh/g)</option>
+                    <option value="best_cycle_life_80">Cycle Life (80%)</option>
+                    <option value="cell_count">Cell Count</option>
+                    <option value="avg_loading">Loading</option>
+                    <option value="avg_active_material_pct">Active Material (%)</option>
+                  </select>
+                </label>
+                <label class="studio-config-field">
+                  <span>Y axis</span>
+                  <select id="studioScatterY">
+                    <option value="avg_fade_rate_pct_per_100_cycles">Fade Rate</option>
+                    <option value="avg_retention_pct">Retention (%)</option>
+                    <option value="avg_coulombic_efficiency_pct">CE (%)</option>
+                    <option value="avg_reversible_capacity_mAh_g">Capacity (mAh/g)</option>
+                    <option value="best_cycle_life_80">Cycle Life (80%)</option>
+                    <option value="cell_count">Cell Count</option>
+                    <option value="avg_loading">Loading</option>
+                    <option value="avg_active_material_pct">Active Material (%)</option>
+                  </select>
+                </label>
+                <label class="studio-config-check">
+                  <input type="checkbox" id="studioScatterTrendline" checked>
+                  <span>Trendline</span>
+                </label>
+              </div>
+
+              <!-- Histogram config (hidden by default) -->
+              <div class="studio-config" id="studioHistogramConfig" hidden>
+                <label class="studio-config-field">
+                  <span>Metric</span>
+                  <select id="studioHistogramMetric">
+                    <option value="avg_retention_pct">Retention (%)</option>
+                    <option value="avg_coulombic_efficiency_pct">CE (%)</option>
+                    <option value="avg_fade_rate_pct_per_100_cycles">Fade Rate</option>
+                    <option value="avg_reversible_capacity_mAh_g">Capacity (mAh/g)</option>
+                    <option value="best_cycle_life_80">Cycle Life (80%)</option>
+                  </select>
+                </label>
+                <label class="studio-config-field">
+                  <span>Bins</span>
+                  <select id="studioHistogramBins">
+                    <option value="auto">Auto</option>
+                    <option value="10">10</option>
+                    <option value="15">15</option>
+                    <option value="20">20</option>
+                    <option value="30">30</option>
+                  </select>
+                </label>
+              </div>
+
+              <!-- Group-by (shared across chart types) -->
+              <div class="studio-config studio-config-groupby">
+                <label class="studio-config-field">
+                  <span>Color by</span>
+                  <select id="studioGroupBy">
+                    <option value="">None</option>
+                    <option value="project_name">Project</option>
+                    <option value="electrolyte">Electrolyte</option>
+                    <option value="ontology_root_batch_name">Batch</option>
+                    <option value="tracking_status">Status</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <!-- Chart render area -->
+            <div id="analyticsStudioCharts" class="analytics-studio-charts"></div>
+          </div>
+
+          <!-- Statistical Summary -->
+          <div class="analytics-stats-panel" id="analyticsStatsPanel">
+            <div class="panel-head">
+              <h3>Statistical summary</h3>
+              <span id="analyticsStatsMeta" class="panel-subtitle"></span>
+            </div>
+            <div id="analyticsStatsBody" class="analytics-stats-body"></div>
+          </div>
+
+          <!-- Performance ranking table -->
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Experiment performance ranking</h3>
+              <div class="panel-head-right">
+                <input type="text" id="analyticsTableSearch" class="analytics-table-search" placeholder="Search experiments...">
+                <span id="analyticsTableMeta" class="panel-subtitle"></span>
+              </div>
+            </div>
+            <div id="analyticsTableContainer"></div>
+          </div>
+        </section>
+      </main>
+
+      <!-- ===== Report Overlay ===== -->
+      <div id="reportOverlay" class="report-overlay" hidden>
+        <div class="report-overlay-toolbar">
+          <span class="report-overlay-title">Experiment Report</span>
+          <div class="report-overlay-actions">
+            <button id="reportPrintButton" class="primary-button" type="button">Print / Save PDF</button>
+            <button id="reportCloseButton" class="secondary-button" type="button">Close</button>
+          </div>
+        </div>
+        <div id="reportContent" class="report-content"></div>
+      </div>
+
+      <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+      <footer class="shell-footer">
+        <p>
+          This frontend shell targets the FastAPI backend at
+          <a href="http://localhost:8000" target="_blank" rel="noreferrer">http://localhost:8000</a>.
+        </p>
+        <p>Projects, workspaces, live ops, runs, and ontology are wired to the FastAPI backend.</p>
+      </footer>
+    </div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

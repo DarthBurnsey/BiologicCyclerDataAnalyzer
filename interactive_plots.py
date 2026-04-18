@@ -12,6 +12,13 @@ import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 
 
+REFERENCE_CYCLE_FALLBACK = 4
+REFERENCE_CAPACITY_UPPER_LIMIT = 450.0
+REFERENCE_EFFICIENCY_UPPER_LIMIT = 1.05
+REFERENCE_LOCAL_OUTLIER_PCT = 0.15
+REFERENCE_LOCAL_WINDOW = 2
+
+
 def _filter_dfs_by_cycle_range(
     dfs: List[Dict[str, Any]],
     cycle_filter: str = "1-*"
@@ -37,6 +44,162 @@ def _filter_dfs_by_cycle_range(
             filtered_dfs.append(d)
 
     return filtered_dfs
+
+
+def _coerce_index(value: Any) -> Optional[int]:
+    """Convert formation-cycle metadata to a usable row index."""
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_cycle_value(value: Any) -> Any:
+    """Format cycle labels cleanly for hover text."""
+    try:
+        numeric_value = float(value)
+        if numeric_value.is_integer():
+            return int(numeric_value)
+        return round(numeric_value, 3)
+    except (TypeError, ValueError):
+        return value
+
+
+def _is_reference_cycle_anomalous(
+    df: pd.DataFrame,
+    capacity_series: pd.Series,
+    candidate_idx: int,
+    start_idx: int
+) -> bool:
+    """Screen out clearly invalid baseline cycles before calculating retention."""
+    capacity_value = capacity_series.iloc[candidate_idx]
+    if pd.isna(capacity_value) or capacity_value <= 0:
+        return True
+
+    if 'Efficiency (-)' in df.columns:
+        efficiency_series = pd.to_numeric(df['Efficiency (-)'], errors='coerce')
+        if candidate_idx < len(efficiency_series):
+            efficiency_value = efficiency_series.iloc[candidate_idx]
+            if pd.notna(efficiency_value) and (
+                efficiency_value <= 0 or efficiency_value > REFERENCE_EFFICIENCY_UPPER_LIMIT
+            ):
+                return True
+
+    if capacity_value > REFERENCE_CAPACITY_UPPER_LIMIT:
+        return True
+
+    window_start = max(start_idx, candidate_idx - REFERENCE_LOCAL_WINDOW)
+    window_end = min(len(capacity_series), candidate_idx + REFERENCE_LOCAL_WINDOW + 1)
+    local_window = capacity_series.iloc[window_start:window_end].reset_index(drop=True)
+    local_idx = candidate_idx - window_start
+    comparison_values = pd.concat(
+        [local_window.iloc[:local_idx], local_window.iloc[local_idx + 1:]],
+        ignore_index=True
+    )
+    comparison_values = comparison_values[pd.notna(comparison_values) & (comparison_values > 0)]
+
+    if len(comparison_values) >= 3:
+        local_median = comparison_values.median()
+        if local_median > 0:
+            deviation_pct = abs(capacity_value - local_median) / local_median
+            if deviation_pct > REFERENCE_LOCAL_OUTLIER_PCT:
+                return True
+
+    return False
+
+
+def _resolve_reference_cycle_info(
+    df: pd.DataFrame,
+    capacity_col: str,
+    formation_cycles: Optional[int] = None
+) -> Dict[str, Any]:
+    """Pick the first valid post-formation capacity to use as the 100% baseline."""
+    unavailable = {
+        'reference_cycle': None,
+        'reference_capacity': None,
+        'reason': "N/A (no valid post-formation baseline)"
+    }
+
+    if df.empty or capacity_col not in df.columns:
+        return unavailable
+
+    capacity_series = pd.to_numeric(df[capacity_col], errors='coerce')
+    cycle_col = df.columns[0]
+    cycle_series = pd.to_numeric(df[cycle_col], errors='coerce')
+
+    start_idx = _coerce_index(formation_cycles)
+    if start_idx is None:
+        fallback_positions = np.flatnonzero(
+            (~cycle_series.isna()) & (cycle_series >= REFERENCE_CYCLE_FALLBACK)
+        )
+        start_idx = int(fallback_positions[0]) if len(fallback_positions) > 0 else 0
+
+    if start_idx < 0 or start_idx >= len(df):
+        return unavailable
+
+    for candidate_idx in range(start_idx, len(df)):
+        if _is_reference_cycle_anomalous(df, capacity_series, candidate_idx, start_idx):
+            continue
+
+        reference_cycle = cycle_series.iloc[candidate_idx]
+        if pd.isna(reference_cycle):
+            reference_cycle = df.iloc[candidate_idx][cycle_col]
+
+        return {
+            'reference_cycle': _format_cycle_value(reference_cycle),
+            'reference_capacity': float(capacity_series.iloc[candidate_idx]),
+            'reason': None
+        }
+
+    return unavailable
+
+
+def _format_retention_hover_texts(
+    retention_values: pd.Series,
+    reference_label: Optional[str] = None,
+    unavailable_reason: str = "N/A"
+) -> pd.Series:
+    """Format retention values for hover rows."""
+    hover_text = []
+
+    for value in retention_values:
+        if pd.isna(value):
+            hover_text.append(unavailable_reason)
+        elif reference_label:
+            hover_text.append(f"{value:.2f}% ({reference_label})")
+        else:
+            hover_text.append(f"{value:.2f}%")
+
+    return pd.Series(hover_text, index=retention_values.index, dtype=object)
+
+
+def _build_retention_hover_data(
+    df: pd.DataFrame,
+    capacity_col: str,
+    formation_cycles: Optional[int] = None,
+    reference_label: Optional[str] = None
+) -> Tuple[pd.Series, pd.Series, Dict[str, Any]]:
+    """Create retention values and hover text aligned to the trace data."""
+    capacity_series = pd.to_numeric(df[capacity_col], errors='coerce')
+    reference_info = _resolve_reference_cycle_info(df, capacity_col, formation_cycles)
+
+    if reference_info['reference_capacity'] is None:
+        retention_series = pd.Series(np.nan, index=df.index, dtype=float)
+    else:
+        retention_series = (capacity_series / reference_info['reference_capacity']) * 100.0
+
+    if reference_label is None and reference_info['reference_cycle'] is not None:
+        reference_label = f"ref cycle {reference_info['reference_cycle']}"
+
+    hover_text = _format_retention_hover_texts(
+        retention_series,
+        reference_label=reference_label,
+        unavailable_reason=reference_info.get('reason') or "N/A"
+    )
+
+    return retention_series, hover_text, reference_info
 
 
 def plot_interactive_capacity(
@@ -98,12 +261,18 @@ def plot_interactive_capacity(
                 if show_lines.get(label_dis, False) and 'Q Dis (mAh/g)' in plot_df.columns:
                     qdis_data = pd.to_numeric(plot_df['Q Dis (mAh/g)'], errors='coerce')
                     valid_mask = ~qdis_data.isna()
+                    _, qdis_retention_hover, _ = _build_retention_hover_data(
+                        plot_df,
+                        'Q Dis (mAh/g)',
+                        d.get('formation_cycles')
+                    )
                     
                     if valid_mask.any():
                         fig.add_trace(
                             go.Scatter(
                                 x=plot_df[x_col][valid_mask],
                                 y=qdis_data[valid_mask],
+                                customdata=qdis_retention_hover[valid_mask].tolist(),
                                 name=label_dis,
                                 mode='lines+markers',
                                 line=dict(color=color),
@@ -112,6 +281,7 @@ def plot_interactive_capacity(
                                     f"<b>{cell_name}</b><br>"
                                     "Cycle: %{x}<br>"
                                     "Q Dis: %{y:.2f} mAh/g<br>"
+                                    "Retention: %{customdata}<br>"
                                     "<extra></extra>"
                                 )
                             ),
@@ -122,12 +292,18 @@ def plot_interactive_capacity(
                 if show_lines.get(label_chg, False) and 'Q Chg (mAh/g)' in plot_df.columns:
                     qchg_data = pd.to_numeric(plot_df['Q Chg (mAh/g)'], errors='coerce')
                     valid_mask = ~qchg_data.isna()
+                    _, qchg_retention_hover, _ = _build_retention_hover_data(
+                        plot_df,
+                        'Q Chg (mAh/g)',
+                        d.get('formation_cycles')
+                    )
                     
                     if valid_mask.any():
                         fig.add_trace(
                             go.Scatter(
                                 x=plot_df[x_col][valid_mask],
                                 y=qchg_data[valid_mask],
+                                customdata=qchg_retention_hover[valid_mask].tolist(),
                                 name=label_chg,
                                 mode='lines+markers',
                                 line=dict(color=color, dash='dash'),
@@ -136,6 +312,7 @@ def plot_interactive_capacity(
                                     f"<b>{cell_name}</b><br>"
                                     "Cycle: %{x}<br>"
                                     "Q Chg: %{y:.2f} mAh/g<br>"
+                                    "Retention: %{customdata}<br>"
                                     "<extra></extra>"
                                 )
                             ),
@@ -205,12 +382,18 @@ def plot_interactive_capacity(
                 if show_lines.get(label_dis, False) and 'Q Dis (mAh/g)' in plot_df.columns:
                     qdis_data = pd.to_numeric(plot_df['Q Dis (mAh/g)'], errors='coerce')
                     valid_mask = ~qdis_data.isna()
+                    _, qdis_retention_hover, _ = _build_retention_hover_data(
+                        plot_df,
+                        'Q Dis (mAh/g)',
+                        d.get('formation_cycles')
+                    )
                     
                     if valid_mask.any():
                         fig.add_trace(
                             go.Scatter(
                                 x=plot_df[x_col][valid_mask],
                                 y=qdis_data[valid_mask],
+                                customdata=qdis_retention_hover[valid_mask].tolist(),
                                 name=label_dis,
                                 mode='lines+markers',
                                 line=dict(color=color),
@@ -219,6 +402,7 @@ def plot_interactive_capacity(
                                     f"<b>{cell_name}</b><br>"
                                     "Cycle: %{x}<br>"
                                     "Q Dis: %{y:.2f} mAh/g<br>"
+                                    "Retention: %{customdata}<br>"
                                     "<extra></extra>"
                                 )
                             )
@@ -228,12 +412,18 @@ def plot_interactive_capacity(
                 if show_lines.get(label_chg, False) and 'Q Chg (mAh/g)' in plot_df.columns:
                     qchg_data = pd.to_numeric(plot_df['Q Chg (mAh/g)'], errors='coerce')
                     valid_mask = ~qchg_data.isna()
+                    _, qchg_retention_hover, _ = _build_retention_hover_data(
+                        plot_df,
+                        'Q Chg (mAh/g)',
+                        d.get('formation_cycles')
+                    )
                     
                     if valid_mask.any():
                         fig.add_trace(
                             go.Scatter(
                                 x=plot_df[x_col][valid_mask],
                                 y=qchg_data[valid_mask],
+                                customdata=qchg_retention_hover[valid_mask].tolist(),
                                 name=label_chg,
                                 mode='lines+markers',
                                 line=dict(color=color, dash='dash'),
@@ -242,6 +432,7 @@ def plot_interactive_capacity(
                                     f"<b>{cell_name}</b><br>"
                                     "Cycle: %{x}<br>"
                                     "Q Chg: %{y:.2f} mAh/g<br>"
+                                    "Retention: %{customdata}<br>"
                                     "<extra></extra>"
                                 )
                             )
@@ -263,6 +454,22 @@ def plot_interactive_capacity(
         
         if len(included_dfs) > 0:
             dfs_trimmed = [d['df'][:-1] if remove_last_cycle else d['df'] for d in included_dfs]
+            qdis_ref_infos = [
+                _resolve_reference_cycle_info(
+                    trimmed_df,
+                    'Q Dis (mAh/g)',
+                    included_dfs[idx].get('formation_cycles')
+                )
+                for idx, trimmed_df in enumerate(dfs_trimmed)
+            ]
+            qchg_ref_infos = [
+                _resolve_reference_cycle_info(
+                    trimmed_df,
+                    'Q Chg (mAh/g)',
+                    included_dfs[idx].get('formation_cycles')
+                )
+                for idx, trimmed_df in enumerate(dfs_trimmed)
+            ]
             x_col = dfs_trimmed[0].columns[0]
             common_cycles = set(dfs_trimmed[0][x_col])
             for df in dfs_trimmed[1:]:
@@ -273,22 +480,34 @@ def plot_interactive_capacity(
                 avg_qdis = []
                 avg_qchg = []
                 avg_eff = []
+                avg_ret_qdis = []
+                avg_ret_qchg = []
                 
                 for cycle in common_cycles:
                     qdis_vals = []
                     qchg_vals = []
                     eff_vals = []
+                    ret_qdis_vals = []
+                    ret_qchg_vals = []
                     
-                    for df in dfs_trimmed:
+                    for df_idx, df in enumerate(dfs_trimmed):
                         row = df[df[x_col] == cycle]
                         if not row.empty:
                             if 'Q Dis (mAh/g)' in row:
                                 try:
-                                    qdis_vals.append(float(row['Q Dis (mAh/g)'].values[0]))
+                                    qdis_val = float(row['Q Dis (mAh/g)'].values[0])
+                                    qdis_vals.append(qdis_val)
+                                    ref_capacity = qdis_ref_infos[df_idx].get('reference_capacity')
+                                    if ref_capacity:
+                                        ret_qdis_vals.append((qdis_val / ref_capacity) * 100.0)
                                 except Exception: pass
                             if 'Q Chg (mAh/g)' in row:
                                 try:
-                                    qchg_vals.append(float(row['Q Chg (mAh/g)'].values[0]))
+                                    qchg_val = float(row['Q Chg (mAh/g)'].values[0])
+                                    qchg_vals.append(qchg_val)
+                                    ref_capacity = qchg_ref_infos[df_idx].get('reference_capacity')
+                                    if ref_capacity:
+                                        ret_qchg_vals.append((qchg_val / ref_capacity) * 100.0)
                                 except Exception: pass
                             if 'Efficiency (-)' in row:
                                 try:
@@ -298,9 +517,19 @@ def plot_interactive_capacity(
                     avg_qdis.append(sum(qdis_vals)/len(qdis_vals) if qdis_vals else None)
                     avg_qchg.append(sum(qchg_vals)/len(qchg_vals) if qchg_vals else None)
                     avg_eff.append(sum(eff_vals)/len(eff_vals) if eff_vals else None)
+                    avg_ret_qdis.append(sum(ret_qdis_vals)/len(ret_qdis_vals) if ret_qdis_vals else None)
+                    avg_ret_qchg.append(sum(ret_qchg_vals)/len(ret_qchg_vals) if ret_qchg_vals else None)
                 
                 avg_label_prefix = f"{experiment_name} " if experiment_name else ""
                 avg_color = custom_colors.get("Average", "black")
+                avg_qdis_retention_hover = _format_retention_hover_texts(
+                    pd.Series(avg_ret_qdis, index=common_cycles, dtype=float),
+                    reference_label="cell baselines"
+                )
+                avg_qchg_retention_hover = _format_retention_hover_texts(
+                    pd.Series(avg_ret_qchg, index=common_cycles, dtype=float),
+                    reference_label="cell baselines"
+                )
                 
                 # Plot averages
                 if avg_line_toggles.get("Average Q Dis", True):
@@ -310,7 +539,8 @@ def plot_interactive_capacity(
                         x=common_cycles, y=avg_qdis, name=f'{avg_label_prefix}Avg Q Dis',
                         mode='lines+markers', line=dict(color=avg_color, width=3),
                         marker=dict(symbol='diamond', size=6),
-                        hovertemplate="<b>%{name}</b><br>Cycle: %{x}<br>Q Dis: %{y:.2f} mAh/g<extra></extra>"
+                        customdata=avg_qdis_retention_hover.tolist(),
+                        hovertemplate="<b>%{name}</b><br>Cycle: %{x}<br>Q Dis: %{y:.2f} mAh/g<br>Retention: %{customdata}<extra></extra>"
                     ), **trace_args)
                 
                 if avg_line_toggles.get("Average Q Chg", True):
@@ -319,7 +549,8 @@ def plot_interactive_capacity(
                         x=common_cycles, y=avg_qchg, name=f'{avg_label_prefix}Avg Q Chg',
                         mode='lines+markers', line=dict(color='gray', width=3, dash='dash'),
                         marker=dict(symbol='diamond', size=6),
-                        hovertemplate="<b>%{name}</b><br>Cycle: %{x}<br>Q Chg: %{y:.2f} mAh/g<extra></extra>"
+                        customdata=avg_qchg_retention_hover.tolist(),
+                        hovertemplate="<b>%{name}</b><br>Cycle: %{x}<br>Q Chg: %{y:.2f} mAh/g<br>Retention: %{customdata}<extra></extra>"
                     ), **trace_args)
                 
                 if any_efficiency and avg_line_toggles.get("Average Efficiency", True):
@@ -581,10 +812,16 @@ def plot_interactive_comparison_capacity(
                     if show_lines.get(label_dis, False) and 'Q Dis (mAh/g)' in plot_df.columns:
                         qdis_data = pd.to_numeric(plot_df['Q Dis (mAh/g)'], errors='coerce')
                         valid_mask = ~qdis_data.isna()
+                        _, qdis_retention_hover, _ = _build_retention_hover_data(
+                            plot_df,
+                            'Q Dis (mAh/g)',
+                            d.get('formation_cycles')
+                        )
                         if valid_mask.any():
                             trace = go.Scatter(
                                 x=plot_df[dataset_x_col][valid_mask],
                                 y=qdis_data[valid_mask],
+                                customdata=qdis_retention_hover[valid_mask].tolist(),
                                 name=disp_label_dis,
                                 mode='lines+markers',
                                 line=dict(color=cell_color),
@@ -592,7 +829,7 @@ def plot_interactive_comparison_capacity(
                                 opacity=0.7,
                                 hovertemplate=(
                                     f"<b>{display_base_label}</b><br>"
-                                    "Cycle: %{x}<br>Q Dis: %{y:.2f} mAh/g<br><extra></extra>"
+                                    "Cycle: %{x}<br>Q Dis: %{y:.2f} mAh/g<br>Retention: %{customdata}<br><extra></extra>"
                                 )
                             )
                             if any_efficiency or avg_eff_on:
@@ -603,10 +840,16 @@ def plot_interactive_comparison_capacity(
                     if show_lines.get(label_chg, False) and 'Q Chg (mAh/g)' in plot_df.columns:
                         qchg_data = pd.to_numeric(plot_df['Q Chg (mAh/g)'], errors='coerce')
                         valid_mask = ~qchg_data.isna()
+                        _, qchg_retention_hover, _ = _build_retention_hover_data(
+                            plot_df,
+                            'Q Chg (mAh/g)',
+                            d.get('formation_cycles')
+                        )
                         if valid_mask.any():
                             trace = go.Scatter(
                                 x=plot_df[dataset_x_col][valid_mask],
                                 y=qchg_data[valid_mask],
+                                customdata=qchg_retention_hover[valid_mask].tolist(),
                                 name=disp_label_chg,
                                 mode='lines+markers',
                                 line=dict(color=cell_color, dash='dash'),
@@ -614,7 +857,7 @@ def plot_interactive_comparison_capacity(
                                 opacity=0.7,
                                 hovertemplate=(
                                     f"<b>{display_base_label}</b><br>"
-                                    "Cycle: %{x}<br>Q Chg: %{y:.2f} mAh/g<br><extra></extra>"
+                                    "Cycle: %{x}<br>Q Chg: %{y:.2f} mAh/g<br>Retention: %{customdata}<br><extra></extra>"
                                 )
                             )
                             if any_efficiency or avg_eff_on:
@@ -656,6 +899,22 @@ def plot_interactive_comparison_capacity(
                 
                 if len(included_dfs) > 0:
                     dfs_trimmed = [d['df'][:-1] if remove_last_cycle else d['df'] for d in included_dfs]
+                    qdis_ref_infos = [
+                        _resolve_reference_cycle_info(
+                            trimmed_df,
+                            'Q Dis (mAh/g)',
+                            included_dfs[idx].get('formation_cycles')
+                        )
+                        for idx, trimmed_df in enumerate(dfs_trimmed)
+                    ]
+                    qchg_ref_infos = [
+                        _resolve_reference_cycle_info(
+                            trimmed_df,
+                            'Q Chg (mAh/g)',
+                            included_dfs[idx].get('formation_cycles')
+                        )
+                        for idx, trimmed_df in enumerate(dfs_trimmed)
+                    ]
                     exp_x_col = dfs_trimmed[0].columns[0] if not dfs_trimmed[0].empty else x_col
                 
                 common_cycles = set(dfs_trimmed[0][exp_x_col])
@@ -665,16 +924,28 @@ def plot_interactive_comparison_capacity(
                 
                 if common_cycles:
                     avg_qdis, avg_qchg, avg_eff = [], [], []
+                    avg_ret_qdis, avg_ret_qchg = [], []
                     for cycle in common_cycles:
                         qdis_vals, qchg_vals, eff_vals = [], [], []
-                        for df in dfs_trimmed:
+                        ret_qdis_vals, ret_qchg_vals = [], []
+                        for df_idx, df in enumerate(dfs_trimmed):
                             row = df[df[exp_x_col] == cycle]
                             if not row.empty:
                                 if 'Q Dis (mAh/g)' in row:
-                                    try: qdis_vals.append(float(row['Q Dis (mAh/g)'].values[0]))
+                                    try:
+                                        qdis_val = float(row['Q Dis (mAh/g)'].values[0])
+                                        qdis_vals.append(qdis_val)
+                                        ref_capacity = qdis_ref_infos[df_idx].get('reference_capacity')
+                                        if ref_capacity:
+                                            ret_qdis_vals.append((qdis_val / ref_capacity) * 100.0)
                                     except: pass
                                 if 'Q Chg (mAh/g)' in row:
-                                    try: qchg_vals.append(float(row['Q Chg (mAh/g)'].values[0]))
+                                    try:
+                                        qchg_val = float(row['Q Chg (mAh/g)'].values[0])
+                                        qchg_vals.append(qchg_val)
+                                        ref_capacity = qchg_ref_infos[df_idx].get('reference_capacity')
+                                        if ref_capacity:
+                                            ret_qchg_vals.append((qchg_val / ref_capacity) * 100.0)
                                     except: pass
                                 if 'Efficiency (-)' in row and pd.notnull(row['Efficiency (-)'].values[0]):
                                     try: eff_vals.append(float(row['Efficiency (-)'].values[0]) * 100)
@@ -683,6 +954,8 @@ def plot_interactive_comparison_capacity(
                         avg_qdis.append(sum(qdis_vals)/len(qdis_vals) if qdis_vals else None)
                         avg_qchg.append(sum(qchg_vals)/len(qchg_vals) if qchg_vals else None)
                         avg_eff.append(sum(eff_vals)/len(eff_vals) if eff_vals else None)
+                        avg_ret_qdis.append(sum(ret_qdis_vals)/len(ret_qdis_vals) if ret_qdis_vals else None)
+                        avg_ret_qchg.append(sum(ret_qchg_vals)/len(ret_qchg_vals) if ret_qchg_vals else None)
                     
                     if len(dfs) == 1:
                         avg_label = f"{exp_name}"
@@ -694,6 +967,14 @@ def plot_interactive_comparison_capacity(
                     display_avg_label = custom_names.get(avg_label, f"{exp_name}{label_suffix}")
                     
                     avg_color = custom_colors.get(avg_label, default_exp_color)
+                    avg_qdis_retention_hover = _format_retention_hover_texts(
+                        pd.Series(avg_ret_qdis, index=common_cycles, dtype=float),
+                        reference_label="cell baselines"
+                    )
+                    avg_qchg_retention_hover = _format_retention_hover_texts(
+                        pd.Series(avg_ret_qchg, index=common_cycles, dtype=float),
+                        reference_label="cell baselines"
+                    )
                     
                     if avg_line_toggles.get("Average Q Dis", True):
                         trace = go.Scatter(
@@ -702,7 +983,8 @@ def plot_interactive_comparison_capacity(
                             mode='lines+markers',
                             line=dict(color=avg_color, width=3),
                             marker=dict(size=6, symbol='diamond'),
-                            hovertemplate=f"<b>{display_avg_label}</b><br>Cycle: %{{x}}<br>Q Dis: %{{y:.2f}} mAh/g<br><extra></extra>"
+                            customdata=avg_qdis_retention_hover.tolist(),
+                            hovertemplate=f"<b>{display_avg_label}</b><br>Cycle: %{{x}}<br>Q Dis: %{{y:.2f}} mAh/g<br>Retention: %{{customdata}}<br><extra></extra>"
                         )
                         if any_efficiency or avg_eff_on:
                             fig.add_trace(trace, secondary_y=False)
@@ -716,7 +998,8 @@ def plot_interactive_comparison_capacity(
                             mode='lines+markers',
                             line=dict(color=avg_color, width=3, dash='dash'),
                             marker=dict(size=6, symbol='diamond'),
-                            hovertemplate=f"<b>{display_avg_label}</b><br>Cycle: %{{x}}<br>Q Chg: %{{y:.2f}} mAh/g<br><extra></extra>"
+                            customdata=avg_qchg_retention_hover.tolist(),
+                            hovertemplate=f"<b>{display_avg_label}</b><br>Cycle: %{{x}}<br>Q Chg: %{{y:.2f}} mAh/g<br>Retention: %{{customdata}}<br><extra></extra>"
                         )
                         if any_efficiency or avg_eff_on:
                             fig.add_trace(trace, secondary_y=False)
